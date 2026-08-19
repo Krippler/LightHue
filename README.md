@@ -17,6 +17,9 @@ that multiple people on your network can use at once.
   open, they see the same running/stopped state and controls in real time.
 - Lets you write and save custom a–z lightstyle strings as reusable
   patterns, with a live waveform preview.
+- Retunes running lights on the fly — pattern, speed, brightness and color
+  all take effect mid-flicker, no stop-and-restart.
+- Groups any set of bulbs behind one set of controls, so they stay identical.
 - Optionally locks the console behind a password you set in the UI.
 - Persists everything in `/data/config.json` (mount that as a volume so it
   survives container restarts).
@@ -71,6 +74,30 @@ of building, swap the `build: .` line in `docker-compose.yml` for
 **First run:** the UI will prompt you to either auto-discover your bridge
 or enter its IP manually, then walk you through pairing (press the
 physical link button on the bridge, then hit Pair within ~30 seconds).
+
+## Groups
+
+Tick the lights you want to run together in the **Groups** panel, give them a
+name, and they get one card whose controls drive all of them at once. Members
+keep their own cards too, so you can still tweak one light without leaving the
+group.
+
+A group card shows `2/3 FLICKERING` when only some members are running, and
+offers **Start the rest** alongside **Stop** so you can bring stragglers into
+line without interrupting the ones already going.
+
+## Changing things mid-flicker
+
+Every control retunes a running light in place — pattern, speed, brightness
+window, transition and color all apply without restarting the loop, and the
+change reaches everyone else's browser over the WebSocket.
+
+The color swatch is always live. Picking a color ticks **Set color** for you
+rather than making you find the box first. Leaving that box unticked means the
+console won't touch the bulb's color at all — useful when you've already set a
+color in the Hue app and just want the flicker. Note that unticking it mid-run
+can't put the previous color back; the Hue API has no "revert color" call, so
+it just stops sending further color changes.
 
 ## Settings
 

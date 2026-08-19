@@ -8,6 +8,10 @@ from .patterns import level_for_char
 
 logger = logging.getLogger("flicker_engine")
 
+# Settings a running loop will pick up without being restarted.
+LIVE_FIELDS = ("sequence", "pattern_id", "hz", "min_bri", "max_bri",
+               "hue", "sat", "transition_ms")
+
 
 class RateLimiter:
     """Global token-bucket-ish limiter so we never flood the Hue bridge,
@@ -34,7 +38,9 @@ class FlickerEngine:
     def __init__(self, get_client: Callable[[], HueClient | None], on_change: Callable = None):
         self._get_client = get_client
         self._tasks: dict[str, asyncio.Task] = {}
-        self._states: dict[str, dict] = {}  # light_id -> current settings, for UI sync
+        # Each loop reads its own entry every tick, so writing here is what
+        # makes a change take effect live instead of on the next restart.
+        self._states: dict[str, dict] = {}
         self.limiter = RateLimiter(max_per_second=10.0)
         self._on_change = on_change or (lambda: None)
 
@@ -42,11 +48,11 @@ class FlickerEngine:
         return list(self._tasks.keys())
 
     def status(self) -> dict:
-        return {lid: {k: v for k, v in st.items() if k != "_task"} for lid, st in self._states.items()}
+        return {lid: dict(st) for lid, st in self._states.items()}
 
     async def start(self, light_id: str, sequence: str, pattern_id: str, hz: float,
-                     min_bri: int, max_bri: int, hue: int | None, sat: int | None,
-                     transition_ms: int):
+                    min_bri: int, max_bri: int, hue: int | None, sat: int | None,
+                    transition_ms: int):
         await self.stop(light_id, notify=False)
 
         client = self._get_client()
@@ -55,6 +61,7 @@ class FlickerEngine:
 
         self._states[light_id] = {
             "pattern_id": pattern_id,
+            "sequence": sequence,
             "hz": hz,
             "min_bri": min_bri,
             "max_bri": max_bri,
@@ -63,10 +70,18 @@ class FlickerEngine:
             "transition_ms": transition_ms,
             "running": True,
         }
-        task = asyncio.create_task(self._run_light(light_id, sequence, hz, min_bri, max_bri,
-                                                     hue, sat, transition_ms, client))
-        self._tasks[light_id] = task
+        self._tasks[light_id] = asyncio.create_task(self._run_light(light_id, client))
         self._on_change()
+
+    def update(self, light_id: str, **changes) -> bool:
+        """Retune a running loop in place. Returns False if it isn't running."""
+        state = self._states.get(light_id)
+        if state is None or not state.get("running"):
+            return False
+        for key, value in changes.items():
+            if value is not None and key in LIVE_FIELDS:
+                state[key] = value
+        return True
 
     async def stop(self, light_id: str, notify: bool = True):
         task = self._tasks.pop(light_id, None)
@@ -88,36 +103,42 @@ class FlickerEngine:
             await self.stop(lid, notify=False)
         self._on_change()
 
-    async def _run_light(self, light_id, sequence, hz, min_bri, max_bri, hue, sat,
-                          transition_ms, client: HueClient):
-        interval = 1.0 / max(0.5, hz)
+    async def _run_light(self, light_id, client: HueClient):
+        state = self._states[light_id]
         idx = 0
-
-        # Set color once up front, if requested.
-        if hue is not None and sat is not None:
-            try:
-                await self.limiter.wait()
-                await client.set_light_state(light_id, on=True, hue=int(hue), sat=int(sat), transitiontime=0)
-            except Exception as e:
-                logger.warning("Failed to set initial color for light %s: %s", light_id, e)
+        applied_color = None
 
         try:
             while True:
-                char = sequence[idx % len(sequence)]
-                level = level_for_char(char)
+                sequence = state["sequence"] or "m"
+                level = level_for_char(sequence[idx % len(sequence)])
+                min_bri, max_bri = state["min_bri"], state["max_bri"]
                 bri = int(round(min_bri + level * (max_bri - min_bri)))
                 bri = max(1, min(254, bri))
 
+                payload = {
+                    "on": True,
+                    "bri": bri,
+                    "transitiontime": max(0, int(state["transition_ms"] / 100)),
+                }
+
+                # Colour rides along with the brightness PUT rather than costing
+                # its own slot in the rate limiter, and is only re-sent when it
+                # actually changes — including when changed mid-flicker.
+                hue, sat = state["hue"], state["sat"]
+                wanted = (int(hue), int(sat)) if hue is not None and sat is not None else None
+                if wanted is not None and wanted != applied_color:
+                    payload["hue"], payload["sat"] = wanted
+
                 await self.limiter.wait()
                 try:
-                    await client.set_light_state(
-                        light_id, on=True, bri=bri,
-                        transitiontime=max(0, int(transition_ms / 100)),
-                    )
+                    await client.set_light_state(light_id, **payload)
+                    if "hue" in payload:
+                        applied_color = wanted
                 except Exception as e:
                     logger.warning("Hue PUT failed for light %s: %s", light_id, e)
 
                 idx += 1
-                await asyncio.sleep(interval)
+                await asyncio.sleep(1.0 / max(0.5, state["hz"]))
         except asyncio.CancelledError:
             raise

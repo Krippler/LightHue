@@ -17,6 +17,7 @@ _DEFAULT = {
     "bridge_ip": None,
     "api_key": None,
     "custom_patterns": {},   # id -> {id, name, sequence}
+    "groups": {},            # id -> {id, name, light_ids}
     "settings": dict(_DEFAULT_SETTINGS),
     "auth": None,            # None => console is open; else a password record
 }

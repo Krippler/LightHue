@@ -139,6 +139,33 @@ class StopRequest(BaseModel):
     light_ids: list[str] | None = None  # None => stop all
 
 
+class UpdateRequest(BaseModel):
+    """Retune lights that are already flickering. Every setting is optional;
+    whatever is supplied is applied without restarting the loop."""
+
+    light_ids: list[str] = Field(..., min_length=1)
+    pattern_id: str | None = None
+    hz: float | None = Field(None, gt=0, le=20)
+    min_bri: int | None = Field(None, ge=1, le=254)
+    max_bri: int | None = Field(None, ge=1, le=254)
+    hue: int | None = Field(None, ge=0, le=65535)
+    sat: int | None = Field(None, ge=0, le=254)
+    transition_ms: int | None = Field(None, ge=0, le=60000)
+
+    @model_validator(mode="after")
+    def _check_ranges(self):
+        if self.min_bri is not None and self.max_bri is not None and self.min_bri > self.max_bri:
+            raise ValueError("min_bri must be less than or equal to max_bri")
+        if (self.hue is None) != (self.sat is None):
+            raise ValueError("hue and sat must be given together, or not at all")
+        return self
+
+
+class GroupRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=60)
+    light_ids: list[str] = Field(..., min_length=1)
+
+
 # ---------- Console password ----------
 
 @app.get("/api/auth")
@@ -322,6 +349,42 @@ def _resolve_sequence(pattern_id: str) -> str:
     raise HTTPException(404, f"Unknown pattern_id: {pattern_id}")
 
 
+# ---------- Groups ----------
+
+@app.get("/api/groups")
+async def list_groups():
+    cfg = config_store.load()
+    return {"groups": list(cfg.get("groups", {}).values())}
+
+
+@app.post("/api/groups")
+async def create_group(req: GroupRequest):
+    gid = f"group_{uuid.uuid4().hex[:8]}"
+    cfg = config_store.load()
+    cfg["groups"][gid] = {"id": gid, "name": req.name.strip(), "light_ids": req.light_ids}
+    config_store.save(cfg)
+    return cfg["groups"][gid]
+
+
+@app.put("/api/groups/{group_id}")
+async def replace_group(group_id: str, req: GroupRequest):
+    cfg = config_store.load()
+    if group_id not in cfg["groups"]:
+        raise HTTPException(404, f"Unknown group_id: {group_id}")
+    cfg["groups"][group_id] = {"id": group_id, "name": req.name.strip(), "light_ids": req.light_ids}
+    config_store.save(cfg)
+    return cfg["groups"][group_id]
+
+
+@app.delete("/api/groups/{group_id}")
+async def delete_group(group_id: str):
+    cfg = config_store.load()
+    if cfg["groups"].pop(group_id, None) is None:
+        raise HTTPException(404, f"Unknown group_id: {group_id}")
+    config_store.save(cfg)
+    return {"ok": True}
+
+
 # ---------- Flicker control ----------
 
 @app.get("/api/status")
@@ -340,6 +403,18 @@ async def start_flicker(req: StartRequest):
             req.hue, req.sat, req.transition_ms,
         )
     return {"ok": True, "status": engine.status()}
+
+
+@app.post("/api/flicker/update")
+async def update_flicker(req: UpdateRequest):
+    changes = req.model_dump(exclude={"light_ids"}, exclude_none=True)
+    if req.pattern_id is not None:
+        changes["sequence"] = _resolve_sequence(req.pattern_id)
+    updated = [lid for lid in req.light_ids if engine.update(lid, **changes)]
+    if not updated:
+        raise HTTPException(409, "None of those lights are currently flickering")
+    _broadcast_status_soon()
+    return {"ok": True, "updated": updated, "status": engine.status()}
 
 
 @app.post("/api/flicker/stop")
