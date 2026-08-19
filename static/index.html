@@ -6,6 +6,8 @@
 <title>Hue Flicker Console</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="icon" type="image/png" sizes="256x256" href="/static/icon.png" />
+<link rel="icon" type="image/png" sizes="128x128" href="/static/icon-128.png" />
 <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
@@ -18,6 +20,21 @@
   </header>
 
   <main id="app">
+
+    <section id="login-panel" class="panel hidden">
+      <div class="panel-head">
+        <h2>Console Locked</h2>
+        <p class="sub">This console has a password set. Enter it to take control of the lights.</p>
+      </div>
+      <div class="login-form">
+        <label class="field">
+          <span>Password</span>
+          <input id="login-password" type="password" autocomplete="current-password" />
+        </label>
+        <button id="btn-login" class="btn btn-accent">Unlock</button>
+      </div>
+      <div id="login-status" class="status-line"></div>
+    </section>
 
     <section id="setup-panel" class="panel hidden">
       <div class="panel-head">
@@ -67,9 +84,52 @@
         <div class="toolbar-actions">
           <button id="btn-refresh-lights" class="btn btn-ghost">Refresh lights</button>
           <button id="btn-stop-all" class="btn btn-danger">Stop all flicker</button>
+          <button id="btn-settings" class="btn btn-ghost">Settings</button>
           <button id="btn-reconfigure" class="btn btn-ghost">Change bridge</button>
+          <button id="btn-logout" class="btn btn-ghost hidden">Sign out</button>
         </div>
       </div>
+
+      <section id="settings-panel" class="panel settings-panel hidden">
+        <div class="panel-head">
+          <h2>Console Settings</h2>
+          <p class="sub">Everything here lives in the console&rsquo;s own config &mdash; nothing needs
+          changing in Docker.</p>
+        </div>
+
+        <div class="settings-grid">
+          <div class="setup-col">
+            <h3>Bridge send rate</h3>
+            <p class="sub small">Global ceiling on commands sent to the bridge, across every
+            flickering light. Philips advises against sustained bursts past ~10/sec.</p>
+            <label class="field">
+              <span>Max <em id="rate-value">10</em> commands / sec</span>
+              <input id="rate-input" type="range" min="1" max="30" step="1" value="10" />
+            </label>
+            <button id="btn-save-rate" class="btn">Save rate</button>
+            <div id="rate-status" class="status-line"></div>
+          </div>
+
+          <div class="setup-col">
+            <h3>Console password</h3>
+            <p id="pw-explainer" class="sub small">No password set &mdash; anyone on your network can
+            drive these lights. Set one to lock the console.</p>
+            <label id="pw-current-field" class="field hidden">
+              <span>Current password</span>
+              <input id="pw-current" type="password" autocomplete="current-password" />
+            </label>
+            <label class="field">
+              <span>New password</span>
+              <input id="pw-new" type="password" autocomplete="new-password" placeholder="at least 4 characters" />
+            </label>
+            <div class="pw-actions">
+              <button id="btn-save-pw" class="btn btn-accent">Set password</button>
+              <button id="btn-clear-pw" class="btn btn-danger hidden">Remove</button>
+            </div>
+            <div id="pw-status" class="status-line"></div>
+          </div>
+        </div>
+      </section>
 
       <section class="panel custom-panel">
         <div class="panel-head">

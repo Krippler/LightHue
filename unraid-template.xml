@@ -1,0 +1,65 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>QuakeHueFlicker</Name>
+  <Repository>ghcr.io/krippler/lighthue:latest</Repository>
+  <Registry>https://github.com/Krippler/LightHue/pkgs/container/lighthue</Registry>
+  <Branch>
+    <Tag>latest</Tag>
+    <TagDescription>Latest build from main</TagDescription>
+  </Branch>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/Krippler/LightHue/issues</Support>
+  <Project>https://github.com/Krippler/LightHue</Project>
+  <Overview>
+    Drives Philips Hue lights using Quake's classic "lightstyle" flicker patterns
+    (styles 0-11, straight from id Software's engine), through a small web UI that
+    several people on your network can use at once.&#13;
+    &#13;
+    Talks directly to your Hue Bridge over the local API - no Philips cloud account
+    needed. Pick lights, pattern, speed, brightness range and colour; save your own
+    a-z lightstyle strings; watch a live waveform of what each light is doing.&#13;
+    &#13;
+    Everything is configured in the web UI, including the optional console password
+    and the bridge send-rate cap - there are no environment variables to set here.&#13;
+    &#13;
+    First run: open the WebUI, either auto-discover your bridge or type its IP, then
+    press the physical link button on the bridge and hit Pair within 30 seconds.&#13;
+    &#13;
+    If discovery or pairing fails on the default bridge network, switch Network Type
+    to Host and try again.
+  </Overview>
+  <Category>HomeAutomation: Other:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/Krippler/LightHue/main/unraid-template.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/Krippler/LightHue/main/static/icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config
+    Name="WebUI Port"
+    Target="8080"
+    Default="8080"
+    Mode="tcp"
+    Description="Port for the flicker console web UI."
+    Type="Port"
+    Display="always"
+    Required="true"
+    Mask="false">8080</Config>
+  <Config
+    Name="Config Storage"
+    Target="/data"
+    Default="/mnt/user/appdata/quake-hue-flicker"
+    Mode="rw"
+    Description="Holds config.json: your bridge pairing, saved custom patterns, console password and settings. Keep this mapped or you will have to re-pair with the bridge after every update."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata/quake-hue-flicker</Config>
+</Container>

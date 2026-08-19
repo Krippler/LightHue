@@ -18,3 +18,7 @@ venv/
 *.swp
 .vscode/
 .idea/
+
+# Test/lint caches
+.pytest_cache/
+.ruff_cache/

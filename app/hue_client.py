@@ -1,12 +1,11 @@
 import httpx
-from typing import Optional
 
 
 class HueError(Exception):
     pass
 
 
-_shared: Optional[httpx.AsyncClient] = None
+_shared: httpx.AsyncClient | None = None
 
 
 def _http() -> httpx.AsyncClient:

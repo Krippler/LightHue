@@ -1,22 +1,22 @@
 import asyncio
 import uuid
 from contextlib import asynccontextmanager
-from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field, model_validator
 
-from . import config_store
-from . import hue_client
-from .hue_client import HueClient
-from .patterns import BUILTIN_PATTERNS, BUILTIN_BY_ID
+from . import auth, config_store, hue_client
+from .auth import ConsoleAuthMiddleware
 from .flicker_engine import FlickerEngine
+from .hue_client import HueClient
+from .patterns import BUILTIN_BY_ID, BUILTIN_PATTERNS
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    engine.limiter.set_rate(config_store.get_settings()["max_commands_per_second"])
     yield
     # Cancel the flicker loops before tearing down the pool they send through,
     # otherwise in-flight ticks fail against a closed client on the way out.
@@ -25,6 +25,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Quake Hue Flicker", lifespan=lifespan)
+app.add_middleware(ConsoleAuthMiddleware)
 
 
 # ---------- WebSocket connection manager ----------
@@ -55,17 +56,24 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Fire-and-forget tasks are only weakly held by the loop, so keep a strong
+# reference until each one finishes or it can be collected mid-flight.
+_background: set[asyncio.Task] = set()
+
 
 def _broadcast_status_soon():
     async def _do():
         await manager.broadcast({"type": "status", "data": engine.status()})
     try:
-        asyncio.get_event_loop().create_task(_do())
+        loop = asyncio.get_running_loop()
     except RuntimeError:
-        pass
+        return   # no loop (e.g. called from a sync context in tests)
+    task = loop.create_task(_do())
+    _background.add(task)
+    task.add_done_callback(_background.discard)
 
 
-def get_client() -> Optional[HueClient]:
+def get_client() -> HueClient | None:
     cfg = config_store.load()
     if not cfg.get("bridge_ip") or not cfg.get("api_key"):
         return None
@@ -87,23 +95,120 @@ class PairRequest(BaseModel):
 
 
 class CustomPatternRequest(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1, max_length=60)
     sequence: str
 
 
+class LoginRequest(BaseModel):
+    password: str
+
+
+class SetPasswordRequest(BaseModel):
+    new_password: str = Field(..., min_length=4, max_length=128)
+    current_password: str | None = None
+
+
+class ClearPasswordRequest(BaseModel):
+    current_password: str
+
+
+class SettingsRequest(BaseModel):
+    max_commands_per_second: float = Field(..., ge=1.0, le=30.0)
+
+
 class StartRequest(BaseModel):
-    light_ids: list[str]
+    light_ids: list[str] = Field(..., min_length=1)
     pattern_id: str
-    hz: float = 10.0
-    min_bri: int = 1
-    max_bri: int = 254
-    hue: Optional[int] = None
-    sat: Optional[int] = None
-    transition_ms: int = 0
+    hz: float = Field(10.0, gt=0, le=20, description="Hue can't usefully go faster")
+    min_bri: int = Field(1, ge=1, le=254)
+    max_bri: int = Field(254, ge=1, le=254)
+    hue: int | None = Field(None, ge=0, le=65535)
+    sat: int | None = Field(None, ge=0, le=254)
+    transition_ms: int = Field(0, ge=0, le=60000)
+
+    @model_validator(mode="after")
+    def _check_ranges(self):
+        if self.min_bri > self.max_bri:
+            raise ValueError("min_bri must be less than or equal to max_bri")
+        if (self.hue is None) != (self.sat is None):
+            raise ValueError("hue and sat must be given together, or not at all")
+        return self
 
 
 class StopRequest(BaseModel):
-    light_ids: Optional[list[str]] = None  # None => stop all
+    light_ids: list[str] | None = None  # None => stop all
+
+
+# ---------- Console password ----------
+
+@app.get("/api/auth")
+async def auth_state(request: Request):
+    return {
+        "required": auth.is_enabled(),
+        "authenticated": auth.is_authorized(request.scope),
+    }
+
+
+@app.post("/api/auth/login")
+async def login(req: LoginRequest, response: Response):
+    record = auth.password_record()
+    if record is None:
+        return {"ok": True, "required": False}
+    if not auth.verify_password(record, req.password):
+        raise HTTPException(401, "Wrong password")
+    response.set_cookie(
+        auth.COOKIE_NAME, auth.open_session(),
+        httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30,
+    )
+    return {"ok": True, "required": True}
+
+
+@app.post("/api/auth/logout")
+async def logout(request: Request, response: Response):
+    auth.close_session(request.cookies.get(auth.COOKIE_NAME))
+    response.delete_cookie(auth.COOKIE_NAME)
+    return {"ok": True}
+
+
+@app.put("/api/auth/password")
+async def set_password(req: SetPasswordRequest, response: Response):
+    record = auth.password_record()
+    if record is not None:
+        if not req.current_password or not auth.verify_password(record, req.current_password):
+            raise HTTPException(403, "Current password is wrong")
+    auth.set_password(req.new_password)
+    # set_password drops every session, including this caller's — hand back a
+    # fresh one so whoever just set it isn't immediately locked out.
+    response.set_cookie(
+        auth.COOKIE_NAME, auth.open_session(),
+        httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30,
+    )
+    return {"ok": True, "required": True}
+
+
+@app.delete("/api/auth/password")
+async def remove_password(req: ClearPasswordRequest):
+    record = auth.password_record()
+    if record is None:
+        return {"ok": True, "required": False}
+    if not auth.verify_password(record, req.current_password):
+        raise HTTPException(403, "Current password is wrong")
+    auth.clear_password()
+    return {"ok": True, "required": False}
+
+
+# ---------- Settings ----------
+
+@app.get("/api/settings")
+async def get_settings():
+    return config_store.get_settings()
+
+
+@app.put("/api/settings")
+async def put_settings(req: SettingsRequest):
+    settings = config_store.update_settings(max_commands_per_second=req.max_commands_per_second)
+    engine.limiter.set_rate(settings["max_commands_per_second"])
+    return settings
 
 
 # ---------- Bridge setup ----------
@@ -122,7 +227,7 @@ async def discover_bridge():
     try:
         results = await HueClient.discover()
     except Exception as e:
-        raise HTTPException(502, f"Discovery failed: {e}")
+        raise HTTPException(502, f"Discovery failed: {e}") from e
     return {"bridges": results}
 
 
@@ -151,7 +256,7 @@ async def list_lights():
     try:
         lights = await client.get_lights()
     except Exception as e:
-        raise HTTPException(502, f"Could not reach bridge: {e}")
+        raise HTTPException(502, f"Could not reach bridge: {e}") from e
     out = []
     for lid, info in lights.items():
         out.append({
@@ -175,12 +280,14 @@ async def list_patterns():
 
 @app.post("/api/patterns")
 async def create_pattern(req: CustomPatternRequest):
-    seq = req.sequence.strip().lower()
+    # Match what the UI does before it posts, so a hand-rolled API call and a
+    # copy-paste into the form accept exactly the same strings.
+    seq = "".join(req.sequence.split()).lower()
     if not seq or any(c not in "abcdefghijklmnopqrstuvwxyz" for c in seq):
         raise HTTPException(400, "Sequence must only contain letters a-z")
     pid = f"custom_{uuid.uuid4().hex[:8]}"
     cfg = config_store.load()
-    cfg["custom_patterns"][pid] = {"id": pid, "name": req.name, "sequence": seq}
+    cfg["custom_patterns"][pid] = {"id": pid, "name": req.name.strip(), "sequence": seq}
     config_store.save(cfg)
     return cfg["custom_patterns"][pid]
 
@@ -227,11 +334,6 @@ async def start_flicker(req: StartRequest):
     if get_client() is None:
         raise HTTPException(400, "Bridge not configured yet")
     sequence = _resolve_sequence(req.pattern_id)
-    if req.hz <= 0 or req.hz > 20:
-        raise HTTPException(400, "hz must be between 0 and 20 (Hue can't usefully go faster)")
-    if len(req.light_ids) * req.hz > 15:
-        # soft warning surfaced as 200 still, but let's just cap silently server-side
-        pass
     for lid in req.light_ids:
         await engine.start(
             lid, sequence, req.pattern_id, req.hz, req.min_bri, req.max_bri,

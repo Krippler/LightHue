@@ -1,0 +1,12 @@
+line-length = 110
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "C4"]
+ignore = [
+    "E501",   # long lines are mostly the Quake lightstyle table
+    "B008",   # FastAPI dependencies are declared in defaults by design
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["E402"]   # fixtures reload modules after env setup

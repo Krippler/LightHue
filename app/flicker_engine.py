@@ -1,7 +1,7 @@
 import asyncio
-import time
 import logging
-from typing import Callable, Optional
+import time
+from collections.abc import Callable
 
 from .hue_client import HueClient
 from .patterns import level_for_char
@@ -31,7 +31,7 @@ class RateLimiter:
 
 
 class FlickerEngine:
-    def __init__(self, get_client: Callable[[], Optional[HueClient]], on_change: Callable = None):
+    def __init__(self, get_client: Callable[[], HueClient | None], on_change: Callable = None):
         self._get_client = get_client
         self._tasks: dict[str, asyncio.Task] = {}
         self._states: dict[str, dict] = {}  # light_id -> current settings, for UI sync
@@ -45,7 +45,7 @@ class FlickerEngine:
         return {lid: {k: v for k, v in st.items() if k != "_task"} for lid, st in self._states.items()}
 
     async def start(self, light_id: str, sequence: str, pattern_id: str, hz: float,
-                     min_bri: int, max_bri: int, hue: Optional[int], sat: Optional[int],
+                     min_bri: int, max_bri: int, hue: int | None, sat: int | None,
                      transition_ms: int):
         await self.stop(light_id, notify=False)
 
@@ -74,8 +74,10 @@ class FlickerEngine:
             task.cancel()
             try:
                 await task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
                 pass
+            except Exception:
+                logger.exception("Flicker loop for light %s failed on the way down", light_id)
         if light_id in self._states:
             self._states[light_id]["running"] = False
         if notify:
