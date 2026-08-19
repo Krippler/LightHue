@@ -13,13 +13,27 @@ const connStatus = $('#conn-status');
 
 // ---------- API helpers ----------
 
+function errorText(data, res) {
+  const detail = data.detail;
+  if (typeof detail === 'string') return detail;
+  // FastAPI returns a list of field errors for request-validation failures.
+  if (Array.isArray(detail)) {
+    return detail.map(e => (e && e.msg ? e.msg.replace(/^Value error, /, '') : String(e))).join('; ');
+  }
+  return res.statusText || 'Request failed';
+}
+
 async function api(path, opts = {}) {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
     ...opts,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.detail || res.statusText);
+  if (res.status === 401) {
+    showLoginGate();
+    throw new Error(errorText(data, res));
+  }
+  if (!res.ok) throw new Error(errorText(data, res));
   return data;
 }
 
@@ -51,7 +65,12 @@ $('#btn-discover').addEventListener('click', async () => {
     bridges.forEach(b => {
       const el = document.createElement('div');
       el.className = 'discover-item';
-      el.innerHTML = `<span>${b.internalipaddress}</span><span class="dim">use</span>`;
+      const ipEl = document.createElement('span');
+      ipEl.textContent = b.internalipaddress;
+      const useEl = document.createElement('span');
+      useEl.className = 'dim';
+      useEl.textContent = 'use';
+      el.append(ipEl, useEl);
       el.addEventListener('click', () => { $('#pair-ip').value = b.internalipaddress; });
       box.appendChild(el);
     });
@@ -108,6 +127,7 @@ async function loadPatternsAndLights() {
   LIGHTS = lightsRes.lights;
   STATUS = statusRes.lights;
   $('#light-count-label').textContent = `${LIGHTS.length} light${LIGHTS.length === 1 ? '' : 's'}`;
+  renderCustomList();
   renderLights();
 }
 
@@ -236,18 +256,21 @@ function levelForChar(c) {
   return code / 25;
 }
 
-function drawWaveform(lightId, sequence) {
-  const card = cardEls[lightId];
-  if (!card) return;
-  const wf = card.querySelector('.waveform');
-  wf.innerHTML = '';
+function renderBars(container, sequence) {
+  container.innerHTML = '';
   for (const ch of sequence) {
     const bar = document.createElement('div');
     bar.className = 'bar';
     const level = levelForChar(ch);
     bar.style.height = `${8 + level * 92}%`;
-    wf.appendChild(bar);
+    container.appendChild(bar);
   }
+}
+
+function drawWaveform(lightId, sequence) {
+  const card = cardEls[lightId];
+  if (!card) return;
+  renderBars(card.querySelector('.waveform'), sequence);
 }
 
 function restartWaveform(lightId) {
@@ -281,6 +304,85 @@ function stopWaveformAnimation(lightId) {
   }
   const card = cardEls[lightId];
   if (card) $$('.bar', card.querySelector('.waveform')).forEach(b => b.classList.remove('active'));
+}
+
+// ---------- Custom lightstyles ----------
+
+const customName = $('#custom-name');
+const customSeq = $('#custom-seq');
+const customStatus = $('#custom-status');
+
+function normalizeSequence(raw) {
+  return raw.trim().toLowerCase().replace(/\s+/g, '');
+}
+
+function setCustomStatus(text, kind = '') {
+  customStatus.textContent = text;
+  customStatus.className = `status-line ${kind}`.trim();
+}
+
+customSeq.addEventListener('input', () => {
+  const seq = normalizeSequence(customSeq.value);
+  renderBars($('#custom-preview'), /^[a-z]*$/.test(seq) ? seq : '');
+});
+
+$('#btn-save-pattern').addEventListener('click', async () => {
+  const name = customName.value.trim();
+  const sequence = normalizeSequence(customSeq.value);
+  if (!name) return setCustomStatus('Give the pattern a name.', 'err');
+  if (!sequence) return setCustomStatus('Write a sequence first.', 'err');
+  if (!/^[a-z]+$/.test(sequence)) return setCustomStatus('Sequence must only contain letters a-z.', 'err');
+  try {
+    await api('/api/patterns', { method: 'POST', body: JSON.stringify({ name, sequence }) });
+    customName.value = '';
+    customSeq.value = '';
+    renderBars($('#custom-preview'), '');
+    setCustomStatus(`Saved "${name}".`, 'ok');
+    await loadPatternsAndLights();
+  } catch (e) {
+    setCustomStatus(e.message, 'err');
+  }
+});
+
+function renderCustomList() {
+  const list = $('#custom-list');
+  list.innerHTML = '';
+  if (!PATTERNS.custom.length) {
+    list.textContent = 'No custom patterns saved yet.';
+    list.className = 'custom-list dim';
+    return;
+  }
+  list.className = 'custom-list';
+  PATTERNS.custom.forEach(p => {
+    const chip = document.createElement('div');
+    chip.className = 'custom-chip';
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'chip-name';
+    nameEl.textContent = p.name;
+
+    const seqEl = document.createElement('span');
+    seqEl.className = 'chip-seq';
+    seqEl.textContent = p.sequence;
+
+    const del = document.createElement('button');
+    del.className = 'chip-del';
+    del.type = 'button';
+    del.textContent = '\u00d7';
+    del.title = `Delete "${p.name}"`;
+    del.addEventListener('click', async () => {
+      try {
+        await api(`/api/patterns/${encodeURIComponent(p.id)}`, { method: 'DELETE' });
+        setCustomStatus(`Deleted "${p.name}".`, '');
+        await loadPatternsAndLights();
+      } catch (e) {
+        setCustomStatus(e.message, 'err');
+      }
+    });
+
+    chip.append(nameEl, seqEl, del);
+    list.appendChild(chip);
+  });
 }
 
 // ---------- Status sync (drives multi-user shared state) ----------
@@ -371,7 +473,141 @@ function connectWs() {
   });
 }
 
+// ---------- Console password ----------
+
+const loginPanel = $('#login-panel');
+const settingsPanel = $('#settings-panel');
+let AUTH = { required: false, authenticated: true };
+let wsStarted = false;
+
+function showLoginGate() {
+  loginPanel.classList.remove('hidden');
+  setupPanel.classList.add('hidden');
+  mainPanel.classList.add('hidden');
+}
+
+$('#btn-login').addEventListener('click', login);
+$('#login-password').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+
+async function login() {
+  const statusEl = $('#login-status');
+  const password = $('#login-password').value;
+  if (!password) { statusEl.textContent = 'Enter the console password.'; statusEl.className = 'status-line err'; return; }
+  try {
+    await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ password }) });
+    $('#login-password').value = '';
+    statusEl.textContent = '';
+    statusEl.className = 'status-line';
+    loginPanel.classList.add('hidden');
+    await bootstrap();
+  } catch (e) {
+    statusEl.textContent = e.message;
+    statusEl.className = 'status-line err';
+  }
+}
+
+$('#btn-logout').addEventListener('click', async () => {
+  await api('/api/auth/logout', { method: 'POST' });
+  location.reload();
+});
+
+// ---------- Settings ----------
+
+$('#btn-settings').addEventListener('click', () => {
+  settingsPanel.classList.toggle('hidden');
+});
+
+const rateInput = $('#rate-input');
+const rateValue = $('#rate-value');
+rateInput.addEventListener('input', () => { rateValue.textContent = rateInput.value; });
+
+async function loadSettings() {
+  const settings = await api('/api/settings');
+  rateInput.value = settings.max_commands_per_second;
+  rateValue.textContent = settings.max_commands_per_second;
+}
+
+$('#btn-save-rate').addEventListener('click', async () => {
+  const statusEl = $('#rate-status');
+  try {
+    await api('/api/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ max_commands_per_second: Number(rateInput.value) }),
+    });
+    statusEl.textContent = `Send rate capped at ${rateInput.value}/sec.`;
+    statusEl.className = 'status-line ok';
+  } catch (e) {
+    statusEl.textContent = e.message;
+    statusEl.className = 'status-line err';
+  }
+});
+
+function renderAuthControls() {
+  const set = AUTH.required;
+  $('#pw-current-field').classList.toggle('hidden', !set);
+  $('#btn-clear-pw').classList.toggle('hidden', !set);
+  $('#btn-logout').classList.toggle('hidden', !set);
+  $('#btn-save-pw').textContent = set ? 'Change password' : 'Set password';
+  $('#pw-explainer').textContent = set
+    ? 'A password is set. Anyone opening this console has to enter it first.'
+    : 'No password set — anyone on your network can drive these lights. Set one to lock the console.';
+}
+
+$('#btn-save-pw').addEventListener('click', async () => {
+  const statusEl = $('#pw-status');
+  const body = { new_password: $('#pw-new').value };
+  if (AUTH.required) body.current_password = $('#pw-current').value;
+  try {
+    await api('/api/auth/password', { method: 'PUT', body: JSON.stringify(body) });
+    $('#pw-new').value = '';
+    $('#pw-current').value = '';
+    AUTH = { required: true, authenticated: true };
+    renderAuthControls();
+    statusEl.textContent = 'Password saved. Other open consoles will need to sign in again.';
+    statusEl.className = 'status-line ok';
+  } catch (e) {
+    statusEl.textContent = e.message;
+    statusEl.className = 'status-line err';
+  }
+});
+
+$('#btn-clear-pw').addEventListener('click', async () => {
+  const statusEl = $('#pw-status');
+  try {
+    await api('/api/auth/password', {
+      method: 'DELETE',
+      body: JSON.stringify({ current_password: $('#pw-current').value }),
+    });
+    $('#pw-current').value = '';
+    AUTH = { required: false, authenticated: true };
+    renderAuthControls();
+    statusEl.textContent = 'Password removed — the console is open again.';
+    statusEl.className = 'status-line ok';
+  } catch (e) {
+    statusEl.textContent = e.message;
+    statusEl.className = 'status-line err';
+  }
+});
+
 // ---------- Init ----------
 
-checkBridge();
-connectWs();
+async function bootstrap() {
+  AUTH = await api('/api/auth');
+  if (AUTH.required && !AUTH.authenticated) {
+    showLoginGate();
+    return;
+  }
+  loginPanel.classList.add('hidden');
+  renderAuthControls();
+  await loadSettings();
+  try {
+    await checkBridge();
+  } catch (e) {
+    // An unreachable bridge shouldn't cost us the live status feed.
+    connStatus.textContent = e.message;
+    connStatus.className = 'conn-status err';
+  }
+  if (!wsStarted) { wsStarted = true; connectWs(); }
+}
+
+bootstrap();

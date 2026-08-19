@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        run: pytest -q
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t quake-hue-flicker:ci .
+
+      - name: Boot the container and hit it
+        run: |
+          docker run -d --name ci-console -p 8080:8080 quake-hue-flicker:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/api/bridge > /dev/null; then
+              echo "console is up"
+              curl -fsS http://127.0.0.1:8080/api/auth
+              docker rm -f ci-console
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "console did not come up in time"
+          docker logs ci-console
+          docker rm -f ci-console
+          exit 1

@@ -2,13 +2,13 @@
 Quake lightstyle sequences. Each character represents a brightness level
 from 'a' (darkest) to 'z' (brightest), sampled at the given rate (10Hz in
 the original engine). This is the classic default lightstyle table used by
-id Software's Quake engine (styles 0-11) plus a couple of hand-tuned extras.
+id Software's Quake engine (styles 0-11).
 """
 
 BUILTIN_PATTERNS = [
     {"id": "steady", "name": "0 - Steady", "sequence": "m"},
     {"id": "flicker_a", "name": "1 - Flicker (classic)", "sequence": "mmnmmommommnonmmonqnmmo"},
-    {"id": "slow_strong_pulse", "name": "2 - Slow Strong Pulse", "sequence": "abcdefghijklmnopqrrqponmlkjihgfedcba"},
+    {"id": "slow_strong_pulse", "name": "2 - Slow Strong Pulse", "sequence": "abcdefghijklmnopqrstuvwxyzyxwvutsrqponmlkjihgfedcba"},
     {"id": "candle_a", "name": "3 - Candle (soft)", "sequence": "mmmmmaaaaammmmmaaaaaabcdefgabcdefg"},
     {"id": "fast_strobe", "name": "4 - Fast Strobe", "sequence": "mamamamamama"},
     {"id": "gentle_pulse", "name": "5 - Gentle Pulse", "sequence": "jklmnopqrstuvwxyzyxwvutsrqponmlkj"},

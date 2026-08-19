@@ -1,5 +1,7 @@
 services:
   quake-hue-flicker:
+    # Build locally, or swap this for the published image:
+    #   image: ghcr.io/krippler/lighthue:latest
     build: .
     container_name: quake-hue-flicker
     ports:
