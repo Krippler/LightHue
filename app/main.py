@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
@@ -8,11 +9,22 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from . import config_store
+from . import hue_client
 from .hue_client import HueClient
 from .patterns import BUILTIN_PATTERNS, BUILTIN_BY_ID
 from .flicker_engine import FlickerEngine
 
-app = FastAPI(title="Quake Hue Flicker")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    yield
+    # Cancel the flicker loops before tearing down the pool they send through,
+    # otherwise in-flight ticks fail against a closed client on the way out.
+    await engine.stop_all()
+    await hue_client.aclose()
+
+
+app = FastAPI(title="Quake Hue Flicker", lifespan=lifespan)
 
 
 # ---------- WebSocket connection manager ----------
@@ -29,8 +41,10 @@ class ConnectionManager:
         self.active.discard(ws)
 
     async def broadcast(self, message: dict):
+        # Snapshot first: send_json awaits, and a client connecting or dropping
+        # during that await would otherwise mutate the set mid-iteration.
         dead = []
-        for ws in self.active:
+        for ws in list(self.active):
             try:
                 await ws.send_json(message)
             except Exception:
@@ -173,8 +187,20 @@ async def create_pattern(req: CustomPatternRequest):
 
 @app.delete("/api/patterns/{pattern_id}")
 async def delete_pattern(pattern_id: str):
+    if pattern_id in BUILTIN_BY_ID:
+        raise HTTPException(400, "Built-in Quake patterns can't be deleted")
+    # A running loop holds its own copy of the sequence, so deleting out from
+    # under it would leave lights flickering a pattern the UI can't name.
+    in_use = [lid for lid, st in engine.status().items()
+              if st.get("running") and st.get("pattern_id") == pattern_id]
+    if in_use:
+        raise HTTPException(
+            409,
+            f"That pattern is running on {len(in_use)} light(s) — stop them first",
+        )
     cfg = config_store.load()
-    cfg["custom_patterns"].pop(pattern_id, None)
+    if cfg["custom_patterns"].pop(pattern_id, None) is None:
+        raise HTTPException(404, f"Unknown pattern_id: {pattern_id}")
     config_store.save(cfg)
     return {"ok": True}
 

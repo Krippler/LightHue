@@ -71,6 +71,31 @@
         </div>
       </div>
 
+      <section class="panel custom-panel">
+        <div class="panel-head">
+          <h2>Custom Lightstyles</h2>
+          <p class="sub">One letter per frame, <em>a</em> darkest through <em>z</em> brightest &mdash; the same
+          encoding Quake uses. Saved patterns show up in every light&rsquo;s pattern list.</p>
+        </div>
+
+        <div class="custom-form">
+          <label class="field">
+            <span>Name</span>
+            <input id="custom-name" type="text" placeholder="Torchlight" maxlength="60" />
+          </label>
+          <label class="field custom-seq-field">
+            <span>Sequence</span>
+            <input id="custom-seq" type="text" placeholder="mmnmmommommnonmmonqnmmo"
+                   spellcheck="false" autocomplete="off" />
+          </label>
+          <button id="btn-save-pattern" class="btn btn-accent">Save pattern</button>
+        </div>
+
+        <div id="custom-preview" class="waveform custom-preview" aria-hidden="true"></div>
+        <div id="custom-status" class="status-line"></div>
+        <div id="custom-list" class="custom-list"></div>
+      </section>
+
       <div id="lights-grid" class="lights-grid"></div>
     </section>
 

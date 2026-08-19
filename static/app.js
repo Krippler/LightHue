@@ -108,6 +108,7 @@ async function loadPatternsAndLights() {
   LIGHTS = lightsRes.lights;
   STATUS = statusRes.lights;
   $('#light-count-label').textContent = `${LIGHTS.length} light${LIGHTS.length === 1 ? '' : 's'}`;
+  renderCustomList();
   renderLights();
 }
 
@@ -236,18 +237,21 @@ function levelForChar(c) {
   return code / 25;
 }
 
-function drawWaveform(lightId, sequence) {
-  const card = cardEls[lightId];
-  if (!card) return;
-  const wf = card.querySelector('.waveform');
-  wf.innerHTML = '';
+function renderBars(container, sequence) {
+  container.innerHTML = '';
   for (const ch of sequence) {
     const bar = document.createElement('div');
     bar.className = 'bar';
     const level = levelForChar(ch);
     bar.style.height = `${8 + level * 92}%`;
-    wf.appendChild(bar);
+    container.appendChild(bar);
   }
+}
+
+function drawWaveform(lightId, sequence) {
+  const card = cardEls[lightId];
+  if (!card) return;
+  renderBars(card.querySelector('.waveform'), sequence);
 }
 
 function restartWaveform(lightId) {
@@ -281,6 +285,85 @@ function stopWaveformAnimation(lightId) {
   }
   const card = cardEls[lightId];
   if (card) $$('.bar', card.querySelector('.waveform')).forEach(b => b.classList.remove('active'));
+}
+
+// ---------- Custom lightstyles ----------
+
+const customName = $('#custom-name');
+const customSeq = $('#custom-seq');
+const customStatus = $('#custom-status');
+
+function normalizeSequence(raw) {
+  return raw.trim().toLowerCase().replace(/\s+/g, '');
+}
+
+function setCustomStatus(text, kind = '') {
+  customStatus.textContent = text;
+  customStatus.className = `status-line ${kind}`.trim();
+}
+
+customSeq.addEventListener('input', () => {
+  const seq = normalizeSequence(customSeq.value);
+  renderBars($('#custom-preview'), /^[a-z]*$/.test(seq) ? seq : '');
+});
+
+$('#btn-save-pattern').addEventListener('click', async () => {
+  const name = customName.value.trim();
+  const sequence = normalizeSequence(customSeq.value);
+  if (!name) return setCustomStatus('Give the pattern a name.', 'err');
+  if (!sequence) return setCustomStatus('Write a sequence first.', 'err');
+  if (!/^[a-z]+$/.test(sequence)) return setCustomStatus('Sequence must only contain letters a-z.', 'err');
+  try {
+    await api('/api/patterns', { method: 'POST', body: JSON.stringify({ name, sequence }) });
+    customName.value = '';
+    customSeq.value = '';
+    renderBars($('#custom-preview'), '');
+    setCustomStatus(`Saved "${name}".`, 'ok');
+    await loadPatternsAndLights();
+  } catch (e) {
+    setCustomStatus(e.message, 'err');
+  }
+});
+
+function renderCustomList() {
+  const list = $('#custom-list');
+  list.innerHTML = '';
+  if (!PATTERNS.custom.length) {
+    list.textContent = 'No custom patterns saved yet.';
+    list.className = 'custom-list dim';
+    return;
+  }
+  list.className = 'custom-list';
+  PATTERNS.custom.forEach(p => {
+    const chip = document.createElement('div');
+    chip.className = 'custom-chip';
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'chip-name';
+    nameEl.textContent = p.name;
+
+    const seqEl = document.createElement('span');
+    seqEl.className = 'chip-seq';
+    seqEl.textContent = p.sequence;
+
+    const del = document.createElement('button');
+    del.className = 'chip-del';
+    del.type = 'button';
+    del.textContent = '\u00d7';
+    del.title = `Delete "${p.name}"`;
+    del.addEventListener('click', async () => {
+      try {
+        await api(`/api/patterns/${encodeURIComponent(p.id)}`, { method: 'DELETE' });
+        setCustomStatus(`Deleted "${p.name}".`, '');
+        await loadPatternsAndLights();
+      } catch (e) {
+        setCustomStatus(e.message, 'err');
+      }
+    });
+
+    chip.append(nameEl, seqEl, del);
+    list.appendChild(chip);
+  });
 }
 
 // ---------- Status sync (drives multi-user shared state) ----------

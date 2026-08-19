@@ -393,6 +393,60 @@ select {
 .card-actions { display: flex; gap: 10px; }
 .card-actions .btn { flex: 1; }
 
+/* ---------- Custom lightstyles ---------- */
+
+.custom-panel { margin-bottom: 20px; }
+.custom-panel .panel-head h2 { font-size: 20px; }
+.custom-panel .sub { margin-bottom: 14px; }
+.custom-panel .sub em { color: var(--brimstone); font-style: normal; }
+
+.custom-form {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.custom-form .field { min-width: 150px; }
+.custom-seq-field { flex: 2 1 260px; }
+.custom-form .btn { white-space: nowrap; }
+
+.custom-preview { margin-top: 14px; }
+/* No bars yet — don't leave an unexplained empty box in the form. */
+.custom-preview:empty { display: none; }
+
+.custom-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+
+.custom-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--void);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 6px 6px 6px 12px;
+  font-size: 12px;
+}
+.custom-chip .chip-name { color: var(--bone); }
+.custom-chip .chip-seq {
+  color: var(--bone-dim);
+  font-size: 11px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.custom-chip .chip-del {
+  font-family: var(--font-mono);
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--bone-dim);
+  border-radius: 2px;
+  padding: 2px 7px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.custom-chip .chip-del:hover { border-color: var(--danger-bright); color: var(--danger-bright); }
+
 /* ---------- Footer ---------- */
 
 .foot {
@@ -405,5 +459,6 @@ select {
 
 @media (max-width: 720px) {
   .setup-grid { grid-template-columns: 1fr; }
+  .custom-form { flex-direction: column; align-items: stretch; }
   .topbar h1 { font-size: 28px; }
 }
