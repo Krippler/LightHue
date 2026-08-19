@@ -13,6 +13,10 @@ RUN mkdir -p /data
 VOLUME ["/data"]
 
 ENV CONFIG_PATH=/data/config.json
-EXPOSE 8080
+# 26000 is Quake's own registered port — nothing else on a NAS tends to want it.
+ENV PORT=26000
+EXPOSE 26000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Shell form so PORT can be overridden, which is the only way to move the
+# listener when running with host networking (no port mapping to remap).
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-26000}"]
