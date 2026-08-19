@@ -1,0 +1,13 @@
+services:
+  quake-hue-flicker:
+    build: .
+    container_name: quake-hue-flicker
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+    # If Hue bridge discovery/pairing fails from the default bridge network
+    # (common on some Unraid setups), uncomment the line below to give the
+    # container direct access to your LAN instead:
+    # network_mode: host

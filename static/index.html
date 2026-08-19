@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Hue Flicker Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="scanlines" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="eyebrow">id software // lightstyle emulator</div>
+    <h1>HUE FLICKER CONSOLE</h1>
+    <div id="conn-status" class="conn-status">connecting&hellip;</div>
+  </header>
+
+  <main id="app">
+
+    <section id="setup-panel" class="panel hidden">
+      <div class="panel-head">
+        <h2>Connect a Bridge</h2>
+        <p class="sub">Point this at your Philips Hue Bridge before you can control lights.</p>
+      </div>
+
+      <div class="setup-grid">
+        <div class="setup-col">
+          <h3>Auto-discover</h3>
+          <button id="btn-discover" class="btn">Find bridges on my network</button>
+          <div id="discover-results" class="discover-list"></div>
+        </div>
+
+        <div class="setup-col">
+          <h3>Pair</h3>
+          <p class="sub small">Press the physical link button on your bridge, then enter its IP and pair within 30 seconds.</p>
+          <label class="field">
+            <span>Bridge IP</span>
+            <input id="pair-ip" type="text" placeholder="192.168.1.23" />
+          </label>
+          <button id="btn-pair" class="btn btn-accent">Pair with bridge</button>
+          <div id="pair-status" class="status-line"></div>
+        </div>
+
+        <div class="setup-col">
+          <h3>Already have credentials?</h3>
+          <label class="field">
+            <span>Bridge IP</span>
+            <input id="manual-ip" type="text" placeholder="192.168.1.23" />
+          </label>
+          <label class="field">
+            <span>API key</span>
+            <input id="manual-key" type="text" placeholder="paste existing username/key" />
+          </label>
+          <button id="btn-manual-save" class="btn">Save</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="main-panel" class="hidden">
+      <div class="toolbar">
+        <div class="toolbar-info">
+          <span id="bridge-ip-label" class="bridge-chip"></span>
+          <span id="light-count-label" class="dim"></span>
+        </div>
+        <div class="toolbar-actions">
+          <button id="btn-refresh-lights" class="btn btn-ghost">Refresh lights</button>
+          <button id="btn-stop-all" class="btn btn-danger">Stop all flicker</button>
+          <button id="btn-reconfigure" class="btn btn-ghost">Change bridge</button>
+        </div>
+      </div>
+
+      <div id="lights-grid" class="lights-grid"></div>
+    </section>
+
+  </main>
+
+  <footer class="foot">
+    <span>Global send rate is capped so multiple flickering lights won't flood your bridge. Shared by everyone connected to this console.</span>
+  </footer>
+
+  <template id="light-card-template">
+    <article class="light-card" data-light-id="">
+      <div class="light-card-head">
+        <div>
+          <div class="light-name"></div>
+          <div class="light-meta">
+            <span class="reachable-dot"></span>
+            <span class="reachable-text"></span>
+          </div>
+        </div>
+        <span class="running-badge hidden">FLICKERING</span>
+      </div>
+
+      <div class="waveform" aria-hidden="true"></div>
+
+      <div class="controls">
+        <label class="field">
+          <span>Pattern</span>
+          <select class="pattern-select"></select>
+        </label>
+
+        <div class="field-row">
+          <label class="field">
+            <span>Speed <em class="hz-value">10</em> Hz</span>
+            <input type="range" class="hz-input" min="1" max="20" step="1" value="10" />
+          </label>
+          <label class="field">
+            <span>Transition <em class="trans-value">0</em> ms</span>
+            <input type="range" class="trans-input" min="0" max="1000" step="50" value="0" />
+          </label>
+        </div>
+
+        <div class="field-row">
+          <label class="field">
+            <span>Min brightness <em class="minbri-value">1</em></span>
+            <input type="range" class="minbri-input" min="1" max="254" step="1" value="1" />
+          </label>
+          <label class="field">
+            <span>Max brightness <em class="maxbri-value">254</em></span>
+            <input type="range" class="maxbri-input" min="1" max="254" step="1" value="254" />
+          </label>
+        </div>
+
+        <div class="field-row">
+          <label class="field checkbox-field">
+            <input type="checkbox" class="color-enable" />
+            <span>Set color</span>
+          </label>
+          <input type="color" class="color-input" value="#c1440e" />
+        </div>
+      </div>
+
+      <div class="card-actions">
+        <button class="btn btn-accent btn-start">Start flicker</button>
+        <button class="btn btn-danger btn-stop hidden">Stop</button>
+      </div>
+    </article>
+  </template>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
