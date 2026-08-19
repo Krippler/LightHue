@@ -11,6 +11,7 @@ _CONFIG_DIR = os.path.dirname(CONFIG_PATH)
 # to know is where to put this file.
 _DEFAULT_SETTINGS = {
     "max_commands_per_second": 10.0,
+    "restore_on_stop": True,
 }
 
 _DEFAULT = {
@@ -18,6 +19,7 @@ _DEFAULT = {
     "api_key": None,
     "custom_patterns": {},   # id -> {id, name, sequence}
     "groups": {},            # id -> {id, name, light_ids}
+    "snapshots": {},         # light_id -> bulb state captured before flickering
     "settings": dict(_DEFAULT_SETTINGS),
     "auth": None,            # None => console is open; else a password record
 }

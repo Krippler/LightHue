@@ -9,6 +9,7 @@ let cardEls = {}; // card key -> DOM element
 let cardEntities = {}; // card key -> { kind, id, name, lightIds }
 let waveformTimers = {}; // card key -> interval id for local playhead animation
 let selected = new Set(); // light ids ticked for a new group
+let SNAPSHOTS = {}; // light_id -> pre-flicker bulb state the server can restore
 
 const setupPanel = $('#setup-panel');
 const mainPanel = $('#main-panel');
@@ -130,6 +131,7 @@ async function loadPatternsAndLights() {
   PATTERNS = patterns;
   LIGHTS = lightsRes.lights;
   STATUS = statusRes.lights;
+  SNAPSHOTS = statusRes.snapshots || {};
   GROUPS = groupsRes.groups;
   $('#light-count-label').textContent = `${LIGHTS.length} light${LIGHTS.length === 1 ? '' : 's'}`;
   // Drop selections for lights the bridge no longer reports.
@@ -174,6 +176,22 @@ function entityState(entity) {
     runningCount: running.length,
     settings: running[0] || states[0] || null,
   };
+}
+
+function currentColorOf(entity) {
+  for (const id of entity.lightIds) {
+    const light = LIGHTS.find(l => l.id === id);
+    if (light && light.has_color && light.hue !== null && light.sat !== null) {
+      return hueSatToHex(light.hue, light.sat);
+    }
+  }
+  return null;
+}
+
+// A revert is offered whenever the server still holds a pre-flicker snapshot —
+// which is exactly when it has something to put back.
+function hasSnapshot(entity) {
+  return entity.lightIds.some(id => SNAPSHOTS[id]);
 }
 
 function renderGrid() {
@@ -271,6 +289,24 @@ function buildCard(entity) {
   const colorInput = node.querySelector('.color-input');
   const btnStart = node.querySelector('.btn-start');
   const btnStop = node.querySelector('.btn-stop');
+  const btnRevert = node.querySelector('.btn-revert');
+
+  // Start from the colour the bulb is showing right now rather than a
+  // hardcoded default, so "Set color" doesn't jump it somewhere unexpected.
+  const seed = currentColorOf(entity);
+  if (seed) colorInput.value = seed;
+
+  btnRevert.addEventListener('click', async () => {
+    try {
+      await api('/api/flicker/restore', {
+        method: 'POST',
+        body: JSON.stringify({ light_ids: entity.lightIds }),
+      });
+      await loadPatternsAndLights();
+    } catch (e) {
+      alert(`Couldn't revert: ${e.message}`);
+    }
+  });
 
   hzInput.addEventListener('input', () => {
     hzValue.textContent = hzInput.value;
@@ -592,6 +628,9 @@ function applyStatus() {
     btnStart.classList.toggle('hidden', running);
     btnStop.classList.toggle('hidden', !active);
     btnStart.textContent = partial ? 'Start the rest' : 'Start flicker';
+    // Only useful once the flicker has stopped and the bulb is sitting on
+    // whatever the last tick left it at.
+    card.querySelector('.btn-revert').classList.toggle('hidden', active || !hasSnapshot(entity));
 
     if (active && settings) {
       if (!recentlyTouched(key)) syncControls(card, key, settings);
@@ -695,7 +734,8 @@ function connectWs() {
   ws.addEventListener('message', (evt) => {
     const msg = JSON.parse(evt.data);
     if (msg.type === 'status') {
-      STATUS = msg.data;
+      STATUS = msg.lights;
+      SNAPSHOTS = msg.snapshots || {};
       applyStatus();
     }
   });
@@ -749,19 +789,43 @@ const rateInput = $('#rate-input');
 const rateValue = $('#rate-value');
 rateInput.addEventListener('input', () => { rateValue.textContent = rateInput.value; });
 
+const restoreToggle = $('#restore-toggle');
+
 async function loadSettings() {
   const settings = await api('/api/settings');
   rateInput.value = settings.max_commands_per_second;
   rateValue.textContent = settings.max_commands_per_second;
+  restoreToggle.checked = settings.restore_on_stop;
 }
+
+async function saveSettings() {
+  return api('/api/settings', {
+    method: 'PUT',
+    body: JSON.stringify({
+      max_commands_per_second: Number(rateInput.value),
+      restore_on_stop: restoreToggle.checked,
+    }),
+  });
+}
+
+restoreToggle.addEventListener('change', async () => {
+  const statusEl = $('#restore-status');
+  try {
+    await saveSettings();
+    statusEl.textContent = restoreToggle.checked
+      ? 'Lights will be put back when flicker stops.'
+      : 'Lights will be left where the flicker ends.';
+    statusEl.className = 'status-line ok';
+  } catch (e) {
+    statusEl.textContent = e.message;
+    statusEl.className = 'status-line err';
+  }
+});
 
 $('#btn-save-rate').addEventListener('click', async () => {
   const statusEl = $('#rate-status');
   try {
-    await api('/api/settings', {
-      method: 'PUT',
-      body: JSON.stringify({ max_commands_per_second: Number(rateInput.value) }),
-    });
+    await saveSettings();
     statusEl.textContent = `Send rate capped at ${rateInput.value}/sec.`;
     statusEl.className = 'status-line ok';
   } catch (e) {

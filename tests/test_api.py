@@ -7,13 +7,15 @@ def test_index_and_unconfigured_state(client):
     assert client.get("/").status_code == 200
     assert client.get("/api/bridge").json() == {"bridge_ip": None, "configured": False}
     assert client.get("/api/lights").status_code == 400
-    assert client.get("/api/status").json() == {"lights": {}}
+    assert client.get("/api/status").json() == {"lights": {}, "snapshots": {}}
 
 
 def test_lights_are_listed_sorted_by_name(client, bridge):
     configure(client)
     lights = client.get("/api/lights").json()["lights"]
-    assert [x["name"] for x in lights] == ["Armory Strip", "Slipgate Sconce"]
+    assert [x["name"] for x in lights] == [
+        "Armory Strip", "Nailgun Nook", "Rocket Alcove", "Slipgate Sconce",
+    ]
     assert lights[0]["reachable"] is False
 
 
@@ -151,7 +153,7 @@ def test_settings_rejects_out_of_range_rate(client):
 def test_websocket_pushes_status_on_connect(client, bridge):
     configure(client)
     with client.websocket_connect("/ws") as ws:
-        assert ws.receive_json() == {"type": "status", "data": {}}
+        assert ws.receive_json() == {"type": "status", "lights": {}, "snapshots": {}}
 
 
 # ---------- live update ----------
@@ -253,3 +255,157 @@ def test_starting_a_group_starts_every_member(client, bridge):
     assert status["1"]["running"] and status["2"]["running"]
     assert status["1"]["pattern_id"] == status["2"]["pattern_id"] == "flicker_a"
     client.post("/api/flicker/stop", json={})
+
+
+# ---------- colour snapshot / restore ----------
+
+def test_lights_expose_their_current_colour(client, bridge):
+    configure(client)
+    lights = {x["name"]: x for x in client.get("/api/lights").json()["lights"]}
+    sconce = lights["Slipgate Sconce"]
+    assert (sconce["hue"], sconce["sat"], sconce["bri"]) == (8000, 140, 180)
+    assert sconce["colormode"] == "hs"
+    assert sconce["has_color"] is True
+    assert lights["Nailgun Nook"]["has_color"] is False   # white-only bulb
+
+
+def test_starting_snapshots_the_bulb_state(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "steady"})
+    snaps = client.get("/api/lights").json()["snapshots"]
+    assert snaps["1"] == {"on": True, "bri": 180, "hue": 8000, "sat": 140}
+    client.post("/api/flicker/stop", json={})
+
+
+def test_stop_puts_the_bulb_back(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start",
+                json={"light_ids": ["1"], "pattern_id": "steady", "hue": 40000, "sat": 250})
+    bridge["puts"].clear()
+    client.post("/api/flicker/stop", json={})
+    restore = bridge["puts"][-1]
+    assert restore["on"] is True
+    assert (restore["hue"], restore["sat"], restore["bri"]) == (8000, 140, 180)
+    # snapshot is consumed once it has been put back
+    assert client.get("/api/lights").json()["snapshots"] == {}
+
+
+def test_restore_respects_colormode(client, bridge):
+    # Sending hue/sat to a bulb the bridge reports in xy or ct mode would
+    # change its colour rather than put it back.
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["3", "4"], "pattern_id": "steady"})
+    bridge["puts"].clear()
+    client.post("/api/flicker/stop", json={})
+    ct_put = next(p for p in bridge["puts"] if "ct" in p)
+    xy_put = next(p for p in bridge["puts"] if "xy" in p)
+    assert ct_put["ct"] == 366 and "hue" not in ct_put and "xy" not in ct_put
+    assert xy_put["xy"] == [0.31, 0.33] and "hue" not in xy_put and "ct" not in xy_put
+
+
+def test_a_bulb_that_was_off_is_left_off(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["2"], "pattern_id": "steady"})
+    snaps = client.get("/api/lights").json()["snapshots"]
+    assert snaps["2"]["on"] is False
+    bridge["puts"].clear()
+    client.post("/api/flicker/stop", json={})
+    assert bridge["puts"][-1]["on"] is False
+
+
+def test_restarting_keeps_the_original_snapshot(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start",
+                json={"light_ids": ["1"], "pattern_id": "steady", "hue": 40000, "sat": 250})
+    first = client.get("/api/lights").json()["snapshots"]["1"]
+    # Restart while running — the snapshot must not become our own flicker output.
+    client.post("/api/flicker/start",
+                json={"light_ids": ["1"], "pattern_id": "fast_strobe", "hue": 100, "sat": 10})
+    assert client.get("/api/lights").json()["snapshots"]["1"] == first
+    client.post("/api/flicker/stop", json={})
+
+
+def test_restore_can_be_switched_off(client, bridge):
+    configure(client)
+    client.put("/api/settings", json={"max_commands_per_second": 10, "restore_on_stop": False})
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "steady"})
+    bridge["puts"].clear()
+    client.post("/api/flicker/stop", json={})
+    assert not any("hue" in p and p.get("bri") == 180 for p in bridge["puts"])
+    # the snapshot is kept, so it can still be reverted by hand
+    assert "1" in client.get("/api/lights").json()["snapshots"]
+
+
+def test_manual_restore_endpoint(client, bridge):
+    configure(client)
+    client.put("/api/settings", json={"max_commands_per_second": 10, "restore_on_stop": False})
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "steady"})
+    client.post("/api/flicker/stop", json={})
+    bridge["puts"].clear()
+    r = client.post("/api/flicker/restore", json={"light_ids": ["1"]})
+    assert r.json()["restored"] == ["1"]
+    assert bridge["puts"][-1]["bri"] == 180
+    assert client.get("/api/lights").json()["snapshots"] == {}
+
+
+def test_snapshots_persist_for_a_later_run(client, app_modules, bridge):
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "steady"})
+    # Written to the config, so a container that dies mid-flicker can still
+    # put the bulb back on its next boot.
+    assert app_modules.config_store.load()["snapshots"]["1"]["bri"] == 180
+    client.post("/api/flicker/stop", json={})
+    assert app_modules.config_store.load()["snapshots"] == {}
+
+
+def test_leftover_snapshots_are_restored_on_boot(app_modules, bridge):
+    # A container killed mid-flicker leaves bulbs wherever the flicker stopped;
+    # the snapshot on disk is what lets the next boot put them back.
+    from fastapi.testclient import TestClient
+
+    app_modules.config_store.update(
+        bridge_ip="10.0.0.5", api_key="k",
+        snapshots={"1": {"on": True, "bri": 180, "hue": 8000, "sat": 140}},
+    )
+    bridge["puts"].clear()
+    with TestClient(app_modules.app):
+        pass
+    assert bridge["puts"][-1]["bri"] == 180
+    assert bridge["puts"][-1]["hue"] == 8000
+    assert app_modules.config_store.load()["snapshots"] == {}
+
+
+def test_leftover_snapshots_are_kept_when_restore_is_off(app_modules, bridge):
+    from fastapi.testclient import TestClient
+
+    app_modules.config_store.update(
+        bridge_ip="10.0.0.5", api_key="k",
+        snapshots={"1": {"on": True, "bri": 180}},
+    )
+    app_modules.config_store.update_settings(restore_on_stop=False)
+    bridge["puts"].clear()
+    with TestClient(app_modules.app):
+        pass
+    assert bridge["puts"] == []
+    assert app_modules.config_store.load()["snapshots"] == {"1": {"on": True, "bri": 180}}
+
+
+def test_boot_restore_is_skipped_without_a_bridge(app_modules, bridge):
+    from fastapi.testclient import TestClient
+
+    app_modules.config_store.update(snapshots={"1": {"on": True, "bri": 180}})
+    with TestClient(app_modules.app) as c:
+        assert c.get("/api/bridge").json()["configured"] is False
+    assert app_modules.config_store.load()["snapshots"] == {"1": {"on": True, "bri": 180}}
+
+
+def test_status_channel_carries_snapshots(client, bridge):
+    # The browser needs to know a revert is available without re-fetching
+    # everything, so snapshots ride along with the status push.
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "steady"})
+    with client.websocket_connect("/ws") as ws:
+        msg = ws.receive_json()
+    assert msg["snapshots"]["1"]["bri"] == 180
+    assert msg["lights"]["1"]["running"] is True
+    assert client.post("/api/flicker/stop", json={}).json()["snapshots"] == {}

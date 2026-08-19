@@ -20,6 +20,8 @@ that multiple people on your network can use at once.
 - Retunes running lights on the fly — pattern, speed, brightness and color
   all take effect mid-flicker, no stop-and-restart.
 - Groups any set of bulbs behind one set of controls, so they stay identical.
+- Reads each bulb's colour and brightness before it starts, and puts it back
+  when the flicker stops — even if the container was killed mid-run.
 - Optionally locks the console behind a password you set in the UI.
 - Persists everything in `/data/config.json` (mount that as a volume so it
   survives container restarts).
@@ -92,12 +94,31 @@ Every control retunes a running light in place — pattern, speed, brightness
 window, transition and color all apply without restarting the loop, and the
 change reaches everyone else's browser over the WebSocket.
 
-The color swatch is always live. Picking a color ticks **Set color** for you
+The color swatch is always live, and starts from the color the bulb is actually
+showing rather than a fixed default. Picking a color ticks **Set color** for you
 rather than making you find the box first. Leaving that box unticked means the
 console won't touch the bulb's color at all — useful when you've already set a
-color in the Hue app and just want the flicker. Note that unticking it mid-run
-can't put the previous color back; the Hue API has no "revert color" call, so
-it just stops sending further color changes.
+color in the Hue app and just want the flicker.
+
+Unticking **Set color** mid-run doesn't revert anything on its own; it just
+stops sending further color changes. Stopping the flicker is what puts the bulb
+back — see below.
+
+## Putting lights back
+
+Before a light starts flickering, the console reads its current state off the
+bridge — on/off, brightness, and whichever of hue/sat, xy or ct the bulb is
+actually using — and keeps it. Stopping the flicker restores exactly that.
+Restarting a light that's already running keeps the *original* snapshot, so the
+thing you get back is always the state from before any of this started.
+
+That snapshot is written to `config.json`, so a container that dies mid-flicker
+still puts the bulbs back on its next start rather than leaving them stuck at
+whatever brightness the last tick happened to land on.
+
+Turn it off with **Put lights back how they were** in Settings if you'd rather
+lights stay where the flicker ends. The snapshot is still kept either way, and
+each card grows a **Revert** button you can hit whenever you want it back.
 
 ## Settings
 

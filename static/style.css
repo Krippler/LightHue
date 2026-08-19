@@ -392,7 +392,7 @@ select {
 
 .controls { display: flex; flex-direction: column; }
 
-.card-actions { display: flex; gap: 10px; }
+.card-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 .card-actions .btn { flex: 1; }
 
 /* ---------- Groups ---------- */
@@ -470,6 +470,20 @@ select {
 .settings-grid .btn { align-self: flex-start; }
 
 .pw-actions { display: flex; gap: 10px; }
+
+.settings-subhead {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--brimstone);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  margin: 22px 0 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.restore-field { margin-bottom: 6px; }
+.restore-field input { accent-color: var(--ember); width: 15px; height: 15px; cursor: pointer; }
 
 /* ---------- Custom lightstyles ---------- */
 
