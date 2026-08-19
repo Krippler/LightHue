@@ -32,7 +32,7 @@
     to Host and try again.
   </Overview>
   <Category>HomeAutomation: Other:</Category>
-  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <WebUI>http://[IP]:[PORT:26000]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/Krippler/LightHue/main/unraid-template.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/Krippler/LightHue/main/static/icon.png</Icon>
   <ExtraParams/>
@@ -44,14 +44,14 @@
   <Requires/>
   <Config
     Name="WebUI Port"
-    Target="8080"
-    Default="8080"
+    Target="26000"
+    Default="26000"
     Mode="tcp"
-    Description="Port for the flicker console web UI."
+    Description="Port for the flicker console web UI. Defaults to 26000 (Quake&apos;s own port) to stay clear of the usual 8080 crowd."
     Type="Port"
     Display="always"
     Required="true"
-    Mask="false">8080</Config>
+    Mask="false">26000</Config>
   <Config
     Name="Config Storage"
     Target="/data"

@@ -40,11 +40,11 @@ jobs:
 
       - name: Boot the container and hit it
         run: |
-          docker run -d --name ci-console -p 8080:8080 quake-hue-flicker:ci
+          docker run -d --name ci-console -p 26000:26000 quake-hue-flicker:ci
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8080/api/bridge > /dev/null; then
+            if curl -fsS http://127.0.0.1:26000/api/bridge > /dev/null; then
               echo "console is up"
-              curl -fsS http://127.0.0.1:8080/api/auth
+              curl -fsS http://127.0.0.1:26000/api/auth
               docker rm -f ci-console
               exit 0
             fi

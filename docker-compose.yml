@@ -5,7 +5,9 @@ services:
     build: .
     container_name: quake-hue-flicker
     ports:
-      - "8080:8080"
+      # Host port 26000 -> container 26000 (Quake's own port; avoids the
+      # 8080 pile-up). Change only the left number to move it on your host.
+      - "26000:26000"
     volumes:
       - ./data:/data
     restart: unless-stopped

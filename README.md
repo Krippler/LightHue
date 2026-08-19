@@ -38,8 +38,9 @@ The easiest route is the template in this repo:
    ```
 
 2. Check the two settings it fills in:
-   - **WebUI Port** — defaults to `8080`. Change it if something else on the
-     server already uses that port.
+   - **WebUI Port** — defaults to `26000`, Quake's own registered port, chosen
+     to stay clear of the 8080 crowd on a typical Unraid box. Change it if you
+     already use it for something.
    - **Config Storage** — defaults to `/mnt/user/appdata/quake-hue-flicker`.
      This holds your bridge pairing, saved patterns and console password.
      Keep it mapped or you'll re-pair after every update.
@@ -53,13 +54,17 @@ every push to `main`, so Unraid's update check works normally.
 the container and try again. Some Unraid setups don't let the default bridge
 network reach the Hue Bridge or the discovery endpoint.
 
+Host networking ignores port mappings — the container binds the server's port
+directly. If 26000 is taken there, add a `PORT` variable to the container
+instead of changing the port mapping.
+
 ## Run it anywhere else
 
 ```bash
 docker compose up -d --build
 ```
 
-Then open `http://<your-server-ip>:8080`. To use the published image instead
+Then open `http://<your-server-ip>:26000`. To use the published image instead
 of building, swap the `build: .` line in `docker-compose.yml` for
 `image: ghcr.io/krippler/lighthue:latest`.
 
@@ -86,7 +91,7 @@ other open console. Scripts can authenticate with a header instead of the
 session cookie:
 
 ```bash
-curl -H 'X-Console-Password: yourpassword' http://server:8080/api/lights
+curl -H 'X-Console-Password: yourpassword' http://server:26000/api/lights
 # or: -H 'Authorization: Bearer yourpassword'
 ```
 
@@ -112,7 +117,7 @@ unraid-template.xml               Unraid Community Applications template
 
 ```bash
 pip install -r requirements-dev.txt
-CONFIG_PATH=./data/config.json uvicorn app.main:app --reload --port 8080
+CONFIG_PATH=./data/config.json uvicorn app.main:app --reload --port 26000
 
 pytest        # API, auth, flicker engine, config store, patterns
 ruff check .  # lint
