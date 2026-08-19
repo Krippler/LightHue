@@ -108,6 +108,16 @@
             </label>
             <button id="btn-save-rate" class="btn">Save rate</button>
             <div id="rate-status" class="status-line"></div>
+
+            <h3 class="settings-subhead">When flicker stops</h3>
+            <label class="field checkbox-field restore-field">
+              <input type="checkbox" id="restore-toggle" />
+              <span>Put lights back how they were</span>
+            </label>
+            <p class="sub small">The console reads each bulb&rsquo;s colour and brightness before it
+            starts flickering, and restores it on stop &mdash; including after a container restart
+            that interrupted a run.</p>
+            <div id="restore-status" class="status-line"></div>
           </div>
 
           <div class="setup-col">
@@ -129,6 +139,24 @@
             <div id="pw-status" class="status-line"></div>
           </div>
         </div>
+      </section>
+
+      <section class="panel groups-panel">
+        <div class="panel-head">
+          <h2>Groups</h2>
+          <p class="sub">Tick the lights you want to run together, name them, and they get one
+          set of controls that drives all of them at once.</p>
+        </div>
+        <div class="group-form">
+          <span id="selection-count" class="dim">No lights selected</span>
+          <label class="field">
+            <span>Group name</span>
+            <input id="group-name" type="text" placeholder="Hallway" maxlength="60" />
+          </label>
+          <button id="btn-save-group" class="btn btn-accent">Save as group</button>
+          <button id="btn-clear-selection" class="btn btn-ghost">Clear selection</button>
+        </div>
+        <div id="group-status" class="status-line"></div>
       </section>
 
       <section class="panel custom-panel">
@@ -168,14 +196,22 @@
   <template id="light-card-template">
     <article class="light-card" data-light-id="">
       <div class="light-card-head">
-        <div>
-          <div class="light-name"></div>
-          <div class="light-meta">
-            <span class="reachable-dot"></span>
-            <span class="reachable-text"></span>
+        <div class="head-left">
+          <label class="card-select" title="Select for a group">
+            <input type="checkbox" class="select-light" />
+          </label>
+          <div>
+            <div class="light-name"></div>
+            <div class="light-meta">
+              <span class="reachable-dot"></span>
+              <span class="reachable-text"></span>
+            </div>
           </div>
         </div>
-        <span class="running-badge hidden">FLICKERING</span>
+        <div class="head-right">
+          <span class="running-badge hidden">FLICKERING</span>
+          <button class="btn-delete-group hidden" type="button" title="Delete group">&times;</button>
+        </div>
       </div>
 
       <div class="waveform" aria-hidden="true"></div>
@@ -213,13 +249,15 @@
             <input type="checkbox" class="color-enable" />
             <span>Set color</span>
           </label>
-          <input type="color" class="color-input" value="#c1440e" />
+          <input type="color" class="color-input" value="#c1440e"
+                 title="Pick a color — this ticks Set color for you" />
         </div>
       </div>
 
       <div class="card-actions">
         <button class="btn btn-accent btn-start">Start flicker</button>
         <button class="btn btn-danger btn-stop hidden">Stop</button>
+        <button class="btn btn-ghost btn-revert hidden" title="Put this back how it was before flickering">Revert</button>
       </div>
     </article>
   </template>

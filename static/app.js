@@ -3,9 +3,13 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 let PATTERNS = { builtin: [], custom: [] };
 let LIGHTS = [];
+let GROUPS = [];
 let STATUS = {}; // light_id -> settings from server
-let cardEls = {}; // light_id -> DOM element
-let waveformTimers = {}; // light_id -> interval id for local playhead animation
+let cardEls = {}; // card key -> DOM element
+let cardEntities = {}; // card key -> { kind, id, name, lightIds }
+let waveformTimers = {}; // card key -> interval id for local playhead animation
+let selected = new Set(); // light ids ticked for a new group
+let SNAPSHOTS = {}; // light_id -> pre-flicker bulb state the server can restore
 
 const setupPanel = $('#setup-panel');
 const mainPanel = $('#main-panel');
@@ -115,20 +119,26 @@ $('#btn-stop-all').addEventListener('click', async () => {
   await api('/api/flicker/stop', { method: 'POST', body: JSON.stringify({}) });
 });
 
-// ---------- Lights + patterns ----------
+// ---------- Lights, groups + patterns ----------
 
 async function loadPatternsAndLights() {
-  const [patterns, lightsRes, statusRes] = await Promise.all([
+  const [patterns, lightsRes, statusRes, groupsRes] = await Promise.all([
     api('/api/patterns'),
     api('/api/lights'),
     api('/api/status'),
+    api('/api/groups'),
   ]);
   PATTERNS = patterns;
   LIGHTS = lightsRes.lights;
   STATUS = statusRes.lights;
+  SNAPSHOTS = statusRes.snapshots || {};
+  GROUPS = groupsRes.groups;
   $('#light-count-label').textContent = `${LIGHTS.length} light${LIGHTS.length === 1 ? '' : 's'}`;
+  // Drop selections for lights the bridge no longer reports.
+  const known = new Set(LIGHTS.map(l => l.id));
+  selected = new Set([...selected].filter(id => known.has(id)));
   renderCustomList();
-  renderLights();
+  renderGrid();
 }
 
 function allPatternOptions() {
@@ -140,112 +150,308 @@ function sequenceFor(patternId) {
   return p ? p.sequence : 'm';
 }
 
-function renderLights() {
+// A card drives one light or a whole group; everything below treats them the
+// same way, keyed by "light:<id>" / "group:<id>".
+function lightEntity(light) {
+  return { kind: 'light', id: light.id, key: `light:${light.id}`, name: light.name,
+           lightIds: [light.id], light };
+}
+
+function groupEntity(group) {
+  const names = group.light_ids
+    .map(id => (LIGHTS.find(l => l.id === id) || {}).name)
+    .filter(Boolean);
+  return { kind: 'group', id: group.id, key: `group:${group.id}`, name: group.name,
+           lightIds: group.light_ids, memberNames: names, group };
+}
+
+// A group counts as running only when every member is; anything in between is
+// reported so one stuck light doesn't read as the whole group flickering.
+function entityState(entity) {
+  const states = entity.lightIds.map(id => STATUS[id]).filter(Boolean);
+  const running = states.filter(s => s.running);
+  return {
+    running: running.length > 0 && running.length === entity.lightIds.length,
+    partial: running.length > 0 && running.length < entity.lightIds.length,
+    runningCount: running.length,
+    settings: running[0] || states[0] || null,
+  };
+}
+
+function currentColorOf(entity) {
+  for (const id of entity.lightIds) {
+    const light = LIGHTS.find(l => l.id === id);
+    if (light && light.has_color && light.hue !== null && light.sat !== null) {
+      return hueSatToHex(light.hue, light.sat);
+    }
+  }
+  return null;
+}
+
+// A revert is offered whenever the server still holds a pre-flicker snapshot —
+// which is exactly when it has something to put back.
+function hasSnapshot(entity) {
+  return entity.lightIds.some(id => SNAPSHOTS[id]);
+}
+
+function renderGrid() {
   const grid = $('#lights-grid');
   grid.innerHTML = '';
   cardEls = {};
+  cardEntities = {};
+
+  GROUPS.map(groupEntity).forEach(e => grid.appendChild(buildCard(e)));
+  LIGHTS.map(lightEntity).forEach(e => grid.appendChild(buildCard(e)));
+
+  renderSelection();
+  applyStatus();
+}
+
+function buildCard(entity) {
   const tpl = $('#light-card-template');
+  const node = tpl.content.cloneNode(true);
+  const card = node.querySelector('.light-card');
+  card.dataset.cardKey = entity.key;
+  card.classList.toggle('group-card', entity.kind === 'group');
 
-  LIGHTS.forEach(light => {
-    const node = tpl.content.cloneNode(true);
-    const card = node.querySelector('.light-card');
-    card.dataset.lightId = light.id;
+  node.querySelector('.light-name').textContent = entity.name;
 
-    node.querySelector('.light-name').textContent = light.name;
-    const dot = node.querySelector('.reachable-dot');
-    const reachText = node.querySelector('.reachable-text');
-    if (light.reachable) {
+  const dot = node.querySelector('.reachable-dot');
+  const reachText = node.querySelector('.reachable-text');
+  const selectWrap = node.querySelector('.card-select');
+  const deleteBtn = node.querySelector('.btn-delete-group');
+
+  if (entity.kind === 'group') {
+    selectWrap.classList.add('hidden');
+    deleteBtn.classList.remove('hidden');
+    dot.classList.add('group-dot');
+    // Keep the header to one or two lines however many lights are in here.
+    const shown = entity.memberNames.slice(0, 3).join(', ');
+    const extra = entity.memberNames.length - 3;
+    reachText.textContent = entity.memberNames.length
+      ? `${entity.lightIds.length} lights · ${shown}${extra > 0 ? ` +${extra} more` : ''}`
+      : `${entity.lightIds.length} lights`;
+    deleteBtn.addEventListener('click', async () => {
+      try {
+        await api(`/api/groups/${encodeURIComponent(entity.id)}`, { method: 'DELETE' });
+        setGroupStatus(`Deleted "${entity.name}".`);
+        await loadPatternsAndLights();
+      } catch (e) {
+        setGroupStatus(e.message, 'err');
+      }
+    });
+  } else {
+    deleteBtn.classList.add('hidden');
+    if (entity.light.reachable) {
       reachText.textContent = 'reachable';
     } else {
       dot.classList.add('off');
       reachText.textContent = 'unreachable';
     }
+    const box = node.querySelector('.select-light');
+    box.checked = selected.has(entity.id);
+    box.addEventListener('change', () => {
+      if (box.checked) selected.add(entity.id); else selected.delete(entity.id);
+      renderSelection();
+    });
+  }
 
-    const select = node.querySelector('.pattern-select');
-    const optGroupBuiltin = document.createElement('optgroup');
-    optGroupBuiltin.label = 'Built-in (Quake)';
-    PATTERNS.builtin.forEach(p => {
+  const select = node.querySelector('.pattern-select');
+  const optGroupBuiltin = document.createElement('optgroup');
+  optGroupBuiltin.label = 'Built-in (Quake)';
+  PATTERNS.builtin.forEach(p => {
+    const o = document.createElement('option');
+    o.value = p.id; o.textContent = p.name;
+    optGroupBuiltin.appendChild(o);
+  });
+  select.appendChild(optGroupBuiltin);
+  if (PATTERNS.custom.length) {
+    const optGroupCustom = document.createElement('optgroup');
+    optGroupCustom.label = 'Custom';
+    PATTERNS.custom.forEach(p => {
       const o = document.createElement('option');
       o.value = p.id; o.textContent = p.name;
-      optGroupBuiltin.appendChild(o);
+      optGroupCustom.appendChild(o);
     });
-    select.appendChild(optGroupBuiltin);
-    if (PATTERNS.custom.length) {
-      const optGroupCustom = document.createElement('optgroup');
-      optGroupCustom.label = 'Custom';
-      PATTERNS.custom.forEach(p => {
-        const o = document.createElement('option');
-        o.value = p.id; o.textContent = p.name;
-        optGroupCustom.appendChild(o);
+    select.appendChild(optGroupCustom);
+  }
+  select.value = 'flicker_a';
+
+  const hzInput = node.querySelector('.hz-input');
+  const hzValue = node.querySelector('.hz-value');
+  const transInput = node.querySelector('.trans-input');
+  const transValue = node.querySelector('.trans-value');
+  const minBriInput = node.querySelector('.minbri-input');
+  const minBriValue = node.querySelector('.minbri-value');
+  const maxBriInput = node.querySelector('.maxbri-input');
+  const maxBriValue = node.querySelector('.maxbri-value');
+  const colorEnable = node.querySelector('.color-enable');
+  const colorInput = node.querySelector('.color-input');
+  const btnStart = node.querySelector('.btn-start');
+  const btnStop = node.querySelector('.btn-stop');
+  const btnRevert = node.querySelector('.btn-revert');
+
+  // Start from the colour the bulb is showing right now rather than a
+  // hardcoded default, so "Set color" doesn't jump it somewhere unexpected.
+  const seed = currentColorOf(entity);
+  if (seed) colorInput.value = seed;
+
+  btnRevert.addEventListener('click', async () => {
+    try {
+      await api('/api/flicker/restore', {
+        method: 'POST',
+        body: JSON.stringify({ light_ids: entity.lightIds }),
       });
-      select.appendChild(optGroupCustom);
+      await loadPatternsAndLights();
+    } catch (e) {
+      alert(`Couldn't revert: ${e.message}`);
     }
-    select.value = 'flicker_a';
-
-    const waveform = node.querySelector('.waveform');
-
-    const hzInput = node.querySelector('.hz-input');
-    const hzValue = node.querySelector('.hz-value');
-    hzInput.addEventListener('input', () => { hzValue.textContent = hzInput.value; restartWaveform(light.id); });
-
-    const transInput = node.querySelector('.trans-input');
-    const transValue = node.querySelector('.trans-value');
-    transInput.addEventListener('input', () => { transValue.textContent = transInput.value; });
-
-    const minBriInput = node.querySelector('.minbri-input');
-    const minBriValue = node.querySelector('.minbri-value');
-    minBriInput.addEventListener('input', () => { minBriValue.textContent = minBriInput.value; });
-
-    const maxBriInput = node.querySelector('.maxbri-input');
-    const maxBriValue = node.querySelector('.maxbri-value');
-    maxBriInput.addEventListener('input', () => { maxBriValue.textContent = maxBriInput.value; });
-
-    select.addEventListener('change', () => drawWaveform(light.id, sequenceFor(select.value)));
-
-    const colorEnable = node.querySelector('.color-enable');
-    const colorInput = node.querySelector('.color-input');
-    colorInput.disabled = true;
-    colorEnable.addEventListener('change', () => { colorInput.disabled = !colorEnable.checked; });
-
-    const btnStart = node.querySelector('.btn-start');
-    const btnStop = node.querySelector('.btn-stop');
-
-    btnStart.addEventListener('click', async () => {
-      let hue = null, sat = null;
-      if (colorEnable.checked) {
-        const rgb = hexToRgb(colorInput.value);
-        const hs = rgbToHueSat(rgb);
-        hue = hs.hue; sat = hs.sat;
-      }
-      try {
-        await api('/api/flicker/start', {
-          method: 'POST',
-          body: JSON.stringify({
-            light_ids: [light.id],
-            pattern_id: select.value,
-            hz: Number(hzInput.value),
-            min_bri: Number(minBriInput.value),
-            max_bri: Number(maxBriInput.value),
-            hue, sat,
-            transition_ms: Number(transInput.value),
-          }),
-        });
-      } catch (e) {
-        alert(`Couldn't start flicker: ${e.message}`);
-      }
-    });
-
-    btnStop.addEventListener('click', async () => {
-      await api('/api/flicker/stop', { method: 'POST', body: JSON.stringify({ light_ids: [light.id] }) });
-    });
-
-    grid.appendChild(node);
-    cardEls[light.id] = card;
-    drawWaveform(light.id, sequenceFor(select.value));
   });
 
-  applyStatus();
+  hzInput.addEventListener('input', () => {
+    hzValue.textContent = hzInput.value;
+    restartWaveform(entity.key);
+    pushLive(entity);
+  });
+  transInput.addEventListener('input', () => {
+    transValue.textContent = transInput.value;
+    pushLive(entity);
+  });
+  minBriInput.addEventListener('input', () => {
+    minBriValue.textContent = minBriInput.value;
+    if (Number(maxBriInput.value) < Number(minBriInput.value)) {
+      maxBriInput.value = minBriInput.value;
+      maxBriValue.textContent = maxBriInput.value;
+    }
+    pushLive(entity);
+  });
+  maxBriInput.addEventListener('input', () => {
+    maxBriValue.textContent = maxBriInput.value;
+    if (Number(maxBriInput.value) < Number(minBriInput.value)) {
+      minBriInput.value = maxBriInput.value;
+      minBriValue.textContent = minBriInput.value;
+    }
+    pushLive(entity);
+  });
+  select.addEventListener('change', () => {
+    drawWaveform(entity.key, sequenceFor(select.value));
+    pushLive(entity);
+  });
+
+  // The swatch is always live: picking a color means you want it, so it ticks
+  // the box for you rather than being greyed out until you find the box.
+  colorInput.addEventListener('input', () => {
+    if (!colorEnable.checked) colorEnable.checked = true;
+    pushLive(entity);
+  });
+  colorEnable.addEventListener('change', () => pushLive(entity));
+
+  btnStart.addEventListener('click', async () => {
+    try {
+      await api('/api/flicker/start', {
+        method: 'POST',
+        body: JSON.stringify({ light_ids: entity.lightIds, ...cardSettings(card) }),
+      });
+    } catch (e) {
+      alert(`Couldn't start flicker: ${e.message}`);
+    }
+  });
+
+  btnStop.addEventListener('click', async () => {
+    await api('/api/flicker/stop', { method: 'POST', body: JSON.stringify({ light_ids: entity.lightIds }) });
+  });
+
+  cardEls[entity.key] = card;
+  cardEntities[entity.key] = entity;
+  drawWaveform(entity.key, sequenceFor(select.value));
+  return node;
 }
+
+function cardSettings(card) {
+  const colorEnable = card.querySelector('.color-enable');
+  let hue = null, sat = null;
+  if (colorEnable.checked) {
+    const hs = rgbToHueSat(hexToRgb(card.querySelector('.color-input').value));
+    hue = hs.hue; sat = hs.sat;
+  }
+  return {
+    pattern_id: card.querySelector('.pattern-select').value,
+    hz: Number(card.querySelector('.hz-input').value),
+    min_bri: Number(card.querySelector('.minbri-input').value),
+    max_bri: Number(card.querySelector('.maxbri-input').value),
+    hue, sat,
+    transition_ms: Number(card.querySelector('.trans-input').value),
+  };
+}
+
+// ---------- Live retuning ----------
+
+const liveTimers = {};
+
+// Sliders fire per pixel of travel, so coalesce into one PUT per card.
+function pushLive(entity) {
+  markTouched(entity.key);
+  const card = cardEls[entity.key];
+  if (!card || !card.classList.contains('is-running')) return;
+  clearTimeout(liveTimers[entity.key]);
+  liveTimers[entity.key] = setTimeout(async () => {
+    const running = entity.lightIds.filter(id => STATUS[id] && STATUS[id].running);
+    if (!running.length) return;
+    const settings = cardSettings(card);
+    // Leaving "Set color" unticked means don't touch the bulb's colour at all;
+    // there is no Hue call that puts a colour back the way it was.
+    if (settings.hue === null) { delete settings.hue; delete settings.sat; }
+    try {
+      await api('/api/flicker/update', {
+        method: 'POST',
+        body: JSON.stringify({ light_ids: running, ...settings }),
+      });
+    } catch (e) {
+      if (!/not currently flickering/i.test(e.message)) console.warn('live update failed', e);
+    }
+  }, 180);
+}
+
+// ---------- Group selection ----------
+
+function setGroupStatus(text, kind = '') {
+  const el = $('#group-status');
+  el.textContent = text;
+  el.className = `status-line ${kind}`.trim();
+}
+
+function renderSelection() {
+  const n = selected.size;
+  $('#selection-count').textContent = n
+    ? `${n} light${n === 1 ? '' : 's'} selected`
+    : 'No lights selected';
+  $('#btn-save-group').disabled = n === 0;
+  $('#btn-clear-selection').disabled = n === 0;
+}
+
+$('#btn-clear-selection').addEventListener('click', () => {
+  selected.clear();
+  $$('.select-light').forEach(b => { b.checked = false; });
+  renderSelection();
+});
+
+$('#btn-save-group').addEventListener('click', async () => {
+  const name = $('#group-name').value.trim();
+  if (!name) return setGroupStatus('Give the group a name.', 'err');
+  if (!selected.size) return setGroupStatus('Tick at least one light first.', 'err');
+  try {
+    await api('/api/groups', {
+      method: 'POST',
+      body: JSON.stringify({ name, light_ids: [...selected] }),
+    });
+    $('#group-name').value = '';
+    setGroupStatus(`Saved "${name}".`, 'ok');
+    selected.clear();
+    await loadPatternsAndLights();
+  } catch (e) {
+    setGroupStatus(e.message, 'err');
+  }
+});
 
 // ---------- Waveform (signature visual element) ----------
 
@@ -387,33 +593,79 @@ function renderCustomList() {
 
 // ---------- Status sync (drives multi-user shared state) ----------
 
+// Controls are only pulled back into line with the server when the user isn't
+// actively working them, otherwise a broadcast lands mid-drag and yanks the
+// slider out from under them.
+const lastTouched = {};
+
+function markTouched(key) {
+  lastTouched[key] = Date.now();
+}
+
+function recentlyTouched(key) {
+  return Date.now() - (lastTouched[key] || 0) < 2000;
+}
+
 function applyStatus() {
-  Object.entries(cardEls).forEach(([lightId, card]) => {
-    const st = STATUS[lightId];
-    const running = !!(st && st.running);
+  Object.entries(cardEls).forEach(([key, card]) => {
+    const entity = cardEntities[key];
+    if (!entity) return;
+    const { running, partial, runningCount, settings } = entityState(entity);
+    const active = running || partial;
+
     const badge = card.querySelector('.running-badge');
     const btnStart = card.querySelector('.btn-start');
     const btnStop = card.querySelector('.btn-stop');
 
-    card.classList.toggle('is-running', running);
-    badge.classList.toggle('hidden', !running);
+    card.classList.toggle('is-running', active);
+    card.classList.toggle('is-partial', partial);
+    badge.classList.toggle('hidden', !active);
+    badge.textContent = partial
+      ? `${runningCount}/${entity.lightIds.length} FLICKERING`
+      : 'FLICKERING';
+    // A partly-running group keeps Start available so the stragglers can be
+    // brought in line without stopping the ones already going.
     btnStart.classList.toggle('hidden', running);
-    btnStop.classList.toggle('hidden', !running);
+    btnStop.classList.toggle('hidden', !active);
+    btnStart.textContent = partial ? 'Start the rest' : 'Start flicker';
+    // Only useful once the flicker has stopped and the bulb is sitting on
+    // whatever the last tick left it at.
+    card.querySelector('.btn-revert').classList.toggle('hidden', active || !hasSnapshot(entity));
 
-    if (running && st) {
-      const select = card.querySelector('.pattern-select');
-      if (select.value !== st.pattern_id) {
-        select.value = st.pattern_id;
-        drawWaveform(lightId, sequenceFor(st.pattern_id));
-      }
-      const hzInput = card.querySelector('.hz-input');
-      hzInput.value = st.hz;
-      card.querySelector('.hz-value').textContent = st.hz;
-      startWaveformAnimation(lightId);
+    if (active && settings) {
+      if (!recentlyTouched(key)) syncControls(card, key, settings);
+      startWaveformAnimation(key);
     } else {
-      stopWaveformAnimation(lightId);
+      stopWaveformAnimation(key);
     }
   });
+}
+
+function syncControls(card, key, st) {
+  const select = card.querySelector('.pattern-select');
+  const hasOption = [...select.options].some(o => o.value === st.pattern_id);
+  if (hasOption && select.value !== st.pattern_id) select.value = st.pattern_id;
+  // Prefer the sequence the server is actually playing: a pattern can be
+  // renamed or removed while a light is still running it.
+  drawWaveform(key, st.sequence || sequenceFor(st.pattern_id));
+
+  const set = (sel, valueSel, value) => {
+    card.querySelector(sel).value = value;
+    const label = card.querySelector(valueSel);
+    if (label) label.textContent = value;
+  };
+  set('.hz-input', '.hz-value', st.hz);
+  set('.minbri-input', '.minbri-value', st.min_bri);
+  set('.maxbri-input', '.maxbri-value', st.max_bri);
+  set('.trans-input', '.trans-value', st.transition_ms);
+
+  const colorEnable = card.querySelector('.color-enable');
+  if (st.hue !== null && st.hue !== undefined && st.sat !== null && st.sat !== undefined) {
+    colorEnable.checked = true;
+    card.querySelector('.color-input').value = hueSatToHex(st.hue, st.sat);
+  } else {
+    colorEnable.checked = false;
+  }
 }
 
 // ---------- Color helpers (hex -> Hue's hue/sat space) ----------
@@ -425,6 +677,21 @@ function hexToRgb(hex) {
     g: parseInt(v.substring(2, 4), 16),
     b: parseInt(v.substring(4, 6), 16),
   };
+}
+
+function hueSatToHex(hue, sat) {
+  const h = (hue / 65535) * 360;
+  const s = sat / 254;
+  const v = 1;   // the swatch shows hue and saturation; brightness has its own sliders
+  const c = v * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+  const i = Math.floor(h / 60) % 6;
+  const [r1, g1, b1] = [
+    [c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x],
+  ][i];
+  const hex = n => Math.round((n + m) * 255).toString(16).padStart(2, '0');
+  return `#${hex(r1)}${hex(g1)}${hex(b1)}`;
 }
 
 function rgbToHueSat({ r, g, b }) {
@@ -467,7 +734,8 @@ function connectWs() {
   ws.addEventListener('message', (evt) => {
     const msg = JSON.parse(evt.data);
     if (msg.type === 'status') {
-      STATUS = msg.data;
+      STATUS = msg.lights;
+      SNAPSHOTS = msg.snapshots || {};
       applyStatus();
     }
   });
@@ -521,19 +789,43 @@ const rateInput = $('#rate-input');
 const rateValue = $('#rate-value');
 rateInput.addEventListener('input', () => { rateValue.textContent = rateInput.value; });
 
+const restoreToggle = $('#restore-toggle');
+
 async function loadSettings() {
   const settings = await api('/api/settings');
   rateInput.value = settings.max_commands_per_second;
   rateValue.textContent = settings.max_commands_per_second;
+  restoreToggle.checked = settings.restore_on_stop;
 }
+
+async function saveSettings() {
+  return api('/api/settings', {
+    method: 'PUT',
+    body: JSON.stringify({
+      max_commands_per_second: Number(rateInput.value),
+      restore_on_stop: restoreToggle.checked,
+    }),
+  });
+}
+
+restoreToggle.addEventListener('change', async () => {
+  const statusEl = $('#restore-status');
+  try {
+    await saveSettings();
+    statusEl.textContent = restoreToggle.checked
+      ? 'Lights will be put back when flicker stops.'
+      : 'Lights will be left where the flicker ends.';
+    statusEl.className = 'status-line ok';
+  } catch (e) {
+    statusEl.textContent = e.message;
+    statusEl.className = 'status-line err';
+  }
+});
 
 $('#btn-save-rate').addEventListener('click', async () => {
   const statusEl = $('#rate-status');
   try {
-    await api('/api/settings', {
-      method: 'PUT',
-      body: JSON.stringify({ max_commands_per_second: Number(rateInput.value) }),
-    });
+    await saveSettings();
     statusEl.textContent = `Send rate capped at ${rateInput.value}/sec.`;
     statusEl.className = 'status-line ok';
   } catch (e) {

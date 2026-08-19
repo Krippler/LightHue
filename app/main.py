@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import uuid
 from contextlib import asynccontextmanager
 
@@ -16,7 +17,18 @@ from .patterns import BUILTIN_BY_ID, BUILTIN_PATTERNS
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    engine.limiter.set_rate(config_store.get_settings()["max_commands_per_second"])
+    settings = config_store.get_settings()
+    engine.limiter.set_rate(settings["max_commands_per_second"])
+    engine.restore_on_stop = settings["restore_on_stop"]
+
+    # Snapshots left in the config mean the last run was killed mid-flicker,
+    # so those bulbs are still sitting wherever the flicker left them.
+    leftover = config_store.load().get("snapshots") or {}
+    if leftover:
+        engine.load_snapshots(leftover)
+        if engine.restore_on_stop and get_client() is not None:
+            restored = await engine.restore()
+            logger.info("Restored %d light(s) left flickering by a previous run", len(restored))
     yield
     # Cancel the flicker loops before tearing down the pool they send through,
     # otherwise in-flight ticks fail against a closed client on the way out.
@@ -55,15 +67,20 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+logger = logging.getLogger("quake_hue_flicker")
 
 # Fire-and-forget tasks are only weakly held by the loop, so keep a strong
 # reference until each one finishes or it can be collected mid-flight.
 _background: set[asyncio.Task] = set()
 
 
+def status_payload() -> dict:
+    return {"lights": engine.status(), "snapshots": engine.snapshots}
+
+
 def _broadcast_status_soon():
     async def _do():
-        await manager.broadcast({"type": "status", "data": engine.status()})
+        await manager.broadcast({"type": "status", **status_payload()})
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -80,7 +97,13 @@ def get_client() -> HueClient | None:
     return HueClient(cfg["bridge_ip"], cfg["api_key"])
 
 
-engine = FlickerEngine(get_client=get_client, on_change=_broadcast_status_soon)
+def _persist_snapshots(snapshots: dict):
+    # Kept on disk so a container restart can still put the bulbs back.
+    config_store.update(snapshots=snapshots)
+
+
+engine = FlickerEngine(get_client=get_client, on_change=_broadcast_status_soon,
+                       on_snapshots=_persist_snapshots)
 
 
 # ---------- Models ----------
@@ -114,6 +137,7 @@ class ClearPasswordRequest(BaseModel):
 
 class SettingsRequest(BaseModel):
     max_commands_per_second: float = Field(..., ge=1.0, le=30.0)
+    restore_on_stop: bool = True
 
 
 class StartRequest(BaseModel):
@@ -137,6 +161,33 @@ class StartRequest(BaseModel):
 
 class StopRequest(BaseModel):
     light_ids: list[str] | None = None  # None => stop all
+
+
+class UpdateRequest(BaseModel):
+    """Retune lights that are already flickering. Every setting is optional;
+    whatever is supplied is applied without restarting the loop."""
+
+    light_ids: list[str] = Field(..., min_length=1)
+    pattern_id: str | None = None
+    hz: float | None = Field(None, gt=0, le=20)
+    min_bri: int | None = Field(None, ge=1, le=254)
+    max_bri: int | None = Field(None, ge=1, le=254)
+    hue: int | None = Field(None, ge=0, le=65535)
+    sat: int | None = Field(None, ge=0, le=254)
+    transition_ms: int | None = Field(None, ge=0, le=60000)
+
+    @model_validator(mode="after")
+    def _check_ranges(self):
+        if self.min_bri is not None and self.max_bri is not None and self.min_bri > self.max_bri:
+            raise ValueError("min_bri must be less than or equal to max_bri")
+        if (self.hue is None) != (self.sat is None):
+            raise ValueError("hue and sat must be given together, or not at all")
+        return self
+
+
+class GroupRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=60)
+    light_ids: list[str] = Field(..., min_length=1)
 
 
 # ---------- Console password ----------
@@ -206,8 +257,12 @@ async def get_settings():
 
 @app.put("/api/settings")
 async def put_settings(req: SettingsRequest):
-    settings = config_store.update_settings(max_commands_per_second=req.max_commands_per_second)
+    settings = config_store.update_settings(
+        max_commands_per_second=req.max_commands_per_second,
+        restore_on_stop=req.restore_on_stop,
+    )
     engine.limiter.set_rate(settings["max_commands_per_second"])
+    engine.restore_on_stop = settings["restore_on_stop"]
     return settings
 
 
@@ -259,14 +314,22 @@ async def list_lights():
         raise HTTPException(502, f"Could not reach bridge: {e}") from e
     out = []
     for lid, info in lights.items():
+        state = info.get("state", {})
         out.append({
             "id": lid,
             "name": info.get("name", f"Light {lid}"),
-            "on": info.get("state", {}).get("on", False),
-            "reachable": info.get("state", {}).get("reachable", True),
+            "on": state.get("on", False),
+            "reachable": state.get("reachable", True),
+            # The bulb's colour right now, so the UI can seed its swatch from
+            # what the light is actually doing instead of a hardcoded default.
+            "bri": state.get("bri"),
+            "hue": state.get("hue"),
+            "sat": state.get("sat"),
+            "colormode": state.get("colormode"),
+            "has_color": "hue" in state,
         })
     out.sort(key=lambda x: x["name"])
-    return {"lights": out}
+    return {"lights": out, "snapshots": engine.snapshots}
 
 
 # ---------- Patterns ----------
@@ -322,11 +385,47 @@ def _resolve_sequence(pattern_id: str) -> str:
     raise HTTPException(404, f"Unknown pattern_id: {pattern_id}")
 
 
+# ---------- Groups ----------
+
+@app.get("/api/groups")
+async def list_groups():
+    cfg = config_store.load()
+    return {"groups": list(cfg.get("groups", {}).values())}
+
+
+@app.post("/api/groups")
+async def create_group(req: GroupRequest):
+    gid = f"group_{uuid.uuid4().hex[:8]}"
+    cfg = config_store.load()
+    cfg["groups"][gid] = {"id": gid, "name": req.name.strip(), "light_ids": req.light_ids}
+    config_store.save(cfg)
+    return cfg["groups"][gid]
+
+
+@app.put("/api/groups/{group_id}")
+async def replace_group(group_id: str, req: GroupRequest):
+    cfg = config_store.load()
+    if group_id not in cfg["groups"]:
+        raise HTTPException(404, f"Unknown group_id: {group_id}")
+    cfg["groups"][group_id] = {"id": group_id, "name": req.name.strip(), "light_ids": req.light_ids}
+    config_store.save(cfg)
+    return cfg["groups"][group_id]
+
+
+@app.delete("/api/groups/{group_id}")
+async def delete_group(group_id: str):
+    cfg = config_store.load()
+    if cfg["groups"].pop(group_id, None) is None:
+        raise HTTPException(404, f"Unknown group_id: {group_id}")
+    config_store.save(cfg)
+    return {"ok": True}
+
+
 # ---------- Flicker control ----------
 
 @app.get("/api/status")
 async def get_status():
-    return {"lights": engine.status()}
+    return status_payload()
 
 
 @app.post("/api/flicker/start")
@@ -334,12 +433,37 @@ async def start_flicker(req: StartRequest):
     if get_client() is None:
         raise HTTPException(400, "Bridge not configured yet")
     sequence = _resolve_sequence(req.pattern_id)
+    # Snapshot first — one bulk GET for the whole group — so Stop has something
+    # to put back. Lights already running keep their earlier snapshot.
+    await engine.capture(req.light_ids)
     for lid in req.light_ids:
         await engine.start(
             lid, sequence, req.pattern_id, req.hz, req.min_bri, req.max_bri,
             req.hue, req.sat, req.transition_ms,
         )
-    return {"ok": True, "status": engine.status()}
+    return {"ok": True, **status_payload()}
+
+
+@app.post("/api/flicker/update")
+async def update_flicker(req: UpdateRequest):
+    changes = req.model_dump(exclude={"light_ids"}, exclude_none=True)
+    if req.pattern_id is not None:
+        changes["sequence"] = _resolve_sequence(req.pattern_id)
+    updated = [lid for lid in req.light_ids if engine.update(lid, **changes)]
+    if not updated:
+        raise HTTPException(409, "None of those lights are currently flickering")
+    _broadcast_status_soon()
+    return {"ok": True, "updated": updated, **status_payload()}
+
+
+@app.post("/api/flicker/restore")
+async def restore_lights(req: StopRequest):
+    """Put lights back to the state captured before they started flickering."""
+    if get_client() is None:
+        raise HTTPException(400, "Bridge not configured yet")
+    restored = await engine.restore(req.light_ids)
+    _broadcast_status_soon()
+    return {"ok": True, "restored": restored}
 
 
 @app.post("/api/flicker/stop")
@@ -349,7 +473,7 @@ async def stop_flicker(req: StopRequest):
             await engine.stop(lid)
     else:
         await engine.stop_all()
-    return {"ok": True, "status": engine.status()}
+    return {"ok": True, **status_payload()}
 
 
 # ---------- WebSocket ----------
@@ -358,7 +482,7 @@ async def stop_flicker(req: StopRequest):
 async def ws_endpoint(ws: WebSocket):
     await manager.connect(ws)
     try:
-        await ws.send_json({"type": "status", "data": engine.status()})
+        await ws.send_json({"type": "status", **status_payload()})
         while True:
             # We don't expect inbound messages, but keep the socket alive.
             await ws.receive_text()

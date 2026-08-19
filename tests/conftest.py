@@ -32,9 +32,24 @@ def client(app_modules):
 @pytest.fixture
 def bridge(app_modules, monkeypatch):
     """Stub Hue bridge wired in through the shared httpx transport."""
+    # Mirrors what a real bridge returns: full colour state on every light,
+    # with colormode saying which of hue/sat, xy or ct is authoritative.
     state = {"lights": {
-        "1": {"name": "Slipgate Sconce", "state": {"on": True, "reachable": True}},
-        "2": {"name": "Armory Strip", "state": {"on": False, "reachable": False}},
+        "1": {"name": "Slipgate Sconce", "state": {
+            "on": True, "reachable": True, "bri": 180,
+            "hue": 8000, "sat": 140, "xy": [0.5, 0.4], "ct": 400, "colormode": "hs",
+        }},
+        "2": {"name": "Armory Strip", "state": {
+            "on": False, "reachable": False, "bri": 60,
+            "hue": 44000, "sat": 250, "xy": [0.2, 0.1], "ct": 250, "colormode": "xy",
+        }},
+        "3": {"name": "Nailgun Nook", "state": {
+            "on": True, "reachable": True, "bri": 90, "ct": 366, "colormode": "ct",
+        }},
+        "4": {"name": "Rocket Alcove", "state": {
+            "on": True, "reachable": True, "bri": 220,
+            "hue": 12000, "sat": 90, "xy": [0.31, 0.33], "ct": 300, "colormode": "xy",
+        }},
     }, "puts": []}
 
     def handler(request: httpx.Request) -> httpx.Response:

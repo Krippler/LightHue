@@ -128,3 +128,78 @@ async def test_on_change_fires_for_start_and_stop():
     await engine.stop("1")
     await engine.stop_all()
     assert len(seen) >= 2
+
+
+@pytest.mark.asyncio
+async def test_update_retunes_a_running_loop_without_restarting_it():
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    await engine.start("1", "aaaa", "steady", 20.0, 1, 254, None, None, 0)
+    await asyncio.sleep(0.2)
+    task = engine._tasks["1"]
+
+    assert engine.update("1", sequence="zzzz", min_bri=100, max_bri=100) is True
+    await asyncio.sleep(0.3)
+    await engine.stop_all()
+
+    assert task is engine._tasks.get("1", task)   # same task object, never restarted
+    assert fake.calls[0][2]["bri"] == 1           # before the update
+    assert fake.calls[-1][2]["bri"] == 100        # after it
+
+
+@pytest.mark.asyncio
+async def test_update_is_rejected_for_a_light_that_is_not_running():
+    engine = FlickerEngine(get_client=lambda: FakeClient())
+    assert engine.update("nope", hz=5.0) is False
+    await engine.start("1", "m", "steady", 10.0, 1, 254, None, None, 0)
+    await engine.stop("1")
+    assert engine.update("1", hz=5.0) is False
+
+
+@pytest.mark.asyncio
+async def test_colour_can_be_changed_mid_flicker():
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    await engine.start("1", "mmmm", "steady", 20.0, 1, 254, 100, 200, 0)
+    await asyncio.sleep(0.25)
+    engine.update("1", hue=40000, sat=150)
+    await asyncio.sleep(0.25)
+    await engine.stop_all()
+
+    coloured = [c[2] for c in fake.calls if "hue" in c[2]]
+    assert [(c["hue"], c["sat"]) for c in coloured] == [(100, 200), (40000, 150)]
+
+
+@pytest.mark.asyncio
+async def test_colour_is_not_resent_every_tick():
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    await engine.start("1", "mmmm", "steady", 20.0, 1, 254, 100, 200, 0)
+    await asyncio.sleep(0.4)
+    await engine.stop_all()
+    assert len([c for c in fake.calls if "hue" in c[2]]) == 1
+    assert len(fake.calls) > 3
+
+
+@pytest.mark.asyncio
+async def test_colour_can_be_added_to_a_loop_started_without_one():
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    await engine.start("1", "mmmm", "steady", 20.0, 1, 254, None, None, 0)
+    await asyncio.sleep(0.2)
+    assert not [c for c in fake.calls if "hue" in c[2]]
+    engine.update("1", hue=25000, sat=254)
+    await asyncio.sleep(0.25)
+    await engine.stop_all()
+    assert [c[2]["hue"] for c in fake.calls if "hue" in c[2]] == [25000]
+
+
+@pytest.mark.asyncio
+async def test_update_ignores_unknown_and_none_fields():
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    await engine.start("1", "m", "steady", 10.0, 1, 254, None, None, 0)
+    engine.update("1", hz=None, running=False, bogus="x")
+    assert engine.status()["1"]["hz"] == 10.0
+    assert engine.status()["1"]["running"] is True
+    await engine.stop_all()
