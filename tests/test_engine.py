@@ -458,3 +458,56 @@ async def test_each_light_sends_about_once_per_frame():
         sends = len([c for c in fake.calls if c[1] == lid])
         # 5Hz for 2s is ten frames; allow a little either side for scheduling
         assert 8 <= sends <= 12, f"light {lid} sent {sends} times"
+
+
+@pytest.mark.asyncio
+async def test_lowering_the_speed_keeps_the_light_sending():
+    """A frame number is only meaningful next to the interval it was counted in.
+
+    Dropping 20 Hz to 4 Hz after a second renumbers "now" from frame 20 to
+    frame 4. Comparing the two directly made the duplicate-frame guard wait for
+    frame 21 at the *new* interval — five seconds out, and further the longer
+    the light had been running — so the bulb simply stopped.
+    """
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    engine.limiter.set_rate(40)
+    await engine.start("1", "mmzz", "p", 20.0, 1, 254, None, None, 0)
+    await asyncio.sleep(1.0)
+
+    assert engine.update("1", hz=4.0) is True
+    before = len(fake.calls)
+    await asyncio.sleep(1.2)
+    await engine.stop_all()
+
+    sent = len(fake.calls) - before
+    # ~4 in 1.2s. The bug produced 0; anything at all proves it isn't stalled,
+    # and the upper bound catches it ignoring the new rate entirely.
+    assert 2 <= sent <= 8, f"expected roughly 4 sends after slowing down, got {sent}"
+
+
+@pytest.mark.asyncio
+async def test_a_second_light_starting_does_not_stall_the_first():
+    """The share is recut when another light joins, changing the interval for
+    every light already running — the same renumbering, with nobody touching a
+    slider.
+
+    The first light has to run a while for this to bite: the stall is the gap
+    between the frame it had reached and that number re-read at the slower
+    interval, so it grows with runtime. 2.5s at 20 Hz is enough to make it
+    plain; a real light left going for a minute stalls for minutes.
+    """
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    engine.limiter.set_rate(20)
+    await engine.start("1", "mmzz", "p", 20.0, 1, 254, None, None, 0)
+    await asyncio.sleep(2.5)                    # reaches ~frame 50 at 0.05s a frame
+
+    engine.expect_batch(2)
+    await engine.start("2", "mmzz", "p", 20.0, 1, 254, None, None, 0)
+    before = sum(1 for c in fake.calls if c[1] == "1")
+    await asyncio.sleep(1.5)
+    await engine.stop_all()
+
+    sent = sum(1 for c in fake.calls if c[1] == "1") - before
+    assert sent >= 3, f"light 1 stalled when light 2 joined: {sent} sends in 1.5s"
