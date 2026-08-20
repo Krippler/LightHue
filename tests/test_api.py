@@ -1012,3 +1012,39 @@ def test_importing_is_gated_by_the_console_password(client):
     client.put("/api/auth/password", json={"new_password": "quaddamage"})
     client.cookies.clear()
     assert client.get("/api/bridge/groups").status_code == 401
+
+
+def test_bridge_groups_report_what_was_filtered_out(client, bridge):
+    # A bridge with nothing set up and one whose groups are all luminaires are
+    # different problems, and the UI has to be able to tell them apart.
+    configure(client)
+    body = client.get("/api/bridge/groups").json()
+    assert body["total"] == 5
+    assert body["seen"] == {"Room": 1, "Zone": 1, "Luminaire": 1,
+                            "Entertainment": 1, "LightGroup": 1}
+    assert len(body["groups"]) == 3
+
+
+def test_a_bridge_with_no_groups_says_so(client, bridge, app_modules, monkeypatch):
+    configure(client)
+
+    async def none(self):
+        return {}
+
+    monkeypatch.setattr(app_modules.HueClient, "get_groups", none)
+    body = client.get("/api/bridge/groups").json()
+    assert body == {"groups": [], "seen": {}, "total": 0}
+
+
+def test_a_group_of_an_unknown_type_is_counted_not_dropped(client, bridge, app_modules,
+                                                           monkeypatch):
+    configure(client)
+
+    async def odd(self):
+        return {"9": {"name": "Mystery", "lights": ["1"]}}
+
+    monkeypatch.setattr(app_modules.HueClient, "get_groups", odd)
+    body = client.get("/api/bridge/groups").json()
+    assert body["total"] == 1
+    assert body["seen"] == {"unknown": 1}
+    assert body["groups"] == []

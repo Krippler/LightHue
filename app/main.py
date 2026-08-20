@@ -512,19 +512,24 @@ async def list_bridge_groups():
         raise HTTPException(502, f"Could not reach bridge: {e}") from e
 
     out = []
+    seen: dict[str, int] = {}
     for gid, info in groups.items():
-        if info.get("type") not in IMPORTABLE_GROUP_TYPES:
+        kind = info.get("type") or "unknown"
+        seen[kind] = seen.get(kind, 0) + 1
+        if kind not in IMPORTABLE_GROUP_TYPES:
             continue
         out.append({
             "id": gid,
             "name": info.get("name", f"Group {gid}"),
-            "type": info.get("type"),
+            "type": kind,
             # Rooms carry a class like "Kitchen"; zones generally don't.
             "class": info.get("class"),
             "light_ids": [str(x) for x in info.get("lights", [])],
         })
     out.sort(key=lambda g: (g["type"] != "Room", g["name"].casefold()))
-    return {"groups": out}
+    # "seen" lets the UI say why nothing is on offer — a bridge with no groups
+    # at all and one with only luminaires are different problems.
+    return {"groups": out, "seen": seen, "total": len(groups)}
 
 
 @app.get("/api/groups")
