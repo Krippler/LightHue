@@ -169,6 +169,25 @@ function allPatternOptions() {
   return [...PATTERNS.builtin, ...PATTERNS.custom];
 }
 
+// Built-in names carry their own game ("Quake — 1 Flicker"); strip it so the
+// menu the pattern is listed under can supply the prefix instead.
+function bareName(name) {
+  return name.replace(/^[^—]+ — /, '');
+}
+
+// A shared style is listed once per game that inherited it, so the same id can
+// sit in several optgroups. Setting select.value takes whichever comes first
+// alphabetically, which would credit Quake's table to Half-Life; pick the copy
+// filed under the pattern's own game instead.
+function selectPattern(select, patternId) {
+  const home = (allPatternOptions().find(p => p.id === patternId) || {}).game;
+  const options = [...select.options].filter(o => o.value === patternId);
+  if (!options.length) return false;
+  const own = home && options.find(o => o.parentElement.label === home);
+  (own || options[0]).selected = true;
+  return true;
+}
+
 function sequenceFor(patternId) {
   const p = allPatternOptions().find(p => p.id === patternId);
   return p ? p.sequence : 'm';
@@ -311,6 +330,9 @@ function buildCard(entity) {
   }
 
   const select = node.querySelector('.pattern-select');
+  // Which optgroups name a game, and so should re-prefix their options.
+  // "Custom" and "Other" don't: their entries already read the way they should.
+  const GAME_GROUPS = new Set(PATTERNS.games || []);
   const addGroup = (label, items) => {
     if (!items.length) return;
     const group = document.createElement('optgroup');
@@ -318,8 +340,12 @@ function buildCard(entity) {
     items.forEach(p => {
       const o = document.createElement('option');
       o.value = p.id;
-      // The game is already the optgroup heading, so drop it from the label.
-      o.textContent = p.name.replace(/^[^—]+ — /, '');
+      // A closed <select> shows only the chosen option's own text, so the game
+      // has to be in it — the optgroup heading is visible while the list is
+      // open and gone the moment it isn't. Named for the menu it was picked
+      // from, so a Quake style chosen under Half-Life reads "Half-Life — ...";
+      // the tooltip is where the inheritance gets explained.
+      o.textContent = GAME_GROUPS.has(label) ? `${label} — ${bareName(p.name)}` : p.name;
       if (p.game !== label && label !== 'Custom') {
         o.title = `${p.game}'s lightstyle, inherited wholesale by ${label}`;
       } else if (p.origin === 'inspired') {
@@ -338,7 +364,7 @@ function buildCard(entity) {
   // Anything whose game isn't in the ordered list still has to appear.
   addGroup('Other', PATTERNS.builtin.filter(p => !games.includes(p.game)));
   addGroup('Custom', PATTERNS.custom);
-  select.value = 'flicker_a';
+  selectPattern(select, 'flicker_a');
 
   const hzInput = node.querySelector('.hz-input');
   const hzValue = node.querySelector('.hz-value');
@@ -1092,8 +1118,7 @@ function applyStatus() {
 
 function syncControls(card, key, st) {
   const select = card.querySelector('.pattern-select');
-  const hasOption = [...select.options].some(o => o.value === st.pattern_id);
-  if (hasOption && select.value !== st.pattern_id) select.value = st.pattern_id;
+  if (select.value !== st.pattern_id) selectPattern(select, st.pattern_id);
   // Prefer the sequence the server is actually playing: a pattern can be
   // renamed or removed while a light is still running it.
   drawWaveform(key, st.sequence || sequenceFor(st.pattern_id));
