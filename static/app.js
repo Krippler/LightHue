@@ -264,18 +264,25 @@ function buildCard(entity) {
     items.forEach(p => {
       const o = document.createElement('option');
       o.value = p.id;
-      // The game is already the optgroup heading, so don't repeat it.
-      o.textContent = p.game ? p.name.replace(`${p.game} — `, '') : p.name;
-      if (p.origin === 'inspired') o.title = `Inspired by ${p.game}; not an engine lightstyle table`;
+      // The game is already the optgroup heading, so drop it from the label.
+      o.textContent = p.name.replace(/^[^—]+ — /, '');
+      if (p.game !== label && label !== 'Custom') {
+        o.title = `${p.game}'s lightstyle, inherited wholesale by ${label}`;
+      } else if (p.origin === 'inspired') {
+        o.title = `Inspired by ${p.game}; not an engine lightstyle table`;
+      }
       group.appendChild(o);
     });
     select.appendChild(group);
   };
-  (PATTERNS.games || []).forEach(game => {
-    addGroup(game, PATTERNS.builtin.filter(p => p.game === game));
-  });
+  const games = PATTERNS.games || [];
+  // A pattern can belong to more than one game's menu: GoldSrc inherited
+  // Quake's table, so those styles appear under Half-Life too.
+  const forGame = g => PATTERNS.builtin.filter(
+    p => p.game === g || (p.shared_with || []).includes(g));
+  games.forEach(game => addGroup(game, forGame(game)));
   // Anything whose game isn't in the ordered list still has to appear.
-  addGroup('Other', PATTERNS.builtin.filter(p => !(PATTERNS.games || []).includes(p.game)));
+  addGroup('Other', PATTERNS.builtin.filter(p => !games.includes(p.game)));
   addGroup('Custom', PATTERNS.custom);
   select.value = 'flicker_a';
 

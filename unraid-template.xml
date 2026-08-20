@@ -19,8 +19,8 @@
     &#13;
     Ships Quake's full lightstyle table (styles 0-11, verbatim from id Software's
     engine) and Half-Life's addition to it, plus hand-authored takes on the light
-    effects of DOOM, Duke Nukem 3D and Unreal. Every preset is named after the game
-    it comes from.&#13;
+    effects of DOOM, Duke Nukem 3D, Blood, Shadow Warrior and Unreal. Every preset
+    is named after the game it comes from.&#13;
     &#13;
     Talks directly to your Hue Bridge over the local API - no Philips cloud account
     needed. Pick lights, pattern, speed, brightness range and colour, and change any

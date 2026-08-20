@@ -442,5 +442,17 @@ def test_effective_rate_is_absent_once_stopped(client, bridge):
 
 def test_patterns_endpoint_lists_games_in_order(client):
     body = client.get("/api/patterns").json()
-    assert body["games"][:2] == ["DOOM", "Quake"]
-    assert {p["game"] for p in body["builtin"]} == set(body["games"])
+    assert body["games"][0] == "DOOM"          # oldest engine first
+    assert body["games"][-1] == "Unreal"
+    # Every game in the menu order can be filled from the pattern list, either
+    # by owning patterns or by having them shared into it.
+    for game in body["games"]:
+        assert any(p["game"] == game or game in p.get("shared_with", [])
+                   for p in body["builtin"]), game
+
+
+def test_patterns_endpoint_exposes_sharing(client):
+    body = client.get("/api/patterns").json()
+    shared = [p for p in body["builtin"] if p.get("shared_with")]
+    assert len(shared) == 12
+    assert all(p["game"] == "Quake" and p["shared_with"] == ["Half-Life"] for p in shared)

@@ -21,32 +21,34 @@ Two kinds of pattern live here, and the difference is worth keeping honest:
 
 BUILTIN_PATTERNS = [
     # ---- Quake: id Software's lightstyle table, styles 0-11, verbatim ----
-    {"id": "steady", "game": "Quake", "name": "Quake — 0 Steady",
+    {"id": "steady", "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 0 Steady",
      "sequence": "m", "origin": "engine"},
-    {"id": "flicker_a", "game": "Quake", "name": "Quake — 1 Flicker",
+    {"id": "flicker_a", "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 1 Flicker",
      "sequence": "mmnmmommommnonmmonqnmmo", "origin": "engine"},
-    {"id": "slow_strong_pulse", "game": "Quake", "name": "Quake — 2 Slow Strong Pulse",
+    {"id": "slow_strong_pulse", "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 2 Slow Strong Pulse",
      "sequence": "abcdefghijklmnopqrstuvwxyzyxwvutsrqponmlkjihgfedcba", "origin": "engine"},
-    {"id": "candle_a", "game": "Quake", "name": "Quake — 3 Candle",
+    {"id": "candle_a", "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 3 Candle",
      "sequence": "mmmmmaaaaammmmmaaaaaabcdefgabcdefg", "origin": "engine"},
-    {"id": "fast_strobe", "game": "Quake", "name": "Quake — 4 Fast Strobe",
+    {"id": "fast_strobe", "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 4 Fast Strobe",
      "sequence": "mamamamamama", "origin": "engine"},
-    {"id": "gentle_pulse", "game": "Quake", "name": "Quake — 5 Gentle Pulse",
+    {"id": "gentle_pulse", "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 5 Gentle Pulse",
      "sequence": "jklmnopqrstuvwxyzyxwvutsrqponmlkj", "origin": "engine"},
-    {"id": "flicker_b", "game": "Quake", "name": "Quake — 6 Flicker (alt)",
+    {"id": "flicker_b", "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 6 Flicker (alt)",
      "sequence": "nmonqnmomnmomomno", "origin": "engine"},
-    {"id": "candle_b", "game": "Quake", "name": "Quake — 7 Candle (alt)",
+    {"id": "candle_b", "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 7 Candle (alt)",
      "sequence": "mmmaaaabcdefgmmmmaaaammmaamm", "origin": "engine"},
-    {"id": "candle_c", "game": "Quake", "name": "Quake — 8 Candle (long)",
+    {"id": "candle_c", "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 8 Candle (long)",
      "sequence": "mmmaaammmaaammmabcdefaaaaammmmmabcdefmmmmaaaammmaamm", "origin": "engine"},
-    {"id": "hard_strobe", "game": "Quake", "name": "Quake — 9 Slow Strobe",
+    {"id": "hard_strobe", "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 9 Slow Strobe",
      "sequence": "aaaaaaaazzzzzzzz", "origin": "engine"},
-    {"id": "fluorescent", "game": "Quake", "name": "Quake — 10 Fluorescent Flicker",
+    {"id": "fluorescent", "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 10 Fluorescent Flicker",
      "sequence": "mmamammmmammamamaaamammma", "origin": "engine"},
-    {"id": "slow_pulse_nb", "game": "Quake", "name": "Quake — 11 Slow Pulse (no black)",
+    {"id": "slow_pulse_nb", "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 11 Slow Pulse (no black)",
      "sequence": "abcdefghijklmnopqrrqponmlkjihgfedcba", "origin": "engine"},
 
-    # ---- Half-Life: GoldSrc reuses Quake's table and adds style 12 ----
+    # ---- Half-Life: GoldSrc inherited Quake's styles 0-11 verbatim (marked
+    # shared_with above, so they appear under Half-Life too rather than being
+    # copied) and added style 12 of its own ----
     {"id": "hl_underwater", "game": "Half-Life", "name": "Half-Life — 12 Underwater Mutation",
      "sequence": "mmnnmmnnnmmnn", "origin": "engine"},
 
@@ -72,6 +74,28 @@ BUILTIN_PATTERNS = [
     {"id": "duke_broken_neon", "game": "Duke Nukem 3D", "name": "Duke Nukem 3D — Broken Neon",
      "sequence": "zazzaaazzazaaaaaazzzazaaa", "origin": "inspired"},
 
+    # ---- Blood: Build engine again, by way of Monolith's fork ----
+    {"id": "blood_torch", "game": "Blood", "name": "Blood — Guttering Torch",
+     "sequence": "rstusrtsuvtsrqstuvutsrst", "origin": "inspired"},
+    {"id": "blood_candle", "game": "Blood", "name": "Blood — Gothic Candle",
+     "sequence": "nmlmnonmlkjklmnonmlmnmlk", "origin": "inspired"},
+    {"id": "blood_lightning", "game": "Blood", "name": "Blood — Lightning Flash",
+     "sequence": "aaaaaaaaaazzaazaaaaaaaaaaaaaaaazzzaaaaaa", "origin": "inspired"},
+    {"id": "blood_throb", "game": "Blood", "name": "Blood — Slow Throb",
+     "sequence": "fhjlnprtvxvtrpnljhf", "origin": "inspired"},
+    {"id": "blood_dying_flame", "game": "Blood", "name": "Blood — Dying Flame",
+     "sequence": "utsrqponmlkjihgfedcba", "origin": "inspired"},
+
+    # ---- Shadow Warrior: Build engine, neon and paper lanterns ----
+    {"id": "sw_neon", "game": "Shadow Warrior", "name": "Shadow Warrior — Neon Sign",
+     "sequence": "zzzzzzazzzzzzzazzzzaz", "origin": "inspired"},
+    {"id": "sw_fluorescent", "game": "Shadow Warrior", "name": "Shadow Warrior — Failing Fluorescent",
+     "sequence": "zzazzzazazzzzzzazazzzzazzz", "origin": "inspired"},
+    {"id": "sw_lantern", "game": "Shadow Warrior", "name": "Shadow Warrior — Paper Lantern",
+     "sequence": "qrstutsrqpopqrstutsrq", "origin": "inspired"},
+    {"id": "sw_sputter", "game": "Shadow Warrior", "name": "Shadow Warrior — Sputtering Bulb",
+     "sequence": "wawwawwwawawwaawwwaw", "origin": "inspired"},
+
     # ---- Unreal: LT_* light types from the actor's LightEffect ----
     {"id": "unreal_pulse", "game": "Unreal", "name": "Unreal — LT_Pulse",
      "sequence": "moqsuwyzywusqomkigecaacegik", "origin": "inspired"},
@@ -87,8 +111,20 @@ BUILTIN_PATTERNS = [
 
 BUILTIN_BY_ID = {p["id"]: p for p in BUILTIN_PATTERNS}
 
-# Menu order for the pattern picker, oldest engine first.
-GAMES = ["DOOM", "Quake", "Duke Nukem 3D", "Half-Life", "Unreal"]
+# Menu order for the pattern picker, roughly by release date.
+GAMES = ["DOOM", "Duke Nukem 3D", "Quake", "Blood", "Shadow Warrior",
+         "Half-Life", "Unreal"]
+
+
+def patterns_for(game: str) -> list:
+    """Every pattern that game's picker should offer.
+
+    Includes patterns another game owns but shares with it — Half-Life runs
+    Quake's styles 0-11, so they are listed under both without the strings
+    being duplicated in the table.
+    """
+    return [p for p in BUILTIN_PATTERNS
+            if p["game"] == game or game in p.get("shared_with", ())]
 
 
 def level_for_char(c: str) -> float:

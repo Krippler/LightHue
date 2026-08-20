@@ -1,8 +1,8 @@
 # Game Hue Flicker Console
 
 Drives Philips Hue lights with the flicker patterns of classic shooters —
-Quake, DOOM, Duke Nukem 3D, Half-Life and Unreal — through a small web UI
-that multiple people on your network can use at once.
+DOOM, Duke Nukem 3D, Quake, Blood, Shadow Warrior, Half-Life and Unreal —
+through a small web UI that multiple people on your network can use at once.
 
 <img src="static/icon.png" width="96" alt="">
 
@@ -84,18 +84,26 @@ groups them by game. There are two kinds, and the difference is worth knowing:
 
 **Straight from the engine.** Quake stored its light effects as literal `a`–`z`
 strings, and all twelve of its styles (0–11) are here verbatim. GoldSrc
-inherited that same table for Half-Life and added one style of its own —
-style 12, the underwater mutation — which is here too. The rest of Half-Life's
-styles are Quake's, so they aren't duplicated.
+inherited that exact table for Half-Life and added style 12, the underwater
+mutation.
 
-**Written here, in that style.** DOOM, Duke Nukem 3D and Unreal don't store
-light effects as strings at all — they run procedural sector and actor effects
-in code. Those presets are hand-authored sequences that approximate the
-documented behaviour at roughly the original timing: DOOM's strobe, glow and
-fire-flicker sector types; Build engine flickering, blinking and pulsating
-sectors; Unreal's `LT_Pulse`, `LT_Blink`, `LT_Flicker`, `LT_SubtlePulse` and
-`LT_Strobe`. They're a tribute, not a dump of engine data, and the API marks
-them `origin: "inspired"` so you can tell them apart.
+So Half-Life's menu lists all thirteen of its styles, but styles 0–11 are the
+*same entries* as Quake's rather than copies — one pattern appearing under both
+games, marked `shared_with` in the API. Picking "Half-Life — 4 Fast Strobe" and
+"Quake — 4 Fast Strobe" runs the same lightstyle, because in the engines they
+are the same lightstyle. Duplicating the strings would have put two identical
+effects in the list under different names.
+
+**Written here, in that style.** DOOM, the Build games (Duke Nukem 3D, Blood,
+Shadow Warrior) and Unreal don't store light effects as strings at all — they
+run procedural sector and actor effects in code. Those presets are hand-authored
+sequences approximating the documented behaviour at roughly the original timing:
+DOOM's strobe, glow and fire-flicker sector types; Build engine flickering,
+blinking and pulsating sectors; Blood's guttering torches and lightning; Shadow
+Warrior's neon and failing fluorescents; Unreal's `LT_Pulse`, `LT_Blink`,
+`LT_Flicker`, `LT_SubtlePulse` and `LT_Strobe`. They're a tribute, not a dump of
+engine data, and the API marks them `origin: "inspired"` so you can tell them
+apart. The picker says which is which on hover.
 
 Add your own in `app/patterns.py`, or write them in the UI (see below).
 
