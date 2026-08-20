@@ -2,3 +2,7 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.6
 httpx==0.27.2
 pydantic==2.9.2
+# DTLS 1.2 with a pre-shared key, which is the only transport the Hue
+# Entertainment API accepts. Ships manylinux wheels, so the image still
+# needs no compiler.
+python-mbedtls==2.10.1
