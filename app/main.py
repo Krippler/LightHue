@@ -24,6 +24,7 @@ from . import auth, config_store, hue_client, packs
 from .auth import ConsoleAuthMiddleware
 from .flicker_engine import FlickerEngine
 from .hue_client import BridgeAddressError, HueClient, parse_bridge_address
+from .hue_stream import MAX_AREA_LIGHTS, MAX_STREAM_HZ
 from .patterns import (
     BUILTIN_BY_ID,
     BUILTIN_PATTERNS,
@@ -168,6 +169,7 @@ class _BridgeAddress(BaseModel):
 
 class BridgeSetRequest(_BridgeAddress):
     api_key: str = Field(..., min_length=1, max_length=128)
+    client_key: str | None = Field(None, max_length=128)
 
 
 class PairRequest(_BridgeAddress):
@@ -358,6 +360,9 @@ async def get_bridge():
     return {
         "bridge_ip": cfg.get("bridge_ip"),
         "configured": bool(cfg.get("bridge_ip") and cfg.get("api_key")),
+        # Never the key itself — just whether streaming is available, which is
+        # what the UI needs to decide whether to offer it or ask for a re-pair.
+        "can_stream": bool(cfg.get("client_key")),
     }
 
 
@@ -375,13 +380,26 @@ async def pair_bridge(req: PairRequest):
     result = await HueClient.pair(req.bridge_ip)
     if not result.get("ok"):
         raise HTTPException(400, result.get("error", "Pairing failed — press the link button on the bridge first"))
-    config_store.update(bridge_ip=req.bridge_ip, api_key=result["api_key"])
-    return {"bridge_ip": req.bridge_ip, "configured": True}
+    config_store.update(bridge_ip=req.bridge_ip, api_key=result["api_key"],
+                        client_key=result.get("client_key"))
+    return {
+        "bridge_ip": req.bridge_ip,
+        "configured": True,
+        # False on firmware old enough not to issue one. Everything except
+        # entertainment streaming still works, so it is worth saying rather
+        # than failing the pairing.
+        "can_stream": bool(result.get("client_key")),
+    }
 
 
 @app.post("/api/bridge/set")
 async def set_bridge(req: BridgeSetRequest):
-    config_store.update(bridge_ip=req.bridge_ip, api_key=req.api_key)
+    # Only overwrite the streaming key when one was supplied: a manual save of
+    # the same credentials shouldn't silently cost the console its stream.
+    changes = {"bridge_ip": req.bridge_ip, "api_key": req.api_key}
+    if req.client_key is not None:
+        changes["client_key"] = req.client_key or None
+    config_store.update(**changes)
     return {"ok": True}
 
 
@@ -533,9 +551,12 @@ def _resolve_sequence(pattern_id: str) -> str:
 # ---------- Groups ----------
 
 # What the Hue app calls a Room or a Zone. Luminaire and LightSource describe
-# the innards of a single fitting, and Entertainment areas belong to the
-# streaming API, so none of those are worth offering as flicker groups.
+# the innards of a single fitting, so neither is worth offering as a flicker
+# group. Entertainment areas are left out here too, but for the opposite
+# reason: they are offered separately, as the thing streaming runs on.
 IMPORTABLE_GROUP_TYPES = {"Room", "Zone", "LightGroup"}
+
+ENTERTAINMENT_GROUP_TYPE = "Entertainment"
 
 
 @app.get("/api/bridge/groups")
@@ -568,6 +589,50 @@ async def list_bridge_groups():
     # "seen" lets the UI say why nothing is on offer — a bridge with no groups
     # at all and one with only luminaires are different problems.
     return {"groups": out, "seen": seen, "total": len(groups)}
+
+
+@app.get("/api/stream/areas")
+async def list_stream_areas():
+    """Entertainment areas the bridge will stream to.
+
+    These are set up in the Hue app under Entertainment areas, not here: the
+    bridge will only stream to one it already knows about, and it wants each
+    light positioned in the room before it accepts the area at all.
+    """
+    client = get_client()
+    if client is None:
+        raise HTTPException(400, "Bridge not configured yet")
+    try:
+        groups = await client.get_groups()
+    except Exception as e:
+        raise HTTPException(502, bridge_error(e, "read the entertainment areas")) from e
+
+    out = []
+    for gid, info in groups.items():
+        if (info.get("type") or "") != ENTERTAINMENT_GROUP_TYPE:
+            continue
+        light_ids = [str(x) for x in info.get("lights", [])]
+        stream = info.get("stream") or {}
+        out.append({
+            "id": gid,
+            "name": info.get("name", f"Area {gid}"),
+            "light_ids": light_ids,
+            # The bridge caps an area at ten lights, so this should never trip;
+            # it is reported rather than assumed so a surprise is visible.
+            "too_many_lights": len(light_ids) > MAX_AREA_LIGHTS,
+            # Someone else streaming to it — Hue Sync, a game — means the
+            # bridge will refuse us until they let go.
+            "in_use_by_someone_else": bool(stream.get("active")),
+        })
+    out.sort(key=lambda a: a["name"].casefold())
+    cfg = config_store.load()
+    return {
+        "areas": out,
+        # Without a client key there is no DTLS credential, and the only way to
+        # get one is to pair again.
+        "can_stream": bool(cfg.get("client_key")),
+        "max_stream_hz": MAX_STREAM_HZ,
+    }
 
 
 @app.get("/api/groups")

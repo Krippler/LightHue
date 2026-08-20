@@ -10,7 +10,8 @@ def configure(client):
 
 def test_index_and_unconfigured_state(client):
     assert client.get("/").status_code == 200
-    assert client.get("/api/bridge").json() == {"bridge_ip": None, "configured": False}
+    assert client.get("/api/bridge").json() == {
+        "bridge_ip": None, "configured": False, "can_stream": False}
     assert client.get("/api/lights").status_code == 400
     status = client.get("/api/status").json()
     assert status["lights"] == {} and status["snapshots"] == {}
@@ -1019,9 +1020,9 @@ def test_bridge_groups_report_what_was_filtered_out(client, bridge):
     # different problems, and the UI has to be able to tell them apart.
     configure(client)
     body = client.get("/api/bridge/groups").json()
-    assert body["total"] == 5
+    assert body["total"] == 6
     assert body["seen"] == {"Room": 1, "Zone": 1, "Luminaire": 1,
-                            "Entertainment": 1, "LightGroup": 1}
+                            "Entertainment": 2, "LightGroup": 1}
     assert len(body["groups"]) == 3
 
 
@@ -1119,3 +1120,67 @@ def test_raising_the_send_rate_reaches_the_running_lights(client, bridge, app_mo
 
     assert shares() == {4.0}                      # 20 * 0.8 / 4
     assert pushes, "raising the rate has to push a status, or the cards stay stale"
+
+
+def test_pairing_asks_for_a_streaming_key_and_reports_getting_one(client, bridge, app_modules):
+    r = client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    assert r.status_code == 200
+    assert r.json()["can_stream"] is True
+    assert client.get("/api/bridge").json()["can_stream"] is True
+    # The key itself is never handed back out.
+    assert "client_key" not in r.json()
+    assert app_modules.config_store.load()["client_key"] == "stub-client-key"
+
+
+def test_a_bridge_too_old_to_issue_one_still_pairs(client, bridge, app_modules):
+    bridge["omit_client_key"] = True
+    r = client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    assert r.status_code == 200
+    assert r.json()["configured"] is True and r.json()["can_stream"] is False
+
+
+def test_saving_credentials_without_a_client_key_leaves_the_stored_one_alone(client, app_modules):
+    client.post("/api/bridge/set", json={
+        "bridge_ip": "10.0.0.5", "api_key": "k", "client_key": "00" * 16})
+    assert client.get("/api/bridge").json()["can_stream"] is True
+    client.post("/api/bridge/set", json={"bridge_ip": "10.0.0.5", "api_key": "k2"})
+    assert client.get("/api/bridge").json()["can_stream"] is True
+
+
+# ---------- entertainment areas ----------
+
+def test_entertainment_areas_are_offered_separately_from_rooms(client, bridge):
+    configure(client)
+    rooms = client.get("/api/bridge/groups").json()["groups"]
+    assert "Game room" not in [g["name"] for g in rooms]   # not a flicker group
+
+    body = client.get("/api/stream/areas").json()
+    assert [a["name"] for a in body["areas"]] == ["Game room", "TV area"]
+    game = next(a for a in body["areas"] if a["name"] == "Game room")
+    assert game["light_ids"] == ["1", "2", "3", "4"]
+    assert game["too_many_lights"] is False
+    assert game["in_use_by_someone_else"] is False
+
+
+def test_an_area_someone_else_is_streaming_to_is_flagged(client, bridge):
+    configure(client)
+    areas = client.get("/api/stream/areas").json()["areas"]
+    busy = next(a for a in areas if a["name"] == "TV area")
+    assert busy["in_use_by_someone_else"] is True
+
+
+def test_areas_report_whether_this_console_could_stream_at_all(client, bridge):
+    configure(client)                               # no client key stored
+    assert client.get("/api/stream/areas").json()["can_stream"] is False
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    assert client.get("/api/stream/areas").json()["can_stream"] is True
+
+
+def test_handing_an_area_to_the_stream_and_back(client, bridge, app_modules):
+    configure(client)
+    hue_client = app_modules.get_client()
+    import asyncio
+    asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+        hue_client.set_stream("6", True))
+    assert bridge["stream_calls"][-1] == ("6", True)
+    assert bridge["groups"]["6"]["stream"]["active"] is True

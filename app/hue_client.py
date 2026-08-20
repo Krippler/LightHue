@@ -135,16 +135,44 @@ class HueClient:
         r.raise_for_status()
         return r.json()
 
+    async def set_stream(self, group_id: str, active: bool) -> dict:
+        """Hand an entertainment area over to the streaming socket, or back.
+
+        Until this is set the bridge ignores everything arriving on port 2100,
+        and while it is set the group answers to nothing else — so it has to be
+        turned off again when the flicker stops, or the Hue app is left unable
+        to touch those lights.
+        """
+        r = await _http().put(self._url("groups", group_id),
+                              json={"stream": {"active": bool(active)}}, timeout=5)
+        r.raise_for_status()
+        return r.json()
+
     @staticmethod
     async def pair(bridge_ip: str, devicetype: str = "game_hue_flicker#server") -> dict:
-        """Call after the user has pressed the physical link button on the bridge."""
+        """Call after the user has pressed the physical link button on the bridge.
+
+        Asks for a client key as well as the usual username. That key is the
+        DTLS pre-shared key entertainment streaming needs, and the bridge only
+        ever hands it out here — there is no way to fetch one for an existing
+        user, which is why a console paired before streaming existed has to be
+        paired again to use it.
+        """
         host, port = parse_bridge_address(bridge_ip)
         url = httpx.URL(scheme="http", host=host, port=port, path="/api")
-        r = await _http().post(url, json={"devicetype": devicetype}, timeout=6)
+        r = await _http().post(
+            url, json={"devicetype": devicetype, "generateclientkey": True}, timeout=6)
         r.raise_for_status()
         data = r.json()
         if isinstance(data, list) and data and "success" in data[0]:
-            return {"ok": True, "api_key": data[0]["success"]["username"]}
+            success = data[0]["success"]
+            return {
+                "ok": True,
+                "api_key": success["username"],
+                # Older bridge firmware simply omits it; everything except
+                # streaming still works, so this is not a pairing failure.
+                "client_key": success.get("clientkey"),
+            }
         if isinstance(data, list) and data and "error" in data[0]:
             return {"ok": False, "error": data[0]["error"].get("description", "unknown error")}
         return {"ok": False, "error": "unexpected response from bridge"}
