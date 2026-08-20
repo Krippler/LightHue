@@ -163,7 +163,9 @@ function sequenceFor(patternId) {
 // A pattern isn't just its letters: the speed, how far the bulb swings and how
 // hard the steps are all belong to the effect. A sputtering bulb and a slow
 // gothic throb aren't the same shape played faster or slower.
-const FRAMING_DEFAULTS = { hz: 10, min_bri: 1, max_bri: 254, transition_ms: 0 };
+const FRAMING_DEFAULTS = {
+  hz: 10, min_bri: 1, max_bri: 254, transition_ms: 0, hue: null, sat: null,
+};
 
 function framingFor(patternId) {
   const p = allPatternOptions().find(p => p.id === patternId) || {};
@@ -326,6 +328,7 @@ function buildCard(entity) {
 
   // Start from the colour the bulb is showing right now rather than a
   // hardcoded default, so "Set color" doesn't jump it somewhere unexpected.
+  // applyPatternFraming below overrides this when the pattern names a colour.
   const seed = currentColorOf(entity);
   if (seed) colorInput.value = seed;
 
@@ -375,6 +378,15 @@ function buildCard(entity) {
     set(minBriInput, minBriValue, framing.min_bri);
     set(maxBriInput, maxBriValue, framing.max_bri);
     set(transInput, transValue, framing.transition_ms);
+    // A pattern that names a colour ticks the box and fills the swatch; one
+    // that doesn't leaves the bulb's own colour alone rather than forcing
+    // white on it.
+    if (framing.hue !== null && framing.sat !== null) {
+      colorInput.value = hueSatToHex(framing.hue, framing.sat);
+      colorEnable.checked = true;
+    } else {
+      colorEnable.checked = false;
+    }
   };
   select.addEventListener('change', () => {
     applyPatternFraming();
@@ -611,6 +623,11 @@ function setCustomStatus(text, kind = '') {
   customStatus.className = `status-line ${kind}`.trim();
 }
 
+const customColor = $('#custom-color');
+customColor.addEventListener('input', () => {
+  $('#custom-color-enable').checked = true;
+});
+
 [['#custom-hz', '#custom-hz-value'],
  ['#custom-minbri', '#custom-minbri-value'],
  ['#custom-maxbri', '#custom-maxbri-value'],
@@ -637,11 +654,15 @@ customSeq.addEventListener('input', () => {
 $('#btn-save-pattern').addEventListener('click', async () => {
   const name = customName.value.trim();
   const sequence = normalizeSequence(customSeq.value);
+  const wantsColor = $('#custom-color-enable').checked;
+  const customHs = wantsColor ? rgbToHueSat(hexToRgb($('#custom-color').value)) : null;
   const framing = {
     hz: Number($('#custom-hz').value),
     min_bri: Number($('#custom-minbri').value),
     max_bri: Number($('#custom-maxbri').value),
     transition_ms: Number($('#custom-trans').value),
+    hue: customHs ? customHs.hue : null,
+    sat: customHs ? customHs.sat : null,
   };
   if (!name) return setCustomStatus('Give the pattern a name.', 'err');
   if (!sequence) return setCustomStatus('Write a sequence first.', 'err');
@@ -684,6 +705,13 @@ function renderCustomList() {
     const f = framingFor(p.id);
     const trans = f.transition_ms ? ` · ${f.transition_ms}ms` : '';
     seqEl.textContent = `${p.sequence} · ${f.hz} Hz · ${f.min_bri}-${f.max_bri}${trans}`;
+    if (f.hue !== null && f.sat !== null) {
+      const dot = document.createElement('span');
+      dot.className = 'chip-color';
+      dot.style.background = hueSatToHex(f.hue, f.sat);
+      dot.title = 'saved with a colour';
+      chip.appendChild(dot);
+    }
 
     const del = document.createElement('button');
     del.className = 'chip-del';

@@ -148,11 +148,15 @@ class CustomPatternRequest(BaseModel):
     min_bri: int = Field(DEFAULT_MIN_BRI, ge=1, le=254)
     max_bri: int = Field(DEFAULT_MAX_BRI, ge=1, le=254)
     transition_ms: int = Field(0, ge=0, le=60000)
+    hue: int | None = Field(None, ge=0, le=65535)
+    sat: int | None = Field(None, ge=0, le=254)
 
     @model_validator(mode="after")
     def _check_range(self):
         if self.min_bri > self.max_bri:
             raise ValueError("min_bri must be less than or equal to max_bri")
+        if (self.hue is None) != (self.sat is None):
+            raise ValueError("hue and sat must be given together, or not at all")
         return self
 
 
@@ -536,9 +540,17 @@ async def start_flicker(req: StartRequest):
     # brightness window and the transition are all part of how it was written.
     framing = framing_of(pattern)
     for field in FRAMING_FIELDS:
+        if field in ("hue", "sat"):
+            # Colour is the one field where None is a meaningful request, so
+            # "was it mentioned at all" decides rather than "is it None".
+            if field in req.model_fields_set:
+                framing[field] = getattr(req, field)
+            continue
         supplied = getattr(req, field)
         if supplied is not None:
             framing[field] = supplied
+    if (framing["hue"] is None) != (framing["sat"] is None):
+        framing["hue"] = framing["sat"] = None
     if framing["min_bri"] > framing["max_bri"]:
         raise HTTPException(
             422, "min_bri must be less than or equal to max_bri "
@@ -554,7 +566,7 @@ async def start_flicker(req: StartRequest):
         await engine.start(
             lid, sequence, req.pattern_id, framing["hz"],
             framing["min_bri"], framing["max_bri"],
-            req.hue, req.sat, framing["transition_ms"], epoch=epoch,
+            framing["hue"], framing["sat"], framing["transition_ms"], epoch=epoch,
         )
     return {"ok": True, **status_payload()}
 
@@ -566,6 +578,8 @@ async def update_flicker(req: UpdateRequest):
         pattern = _resolve_pattern(req.pattern_id)
         changes["sequence"] = pattern["sequence"]
         for field, value in framing_of(pattern).items():
+            if field in ("hue", "sat"):
+                continue        # only ever changed when the caller asks
             if getattr(req, field) is None:
                 changes[field] = value
     updated = [lid for lid in req.light_ids if engine.update(lid, **changes)]

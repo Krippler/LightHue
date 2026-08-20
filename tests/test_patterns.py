@@ -264,3 +264,47 @@ def test_transitions_sit_on_the_bridges_own_resolution():
 
     for pattern in BUILTIN_PATTERNS:
         assert pattern["transition_ms"] % TRANSITION_STEP_MS == 0, pattern["id"]
+
+
+def test_every_authored_preset_has_considered_framing():
+    # The point of the framing fields is that presets arrive looking right.
+    # Enough of them must actually narrow, smooth or colour to make that true.
+    authored = [p for p in BUILTIN_PATTERNS if p["origin"] == "inspired"]
+    narrowed = [p for p in authored if (p["min_bri"], p["max_bri"]) != (1, 254)]
+    smoothed = [p for p in authored if p["transition_ms"]]
+    coloured = [p for p in authored if p["hue"] is not None]
+    assert len(narrowed) > len(authored) // 2
+    assert len(smoothed) > 15
+    assert len(coloured) > 15
+
+
+def test_flame_presets_do_not_drop_the_bulb_to_black():
+    # A real flame never goes out mid-flicker; these should keep a floor.
+    for pid in ("blood_torch", "blood_candle", "heretic_wall_torch", "thief_torch",
+                "hexen_sconce", "rott_torch", "doom_fire_flicker", "sw_lantern"):
+        assert BUILTIN_BY_ID[pid]["min_bri"] >= 30, pid
+        assert BUILTIN_BY_ID[pid]["transition_ms"] > 0, pid
+
+
+def test_electrical_presets_stay_hard_and_wide():
+    # Strobes and failing tubes are the opposite: they snap, and they go dark.
+    for pid in ("doom_strobe_fast", "doom3_strobe", "unreal_strobe",
+                "ss2_emergency", "duke_blink", "sw_neon"):
+        assert BUILTIN_BY_ID[pid]["transition_ms"] == 0, pid
+        assert BUILTIN_BY_ID[pid]["min_bri"] == 1, pid
+
+
+def test_colour_is_only_given_where_the_game_actually_had_one():
+    # Colour is opt-in per pattern: forcing one would overwrite whatever the
+    # user set in the Hue app for no good reason.
+    colourless = [p for p in BUILTIN_PATTERNS if p["hue"] is None]
+    assert len(colourless) > 20
+    for pattern in BUILTIN_PATTERNS:
+        assert (pattern["hue"] is None) == (pattern["sat"] is None), pattern["id"]
+
+
+def test_engine_styles_never_carry_a_colour():
+    # Those tables are brightness only; colour came from the map's light entity.
+    for pattern in BUILTIN_PATTERNS:
+        if pattern["origin"] == "engine":
+            assert pattern["hue"] is None and pattern["sat"] is None, pattern["id"]
