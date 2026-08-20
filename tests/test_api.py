@@ -430,12 +430,19 @@ def test_status_reports_the_rate_a_light_actually_gets(client, bridge, app_modul
     client.put("/api/settings", json={"max_commands_per_second": 10, "restore_on_stop": True})
     client.post("/api/flicker/start",
                 json={"light_ids": ["1", "2", "3"], "pattern_id": "flicker_a", "hz": 10})
+    from app.flicker_engine import GROUP_HEADROOM
+
     status = client.get("/api/status").json()["lights"]
     assert status["1"]["hz"] == 10
-    assert status["1"]["effective_hz"] == pytest.approx(3.33, abs=0.01)
+    # Lights sharing the bridge leave a little of the budget unspent so their
+    # sends can go out as one burst instead of strung out across the second.
+    assert status["1"]["effective_hz"] == pytest.approx(10 * GROUP_HEADROOM / 3, abs=0.01)
     client.post("/api/flicker/stop", json={"light_ids": ["3"]})
-    # one fewer light means a bigger share for the rest
-    assert client.get("/api/status").json()["lights"]["1"]["effective_hz"] == 5.0
+    assert client.get("/api/status").json()["lights"]["1"]["effective_hz"] == pytest.approx(
+        10 * GROUP_HEADROOM / 2, abs=0.01)
+    client.post("/api/flicker/stop", json={"light_ids": ["2"]})
+    # the last light left has nothing to stay in step with, so it gets the lot
+    assert client.get("/api/status").json()["lights"]["1"]["effective_hz"] == 10.0
     client.post("/api/flicker/stop", json={})
 
 
@@ -924,3 +931,21 @@ def test_an_empty_settings_body_changes_nothing(client):
 def test_settings_still_rejects_out_of_range_values(client):
     assert client.put("/api/settings", json={"max_commands_per_second": 0}).status_code == 422
     assert client.put("/api/settings", json={"max_commands_per_second": 99}).status_code == 422
+
+
+def test_starting_a_group_sizes_the_send_budget_for_it(client, bridge, app_modules):
+    # The limiter has to know the batch size before anything is sent, or the
+    # snapshot read spends the only token and the group's first round is
+    # strung out behind it. The read counts too, hence one more than the
+    # number of lights.
+    configure(client)
+    client.post("/api/flicker/start",
+                json={"light_ids": ["1", "2", "3"], "pattern_id": "flicker_a"})
+    assert app_modules.engine.limiter.burst == 4
+
+    # and it shrinks back as lights stop, so a single light doesn't sit on a
+    # bucket sized for a group
+    client.post("/api/flicker/stop", json={"light_ids": ["3"]})
+    assert app_modules.engine.limiter.burst == 2
+    client.post("/api/flicker/stop", json={})
+    assert app_modules.engine.limiter.burst == 1

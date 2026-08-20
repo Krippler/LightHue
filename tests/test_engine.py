@@ -205,69 +205,95 @@ async def test_update_ignores_unknown_and_none_fields():
     await engine.stop_all()
 
 
+def _rounds(calls, n):
+    """Group sends into rounds of n, one per light."""
+    rounds, current = [], {}
+    for sent_at, light_id, state in calls:
+        if light_id in current:
+            rounds.append(current)
+            current = {}
+        current[light_id] = (sent_at, state["bri"])
+    return [r for r in rounds if len(r) == n]
+
+
+def _stagger(round_):
+    times = [t for t, _ in round_.values()]
+    return max(times) - min(times)
+
+
 @pytest.mark.asyncio
-async def test_lights_in_a_group_stay_in_step():
-    # The limiter serves lights one at a time, so they can never send at the
-    # same instant and one of three will always be the far side of a frame
-    # boundary. What must hold is that every light shows the frame belonging
-    # to its own send time — which is what keeps them mutually in step, and
-    # what stops them drifting further apart the longer they run.
-    fake = FakeClient()
+async def test_a_groups_lights_are_sent_together():
+    # The Hue app looks simultaneous because one group command is broadcast to
+    # every bulb. Sending per-light can't match that exactly, but the lights
+    # must go out in one burst rather than spread across the budget: a fixed
+    # gap between every command put 200ms between the first and last of three,
+    # which is plainly visible on a strobe.
+    fake = FakeClient(latency=0.015)
     engine = FlickerEngine(get_client=lambda: fake)
-    engine.limiter.set_rate(30.0)
+    engine.limiter.set_rate(10.0)
+    await asyncio.sleep(0.4)              # idle, as the console is before Start
+    engine.expect_batch(3)
     epoch = time.monotonic()
-    seq = "aeimquy"
     for lid in ("1", "2", "3"):
-        await engine.start(lid, seq, "steady", 10.0, 0, 250, None, None, 0, epoch=epoch)
-    await asyncio.sleep(1.5)
+        await engine.start(lid, "azazazaz", "x", 10.0, 1, 254, None, None, 0, epoch=epoch)
+    await asyncio.sleep(2.5)
     await engine.stop_all()
 
-    def bri_at(t):
-        frame = int((t - epoch) / 0.1) % len(seq)
-        # the engine floors brightness at 1, so mirror that here
-        return max(1, round((ord(seq[frame]) - ord("a")) / 25.0 * 250))
+    rounds = _rounds(fake.calls, 3)
+    assert len(rounds) >= 4
+    staggers = sorted(_stagger(r) for r in rounds)
+    median = staggers[len(staggers) // 2]
+    assert median < 0.02, f"median stagger {median * 1000:.0f}ms"
+    # including the very first round, which is the one you actually watch for
+    assert _stagger(rounds[0]) < 0.02, f"first round {_stagger(rounds[0]) * 1000:.0f}ms"
 
-    assert len(fake.calls) > 30
-    for sent_at, lid, state in fake.calls:
-        # allow a few ms either side for the send landing next to a boundary
-        allowed = {bri_at(sent_at), bri_at(sent_at - 0.012), bri_at(sent_at + 0.012)}
-        assert state["bri"] in allowed, (lid, sent_at - epoch, state["bri"], allowed)
+
+@pytest.mark.asyncio
+async def test_lights_sent_together_carry_the_same_frame():
+    fake = FakeClient(latency=0.015)
+    engine = FlickerEngine(get_client=lambda: fake)
+    engine.limiter.set_rate(10.0)
+    await asyncio.sleep(0.4)
+    engine.expect_batch(3)
+    epoch = time.monotonic()
+    for lid in ("1", "2", "3"):
+        await engine.start(lid, "azazazaz", "x", 10.0, 1, 254, None, None, 0, epoch=epoch)
+    await asyncio.sleep(2.5)
+    await engine.stop_all()
+
+    for round_ in _rounds(fake.calls, 3):
+        assert len({bri for _, bri in round_.values()}) == 1, round_
 
 
 @pytest.mark.asyncio
 async def test_group_lights_do_not_drift_apart_over_time():
-    # Before frames were derived from a shared clock, each light counted its
-    # own ticks, so a light served less often fell progressively further
-    # behind. Compare the first second against the last.
-    fake = FakeClient()
+    # Before frames came from a shared clock, a light served less often fell
+    # progressively further behind. Compare the first second to the last.
+    fake = FakeClient(latency=0.015)
     engine = FlickerEngine(get_client=lambda: fake)
-    engine.limiter.set_rate(30.0)
+    engine.limiter.set_rate(10.0)
+    await asyncio.sleep(0.4)
+    engine.expect_batch(3)
     epoch = time.monotonic()
-    seq = "azazaz"
     for lid in ("1", "2", "3"):
-        await engine.start(lid, seq, "steady", 10.0, 1, 254, None, None, 0, epoch=epoch)
-    await asyncio.sleep(2.0)
+        await engine.start(lid, "azazaz", "x", 10.0, 1, 254, None, None, 0, epoch=epoch)
+    await asyncio.sleep(3.0)
     await engine.stop_all()
 
-    def spread(window):
-        # how far apart the lights' frame positions are inside one window
-        by_light = {}
-        for sent_at, lid, state in window:
-            frame = int((sent_at - epoch) / 0.1)
-            by_light.setdefault(lid, []).append((frame, state["bri"]))
-        mismatches = 0
-        for frames in by_light.values():
-            for frame, bri in frames:
-                expected = 1 if seq[frame % len(seq)] == "a" else 254
-                if bri != expected:
-                    mismatches += 1
-        return mismatches
+    rounds = _rounds(fake.calls, 3)
+    early = [_stagger(r) for r in rounds[:2]]
+    late = [_stagger(r) for r in rounds[-2:]]
+    assert max(late) < 0.02
+    assert max(late) <= max(early) + 0.01
 
-    early = [c for c in fake.calls if c[0] - epoch < 0.8]
-    late = [c for c in fake.calls if c[0] - epoch > 1.2]
-    assert early and late
-    # drift would make the later window steadily worse; it must not
-    assert spread(late) <= spread(early) + 2
+
+@pytest.mark.asyncio
+async def test_one_light_alone_keeps_the_whole_budget():
+    engine = FlickerEngine(get_client=lambda: FakeClient())
+    engine.limiter.set_rate(10.0)
+    await engine.start("1", "azaz", "x", 20.0, 1, 254, None, None, 0)
+    assert engine.status()["1"]["effective_hz"] == 10.0    # no headroom given up
+    await engine.stop_all()
 
 
 @pytest.mark.asyncio
@@ -358,11 +384,15 @@ async def test_writing_one_light_off_leaves_the_others_running():
     assert engine.running_light_ids() == ["alive"]
 
     # once it's gone, the working light has the budget to itself
-    before = len([c for c in fake.calls if c[1] == "alive"])
+    alive_before = len([c for c in fake.calls if c[1] == "alive"])
+    dead_before = len([c for c in fake.calls if c[1] == "dead"])
     await asyncio.sleep(0.5)
-    after = len([c for c in fake.calls if c[1] == "alive"])
-    assert after - before > 5
-    assert not [c for c in fake.calls[-10:] if c[1] == "dead"]
+    alive_after = len([c for c in fake.calls if c[1] == "alive"])
+    dead_after = len([c for c in fake.calls if c[1] == "dead"])
+    assert alive_after - alive_before > 3
+    # counted rather than sampling the tail, which depended on how many sends
+    # the working light happened to fit into the window
+    assert dead_after == dead_before
     await engine.stop_all()
 
 
@@ -386,3 +416,45 @@ async def test_an_occasional_failure_does_not_write_a_light_off():
     await asyncio.sleep(2.0)
     assert engine.running_light_ids() == ["1"]   # a third failing is not fatal
     await engine.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_a_frame_is_never_sent_twice():
+    # Waking a hair before the frame boundary used to send the same frame
+    # again and then immediately send the next: about one wasted command per
+    # round out of a budget the whole group shares.
+    fake = FakeClient(latency=0.01)
+    engine = FlickerEngine(get_client=lambda: fake)
+    engine.limiter.set_rate(20.0)
+    await asyncio.sleep(0.3)
+    engine.expect_batch(2)
+    epoch = time.monotonic()
+    for lid in ("1", "2"):
+        await engine.start(lid, "azazazaz", "x", 5.0, 1, 254, None, None, 0, epoch=epoch)
+    await asyncio.sleep(2.5)
+    await engine.stop_all()
+
+    interval = 1.0 / 5.0
+    for lid in ("1", "2"):
+        frames = [int((t - epoch) / interval) for t, light, _ in fake.calls if light == lid]
+        assert len(frames) == len(set(frames)), f"light {lid} sent a frame twice: {frames}"
+        assert frames == sorted(frames)
+
+
+@pytest.mark.asyncio
+async def test_each_light_sends_about_once_per_frame():
+    fake = FakeClient(latency=0.01)
+    engine = FlickerEngine(get_client=lambda: fake)
+    engine.limiter.set_rate(20.0)
+    await asyncio.sleep(0.3)
+    engine.expect_batch(2)
+    epoch = time.monotonic()
+    for lid in ("1", "2"):
+        await engine.start(lid, "azaz", "x", 5.0, 1, 254, None, None, 0, epoch=epoch)
+    await asyncio.sleep(2.0)
+    await engine.stop_all()
+
+    for lid in ("1", "2"):
+        sends = len([c for c in fake.calls if c[1] == lid])
+        # 5Hz for 2s is ten frames; allow a little either side for scheduling
+        assert 8 <= sends <= 12, f"light {lid} sent {sends} times"

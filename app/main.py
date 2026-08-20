@@ -561,6 +561,10 @@ async def start_flicker(req: StartRequest):
             422, "min_bri must be less than or equal to max_bri "
                  f"(got {framing['min_bri']} against the pattern's {framing['max_bri']})",
         )
+    # Size the send budget before anything goes out, or the snapshot read below
+    # spends the only token and the group's first round is strung out behind
+    # it. The read counts against the budget too, hence the extra one.
+    engine.expect_batch(len(req.light_ids) + 1)
     # Snapshot first — one bulk GET for the whole group — so Stop has something
     # to put back. Lights already running keep their earlier snapshot.
     await engine.capture(req.light_ids)

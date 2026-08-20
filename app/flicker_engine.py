@@ -40,29 +40,79 @@ def restorable(state: dict) -> dict:
     return snapshot
 
 
-class RateLimiter:
-    """Global token-bucket-ish limiter so we never flood the Hue bridge,
-    regardless of how many lights are flickering at once."""
+# Never let a burst exceed a second's worth of commands, however many lights
+# are running.
+MAX_BURST = 10
 
-    def __init__(self, max_per_second: float = 10.0):
+# Fraction of the budget a group is allowed to spend. Running flat out against
+# the ceiling means every send has to wait for the one before, which forces a
+# group's lights apart by the gap between commands — 200ms across three lights
+# at 10/sec, plainly visible on a strobe. Leaving a little unspent lets a whole
+# round go out in one burst and land together.
+GROUP_HEADROOM = 0.8
+
+
+class RateLimiter:
+    """A sustained ceiling on commands to the bridge, with room for a burst.
+
+    Philips' guidance is a rate — about ten commands a second to /lights — not
+    an exact spacing. Insisting on a fixed gap between every single command
+    also spread a group's lights across hundreds of milliseconds, which is
+    plainly visible on a strobe. Letting a whole round take its tokens at once
+    and then waiting for them to refill keeps the average identical and the
+    group in step.
+
+    (The /groups endpoint would be genuinely simultaneous, but the bridge
+    broadcasts those and Philips caps them at one a second, which is far too
+    slow to flicker with.)
+    """
+
+    def __init__(self, max_per_second: float = 10.0, burst: int = 1):
         self.min_interval = 1.0 / max_per_second
+        self._burst = max(1, burst)
+        self._tokens = float(self._burst)
+        self._updated = time.monotonic()
         self._lock = asyncio.Lock()
-        self._last = 0.0
 
     @property
     def max_per_second(self) -> float:
         return 1.0 / self.min_interval
 
-    async def wait(self):
-        async with self._lock:
-            now = time.monotonic()
-            delay = self._last + self.min_interval - now
-            if delay > 0:
-                await asyncio.sleep(delay)
-            self._last = time.monotonic()
+    @property
+    def burst(self) -> int:
+        return self._burst
 
     def set_rate(self, max_per_second: float):
         self.min_interval = 1.0 / max(0.5, max_per_second)
+
+    def _refill(self):
+        now = time.monotonic()
+        earned = (now - self._updated) / self.min_interval
+        self._tokens = min(float(self._burst), self._tokens + earned)
+        self._updated = now
+
+    def set_burst(self, burst: int):
+        """Size the bucket to the number of lights running together.
+
+        Idle time counts toward the new size, so a group starting after a
+        quiet spell can send its first round together instead of taking three
+        rounds to fill up. Nothing is granted outright: a caller cycling
+        start/stop earns only what the elapsed time is worth.
+        """
+        self._burst = max(1, min(int(burst), MAX_BURST))
+        self._refill()
+
+    async def wait(self):
+        while True:
+            async with self._lock:
+                self._refill()
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return
+                shortfall = (1.0 - self._tokens) * self.min_interval
+            # Slept outside the lock on purpose: waiters that still have a
+            # token to claim must not queue behind this one.
+            await asyncio.sleep(shortfall)
 
 
 class FlickerEngine:
@@ -143,8 +193,16 @@ class FlickerEngine:
         return list(self._tasks.keys())
 
     def _share(self) -> float:
-        """Frames per second each running light can actually be sent."""
-        return self.limiter.max_per_second / max(1, len(self._tasks))
+        """Frames per second each running light can actually be sent.
+
+        One light on its own gets the whole budget; there is nothing to stay in
+        step with. Lights running together give a little of it back so they
+        can be sent as one burst rather than strung out across the second.
+        """
+        running = max(1, len(self._tasks))
+        if running == 1:
+            return self.limiter.max_per_second
+        return (self.limiter.max_per_second * GROUP_HEADROOM) / running
 
     def status(self) -> dict:
         # effective_hz is derived here rather than written by the loops: a
@@ -158,6 +216,15 @@ class FlickerEngine:
                 entry["effective_hz"] = round(min(st["hz"], share), 2)
             out[lid] = entry
         return out
+
+    def expect_batch(self, count: int):
+        """Tell the limiter a batch of this many lights is about to start.
+
+        Sizing the bucket up front is what lets the whole group's first send go
+        out together; discovering the size one start at a time means the first
+        light spends the only token there is.
+        """
+        self.limiter.set_burst(max(count, len(self._tasks)))
 
     async def start(self, light_id: str, sequence: str, pattern_id: str, hz: float,
                     min_bri: int, max_bri: int, hue: int | None, sat: int | None,
@@ -186,6 +253,10 @@ class FlickerEngine:
             "running": True,
         }
         self._tasks[light_id] = asyncio.create_task(self._run_light(light_id, client))
+        # Never shrink while starting: a caller bringing several lights up at
+        # once sizes the bucket for the whole batch first, and the first
+        # light's send would otherwise collapse it back to one.
+        self.limiter.set_burst(max(self.limiter.burst, len(self._tasks)))
         self._on_change()
 
     def update(self, light_id: str, **changes) -> bool:
@@ -201,6 +272,10 @@ class FlickerEngine:
     async def stop(self, light_id: str, notify: bool = True, restore: bool = True):
         task = self._tasks.pop(light_id, None)
         if task:
+            # Only resize when something actually stopped. start() calls this
+            # to clear any previous loop, and resizing on a no-op would undo
+            # the sizing a batch of starts just set up.
+            self.limiter.set_burst(len(self._tasks))
             task.cancel()
             try:
                 await task
@@ -222,6 +297,7 @@ class FlickerEngine:
         should still have something to put back.
         """
         self._tasks.pop(light_id, None)
+        self.limiter.set_burst(len(self._tasks))
         if light_id in self._states:
             self._states[light_id]["running"] = False
         self._on_change()
@@ -237,15 +313,10 @@ class FlickerEngine:
         state = self._states[light_id]
         applied_color = None
         failures = 0
+        last_frame = None
 
         try:
             while True:
-                # Wait for the limiter *first*, then work out what to send.
-                # Deciding before the wait would send a value computed up to a
-                # full slot ago, which is exactly how lights end up showing
-                # stale frames when several are competing for the budget.
-                await self.limiter.wait()
-
                 # You cannot show frames you cannot send: running the pattern
                 # faster than this light's share of the bridge budget would
                 # just sample it, and a stride that divides the pattern evenly
@@ -253,10 +324,26 @@ class FlickerEngine:
                 hz = min(state["hz"], self._share())
                 interval = 1.0 / max(0.5, hz)
                 epoch = state["epoch"]
+
                 # Which frame the pattern is on right now. Counting ticks
                 # instead would let a throttled light fall behind, which is
                 # what made lights in a group drift apart.
                 frame = int((time.monotonic() - epoch) / interval)
+                if last_frame is not None and frame <= last_frame:
+                    # Woke a hair before the boundary. Sending now would put
+                    # the same frame on the wire twice — a wasted command out
+                    # of a budget the whole group is sharing — so wait for the
+                    # frame that is actually due. Checked before taking a
+                    # token so the wasted send doesn't cost one either.
+                    due = epoch + (last_frame + 1) * interval
+                    await asyncio.sleep(max(0.001, due - time.monotonic()))
+                    continue
+
+                # Take a slot, then re-read the clock: the value that goes out
+                # should be the one due at the moment it is actually sent.
+                await self.limiter.wait()
+                frame = int((time.monotonic() - epoch) / interval)
+                last_frame = frame
                 sequence = state["sequence"] or "m"
                 level = level_for_char(sequence[frame % len(sequence)])
                 min_bri, max_bri = state["min_bri"], state["max_bri"]
