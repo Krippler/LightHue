@@ -390,6 +390,8 @@ select {
   background: var(--ember-bright);
 }
 
+.rate-note { margin-top: 6px; color: var(--brimstone); font-size: 11px; }
+
 .controls { display: flex; flex-direction: column; }
 
 .card-actions { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -470,6 +472,9 @@ select {
 .settings-grid .btn { align-self: flex-start; }
 
 .pw-actions { display: flex; gap: 10px; }
+
+.share-row .settings-subhead { margin-top: 20px; }
+.share-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 
 .settings-subhead {
   font-family: var(--font-display);

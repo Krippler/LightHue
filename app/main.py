@@ -1,18 +1,27 @@
 import asyncio
 import logging
+import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import (
+    Body,
+    FastAPI,
+    HTTPException,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
-from . import auth, config_store, hue_client
+from . import auth, config_store, hue_client, packs
 from .auth import ConsoleAuthMiddleware
 from .flicker_engine import FlickerEngine
 from .hue_client import HueClient
-from .patterns import BUILTIN_BY_ID, BUILTIN_PATTERNS
+from .patterns import BUILTIN_BY_ID, BUILTIN_PATTERNS, GAMES
 
 
 @asynccontextmanager
@@ -36,7 +45,7 @@ async def lifespan(_app: FastAPI):
     await hue_client.aclose()
 
 
-app = FastAPI(title="Quake Hue Flicker", lifespan=lifespan)
+app = FastAPI(title="Game Hue Flicker", lifespan=lifespan)
 app.add_middleware(ConsoleAuthMiddleware)
 
 
@@ -67,7 +76,7 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
-logger = logging.getLogger("quake_hue_flicker")
+logger = logging.getLogger("game_hue_flicker")
 
 # Fire-and-forget tasks are only weakly held by the loop, so keep a strong
 # reference until each one finishes or it can be collected mid-flight.
@@ -338,7 +347,7 @@ async def list_lights():
 async def list_patterns():
     cfg = config_store.load()
     custom = list(cfg.get("custom_patterns", {}).values())
-    return {"builtin": BUILTIN_PATTERNS, "custom": custom}
+    return {"builtin": BUILTIN_PATTERNS, "custom": custom, "games": GAMES}
 
 
 @app.post("/api/patterns")
@@ -358,7 +367,7 @@ async def create_pattern(req: CustomPatternRequest):
 @app.delete("/api/patterns/{pattern_id}")
 async def delete_pattern(pattern_id: str):
     if pattern_id in BUILTIN_BY_ID:
-        raise HTTPException(400, "Built-in Quake patterns can't be deleted")
+        raise HTTPException(400, "Built-in game patterns can't be deleted")
     # A running loop holds its own copy of the sequence, so deleting out from
     # under it would leave lights flickering a pattern the UI can't name.
     in_use = [lid for lid, st in engine.status().items()
@@ -373,6 +382,60 @@ async def delete_pattern(pattern_id: str):
         raise HTTPException(404, f"Unknown pattern_id: {pattern_id}")
     config_store.save(cfg)
     return {"ok": True}
+
+
+@app.get("/api/patterns/export")
+async def export_patterns():
+    """Download your custom patterns as a pack file you can hand to someone."""
+    cfg = config_store.load()
+    custom = list(cfg.get("custom_patterns", {}).values())
+    if not custom:
+        raise HTTPException(404, "You haven't saved any custom patterns yet")
+    pack = packs.build(custom)
+    stamp = pack["exported_at"][:10]
+    return JSONResponse(
+        pack,
+        headers={
+            "Content-Disposition":
+                f'attachment; filename="game-hue-flicker-patterns-{stamp}.json"',
+        },
+    )
+
+
+@app.post("/api/patterns/import")
+async def import_patterns(payload: dict = Body(...)):
+    """Load a pack file. Reports what came in and what was left alone."""
+    try:
+        entries = packs.parse(payload)
+    except packs.PackError as e:
+        raise HTTPException(400, str(e)) from e
+
+    cfg = config_store.load()
+    existing = cfg["custom_patterns"]
+    # An identical sequence under a new name is just the same effect twice in
+    # the menu, so those are reported rather than added. Built-ins count too.
+    by_sequence = {p["sequence"]: p["name"] for p in BUILTIN_PATTERNS}
+    by_sequence.update({p["sequence"]: p["name"] for p in existing.values()})
+    names = {p["name"] for p in existing.values()}
+
+    added, skipped = [], []
+    for entry in entries:
+        clash = by_sequence.get(entry["sequence"])
+        if clash is not None:
+            skipped.append({"name": entry["name"],
+                            "reason": f"same sequence as \"{clash}\""})
+            continue
+        name = packs.unique_name(entry["name"], names)
+        pid = f"custom_{uuid.uuid4().hex[:8]}"
+        existing[pid] = {"id": pid, "name": name, "sequence": entry["sequence"]}
+        by_sequence[entry["sequence"]] = name
+        names.add(name)
+        added.append(existing[pid])
+
+    if added:
+        config_store.save(cfg)
+    return {"ok": True, "added": added, "skipped": skipped,
+            "pack_name": payload.get("name"), "author": payload.get("author")}
 
 
 def _resolve_sequence(pattern_id: str) -> str:
@@ -436,10 +499,13 @@ async def start_flicker(req: StartRequest):
     # Snapshot first — one bulk GET for the whole group — so Stop has something
     # to put back. Lights already running keep their earlier snapshot.
     await engine.capture(req.light_ids)
+    # One epoch for the whole request: every light in a group then derives the
+    # same frame from it and they flicker in step.
+    epoch = time.monotonic()
     for lid in req.light_ids:
         await engine.start(
             lid, sequence, req.pattern_id, req.hz, req.min_bri, req.max_bri,
-            req.hue, req.sat, req.transition_ms,
+            req.hue, req.sat, req.transition_ms, epoch=epoch,
         )
     return {"ok": True, **status_payload()}
 

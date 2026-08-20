@@ -36,11 +36,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build image
-        run: docker build -t quake-hue-flicker:ci .
+        run: docker build -t game-hue-flicker:ci .
 
       - name: Boot the container and hit it
         run: |
-          docker run -d --name ci-console -p 26000:26000 quake-hue-flicker:ci
+          docker run -d --name ci-console -p 26000:26000 game-hue-flicker:ci
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:26000/api/bridge > /dev/null; then
               echo "console is up"

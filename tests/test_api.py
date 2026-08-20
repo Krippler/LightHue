@@ -1,3 +1,8 @@
+import pytest
+
+from app.patterns import BUILTIN_PATTERNS
+
+
 def configure(client):
     r = client.post("/api/bridge/set", json={"bridge_ip": "10.0.0.5", "api_key": "k"})
     assert r.status_code == 200
@@ -41,7 +46,7 @@ def test_custom_pattern_crud(client):
     created = client.post("/api/patterns", json={"name": "Torch", "sequence": " MMA zz "}).json()
     assert created["sequence"] == "mmazz"       # trimmed and lowercased
     listed = client.get("/api/patterns").json()
-    assert len(listed["builtin"]) == 12
+    assert len(listed["builtin"]) == len(BUILTIN_PATTERNS)
     assert [p["id"] for p in listed["custom"]] == [created["id"]]
     assert client.delete(f"/api/patterns/{created['id']}").status_code == 200
     assert client.get("/api/patterns").json()["custom"] == []
@@ -59,7 +64,7 @@ def test_pattern_name_is_required(client):
 def test_builtin_patterns_cannot_be_deleted(client):
     r = client.delete("/api/patterns/steady")
     assert r.status_code == 400
-    assert len(client.get("/api/patterns").json()["builtin"]) == 12
+    assert len(client.get("/api/patterns").json()["builtin"]) == len(BUILTIN_PATTERNS)
 
 
 def test_deleting_an_unknown_pattern_is_404(client):
@@ -409,3 +414,173 @@ def test_status_channel_carries_snapshots(client, bridge):
     assert msg["snapshots"]["1"]["bri"] == 180
     assert msg["lights"]["1"]["running"] is True
     assert client.post("/api/flicker/stop", json={}).json()["snapshots"] == {}
+
+
+def test_status_reports_the_rate_a_light_actually_gets(client, bridge, app_modules):
+    # Three lights at 10Hz want 30 commands/sec from a 10/sec budget, so each
+    # one is really running at a third of what was asked for. The UI needs
+    # that number to tell the truth about what the bridge can carry.
+    configure(client)
+    client.put("/api/settings", json={"max_commands_per_second": 10, "restore_on_stop": True})
+    client.post("/api/flicker/start",
+                json={"light_ids": ["1", "2", "3"], "pattern_id": "flicker_a", "hz": 10})
+    status = client.get("/api/status").json()["lights"]
+    assert status["1"]["hz"] == 10
+    assert status["1"]["effective_hz"] == pytest.approx(3.33, abs=0.01)
+    client.post("/api/flicker/stop", json={"light_ids": ["3"]})
+    # one fewer light means a bigger share for the rest
+    assert client.get("/api/status").json()["lights"]["1"]["effective_hz"] == 5.0
+    client.post("/api/flicker/stop", json={})
+
+
+def test_effective_rate_is_absent_once_stopped(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "steady"})
+    client.post("/api/flicker/stop", json={})
+    assert "effective_hz" not in client.get("/api/status").json()["lights"]["1"]
+
+
+def test_patterns_endpoint_lists_games_in_order(client):
+    body = client.get("/api/patterns").json()
+    assert body["games"][0] == "DOOM"          # oldest engine first
+    assert body["games"][-1] == "Unreal"
+    # Every game in the menu order can be filled from the pattern list, either
+    # by owning patterns or by having them shared into it.
+    for game in body["games"]:
+        assert any(p["game"] == game or game in p.get("shared_with", [])
+                   for p in body["builtin"]), game
+
+
+def test_patterns_endpoint_exposes_sharing(client):
+    body = client.get("/api/patterns").json()
+    shared = [p for p in body["builtin"] if p.get("shared_with")]
+    assert len(shared) == 12
+    assert all(p["game"] == "Quake" and p["shared_with"] == ["Half-Life"] for p in shared)
+
+
+# ---------- sharing patterns as a file ----------
+
+def make(client, name, sequence):
+    r = client.post("/api/patterns", json={"name": name, "sequence": sequence})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_export_returns_a_downloadable_pack(client):
+    make(client, "Torchlight", "mmnmmo")
+    make(client, "Sputter", "azaz")
+    r = client.get("/api/patterns/export")
+    assert r.status_code == 200
+    assert "attachment" in r.headers["content-disposition"]
+    assert "game-hue-flicker-patterns-" in r.headers["content-disposition"]
+    pack = r.json()
+    assert pack["format"] == "game-hue-flicker/patterns"
+    assert sorted(p["name"] for p in pack["patterns"]) == ["Sputter", "Torchlight"]
+    # ids are console-local bookkeeping and have no business in a shared file
+    assert all(set(p) == {"name", "sequence"} for p in pack["patterns"])
+
+
+def test_export_with_nothing_to_share_is_404(client):
+    assert client.get("/api/patterns/export").status_code == 404
+
+
+def test_export_then_import_round_trips(client, app_modules):
+    make(client, "Torchlight", "mmnmmo")
+    pack = client.get("/api/patterns/export").json()
+
+    # a second console, starting empty
+    app_modules.config_store.update(custom_patterns={})
+    r = client.post("/api/patterns/import", json=pack)
+    assert r.status_code == 200
+    assert [p["name"] for p in r.json()["added"]] == ["Torchlight"]
+    assert r.json()["skipped"] == []
+    listed = client.get("/api/patterns").json()["custom"]
+    assert [(p["name"], p["sequence"]) for p in listed] == [("Torchlight", "mmnmmo")]
+
+
+def test_imported_patterns_are_usable_immediately(client, bridge):
+    configure(client)
+    r = client.post("/api/patterns/import", json={
+        "patterns": [{"name": "Imported", "sequence": "azaz"}],
+    })
+    pid = r.json()["added"][0]["id"]
+    start = client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": pid})
+    assert start.status_code == 200
+    assert client.get("/api/status").json()["lights"]["1"]["sequence"] == "azaz"
+    client.post("/api/flicker/stop", json={})
+
+
+def test_import_accepts_a_hand_written_file(client):
+    r = client.post("/api/patterns/import", json={
+        "name": "Handmade pack", "author": "someone",
+        "patterns": [{"name": " Sputtering  Lamp ", "sequence": " MM Az "}],
+    })
+    body = r.json()
+    assert body["pack_name"] == "Handmade pack" and body["author"] == "someone"
+    assert body["added"][0]["name"] == "Sputtering Lamp"
+    assert body["added"][0]["sequence"] == "mmaz"
+
+
+def test_import_skips_patterns_it_already_has(client):
+    make(client, "Torchlight", "mmnmmo")
+    r = client.post("/api/patterns/import", json={
+        "patterns": [{"name": "Someone Elses Name", "sequence": "mmnmmo"},
+                     {"name": "Genuinely New", "sequence": "azazaz"}],
+    })
+    body = r.json()
+    assert [p["name"] for p in body["added"]] == ["Genuinely New"]
+    assert body["skipped"] == [
+        {"name": "Someone Elses Name", "reason": 'same sequence as "Torchlight"'},
+    ]
+
+
+def test_import_skips_patterns_matching_a_builtin(client):
+    r = client.post("/api/patterns/import", json={
+        "patterns": [{"name": "Definitely Mine", "sequence": "mmnmmommommnonmmonqnmmo"}],
+    })
+    body = r.json()
+    assert body["added"] == []
+    assert "Quake" in body["skipped"][0]["reason"]
+
+
+def test_import_renames_rather_than_clobbering_on_a_name_clash(client):
+    make(client, "Torchlight", "mmnmmo")
+    r = client.post("/api/patterns/import", json={
+        "patterns": [{"name": "Torchlight", "sequence": "zzzaaa"}],
+    })
+    assert r.json()["added"][0]["name"] == "Torchlight (2)"
+    names = sorted(p["name"] for p in client.get("/api/patterns").json()["custom"])
+    assert names == ["Torchlight", "Torchlight (2)"]
+
+
+def test_a_pack_of_only_duplicates_changes_nothing(client, app_modules):
+    make(client, "Torchlight", "mmnmmo")
+    before = app_modules.config_store.load()["custom_patterns"]
+    r = client.post("/api/patterns/import", json={
+        "patterns": [{"name": "Copy", "sequence": "mmnmmo"}],
+    })
+    assert r.json()["added"] == []
+    assert app_modules.config_store.load()["custom_patterns"] == before
+
+
+def test_import_rejects_a_bad_file_with_a_useful_message(client):
+    r = client.post("/api/patterns/import", json={
+        "patterns": [{"name": "Broken", "sequence": "abc123"}],
+    })
+    assert r.status_code == 400
+    assert "Broken" in r.json()["detail"]
+    assert "a-z" in r.json()["detail"]
+
+
+def test_import_rejects_a_file_that_is_not_a_pack(client):
+    r = client.post("/api/patterns/import", json={"hello": "world"})
+    assert r.status_code == 400
+    assert "patterns" in r.json()["detail"]
+    assert client.get("/api/patterns").json()["custom"] == []
+
+
+def test_sharing_endpoints_are_behind_the_console_password(client):
+    client.put("/api/auth/password", json={"new_password": "quaddamage"})
+    client.cookies.clear()
+    assert client.get("/api/patterns/export").status_code == 401
+    assert client.post("/api/patterns/import", json={"patterns": []}).status_code == 401
