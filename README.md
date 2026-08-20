@@ -335,8 +335,16 @@ Three things it needs:
    area exclusively; areas already taken are listed but greyed out.
 
 While an area is streaming the bridge ignores everything else for those lights,
-including the Hue app, so the console hands the area back when you press Stop
-and on the way out if the container is stopped mid-stream.
+including the Hue app, so the console hands the area back when you press Stop,
+when the sender stops for any reason at all, and on the way out if the container
+is stopped mid-stream.
+
+**If a stream is left claimed** — a killed container, a dropped network — the
+bridge keeps holding the area, and from the outside that looks like it simply
+ignoring the streaming port: the area is accepted and then the handshake times
+out. Starting a stream clears a claim this console left behind before making
+its own, so that usually sorts itself out. **Release area** clears one by hand,
+including a claim left by something else, which beats restarting the bridge.
 
 Streaming has no transition setting: every frame is sent, so there is nothing
 to interpolate between.

@@ -39,6 +39,8 @@ from .stream_engine import StreamEngine, StreamError
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    global _loop
+    _loop = asyncio.get_running_loop()
     settings = config_store.get_settings()
     engine.limiter.set_rate(settings["max_commands_per_second"])
     engine.restore_on_stop = settings["restore_on_stop"]
@@ -115,6 +117,25 @@ def status_payload() -> dict:
     }
 
 
+# The stream's sender runs on a thread of its own, so anything it needs done
+# with the bridge has to be handed back to the loop explicitly.
+_loop: "asyncio.AbstractEventLoop | None" = None
+
+
+def _from_stream_thread(coro):
+    if _loop is None or _loop.is_closed():
+        return
+    try:
+        asyncio.run_coroutine_threadsafe(coro, _loop)
+    except RuntimeError:
+        logger.warning("Could not schedule stream cleanup; the loop is gone")
+
+
+def _stream_stopped(area_id: str):
+    """The sender has exited — for any reason, asked for or not."""
+    _from_stream_thread(_release_area(area_id))
+
+
 def _broadcast_status_soon():
     async def _do():
         await manager.broadcast({"type": "status", **status_payload()})
@@ -157,7 +178,8 @@ def _persist_snapshots(snapshots: dict):
 
 engine = FlickerEngine(get_client=get_client, on_change=_broadcast_status_soon,
                        on_snapshots=_persist_snapshots)
-stream_engine = StreamEngine(on_change=_broadcast_status_soon)
+stream_engine = StreamEngine(on_change=_broadcast_status_soon,
+                             on_stopped=_stream_stopped)
 
 
 # ---------- Models ----------
@@ -272,6 +294,10 @@ class StreamStartRequest(BaseModel):
         if (self.hue is None) != (self.sat is None):
             raise ValueError("hue and sat must be given together, or not at all")
         return self
+
+
+class StreamAreaRequest(BaseModel):
+    area_id: str = Field(..., min_length=1, max_length=64)
 
 
 class StreamUpdateRequest(BaseModel):
@@ -649,12 +675,17 @@ async def list_stream_areas():
     except Exception as e:
         raise HTTPException(502, bridge_error(e, "read the entertainment areas")) from e
 
+    cfg_api_key = config_store.load().get("api_key")
     out = []
     for gid, info in groups.items():
         if (info.get("type") or "") != ENTERTAINMENT_GROUP_TYPE:
             continue
         light_ids = [str(x) for x in info.get("lights", [])]
         stream = info.get("stream") or {}
+        owner = stream.get("owner")
+        # Worked out here rather than by handing the UI the API key to compare
+        # against: the key is the one thing this endpoint must never return.
+        claimed_by_us = bool(stream.get("active")) and owner == cfg_api_key
         out.append({
             "id": gid,
             "name": info.get("name", f"Area {gid}"),
@@ -664,7 +695,11 @@ async def list_stream_areas():
             "too_many_lights": len(light_ids) > MAX_AREA_LIGHTS,
             # Someone else streaming to it — Hue Sync, a game — means the
             # bridge will refuse us until they let go.
-            "in_use_by_someone_else": bool(stream.get("active")),
+            "in_use_by_someone_else": bool(stream.get("active")) and not claimed_by_us,
+            # A claim this console left behind is ours to take back; anyone
+            # else's is a real conflict. Said plainly so the UI doesn't have to
+            # infer it from a failure.
+            "claimed_by_us": claimed_by_us,
         })
     out.sort(key=lambda a: a["name"].casefold())
     cfg = config_store.load()
@@ -707,6 +742,47 @@ async def _release_area(area_id: str):
         logger.exception("Could not hand entertainment area %s back", area_id)
 
 
+async def _claim_area(client, area_id: str):
+    """Take the area for streaming, clearing anyone's stale hold first.
+
+    The bridge keeps an area claimed until something tells it otherwise, and a
+    session that died without releasing — a killed container, a dropped
+    network, a crash — leaves the claim behind. From the outside that looks
+    like the bridge simply not answering on port 2100: the REST call to claim
+    it succeeds, and then the handshake times out. Clearing the claim first
+    costs one call and turns that dead end into a normal start.
+    """
+    try:
+        await client.set_stream(area_id, False)
+        await asyncio.sleep(0.3)      # let the bridge finish tearing down
+    except Exception:
+        # Nothing held it, or the bridge disliked being told so. Either way the
+        # claim below is the call that actually matters.
+        logger.debug("Pre-emptive release of area %s did nothing", area_id, exc_info=True)
+    await client.set_stream(area_id, True)
+
+
+@app.post("/api/stream/release")
+async def release_stream_area(req: StreamAreaRequest):
+    """Hand an area back by hand, for when a claim outlived its session.
+
+    Recovering otherwise means restarting the bridge, because an area it thinks
+    is being streamed to answers to nothing else — not this console, not the
+    Hue app.
+    """
+    client = get_client()
+    if client is None:
+        raise HTTPException(400, "Bridge not configured yet")
+    if stream_engine.area_id() == req.area_id:
+        stream_engine.stop()
+    try:
+        await client.set_stream(req.area_id, False)
+    except Exception as e:
+        raise HTTPException(502, bridge_error(e, "hand the area back")) from e
+    _broadcast_status_soon()
+    return {"ok": True, **status_payload()}
+
+
 @app.post("/api/stream/start")
 async def start_stream(req: StreamStartRequest):
     cfg = config_store.load()
@@ -720,12 +796,20 @@ async def start_stream(req: StreamStartRequest):
     light_ids = [str(x) for x in info.get("lights", [])]
     if not light_ids:
         raise HTTPException(422, "That entertainment area has no lights in it")
-    if (info.get("stream") or {}).get("active"):
-        raise HTTPException(
-            409,
-            "Something else is already streaming to that area — Hue Sync, or a game. "
-            "Stop it there first.",
-        )
+    stream_info = info.get("stream") or {}
+    if stream_info.get("active"):
+        # The bridge records who claimed it. Ours means a session that died
+        # without letting go — a killed container, a dropped network — and the
+        # claim below clears it. Anyone else's is a real conflict: two things
+        # streaming to one area would fight over every frame.
+        owner = stream_info.get("owner")
+        if owner and owner != cfg.get("api_key"):
+            raise HTTPException(
+                409,
+                "Something else is already streaming to that area — Hue Sync, or a game. "
+                "Stop it there first, or use Release area to take it back.",
+            )
+        logger.info("Area %s was left claimed by this console; taking it back", req.area_id)
 
     pattern = _resolve_pattern(req.pattern_id)
     framing = framing_of(pattern)
@@ -754,7 +838,7 @@ async def start_stream(req: StreamStartRequest):
 
     client = get_client()
     try:
-        await client.set_stream(req.area_id, True)
+        await _claim_area(client, req.area_id)
     except Exception as e:
         raise HTTPException(502, bridge_error(e, "hand the area to the stream")) from e
 
@@ -768,7 +852,15 @@ async def start_stream(req: StreamStartRequest):
     except StreamError as e:
         # Never leave the area held by a stream that isn't running.
         await _release_area(req.area_id)
-        raise HTTPException(502, str(e)) from e
+        detail = str(e)
+        if "timed out" in detail or "timeout" in detail.lower():
+            detail += (
+                " — the bridge accepted the area but never answered on the streaming "
+                "port. That is usually something else holding the area (Hue Sync, a "
+                "game, or a session that didn't shut down): close it, then try again. "
+                "Release area clears a stale hold."
+            )
+        raise HTTPException(502, detail) from e
 
     _broadcast_status_soon()
     return {"ok": True, **status_payload()}

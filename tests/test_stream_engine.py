@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from app.hue_stream import DTLS_CIPHERS, MAGIC
+from app.hue_stream import DTLS_CIPHERS, MAGIC, StreamError
 from app.stream_engine import FRAME_RATE_HZ, StreamEngine, level_at, rgb_for
 
 IDENTITY = "stream-user"
@@ -207,3 +207,50 @@ def test_stopping_closes_the_stream_and_clears_the_state(stub_bridge):
 
 def test_update_before_start_is_refused():
     assert StreamEngine().update(hz=5) is False
+
+
+def test_stopping_tells_the_caller_which_area_to_hand_back(stub_bridge):
+    released = []
+    engine = StreamEngine(on_stopped=released.append)
+    run_area(engine, stub_bridge, ["1"], seconds=0.4)
+    engine.stop()
+    time.sleep(0.3)
+    assert released == ["6"]
+
+
+def test_a_sender_that_dies_on_its_own_still_hands_the_area_back(stub_bridge, monkeypatch):
+    """The bridge keeps an area claimed until told otherwise. A sender that
+    gives up quietly would leave those lights answering to nothing — not this
+    console, not the Hue app — until the bridge was restarted."""
+    released = []
+    engine = StreamEngine(on_stopped=released.append)
+    import app.hue_stream as hue_stream
+
+    def die(self, frame):
+        raise OSError("network went away")
+
+    run_area(engine, stub_bridge, ["1"], seconds=0.2)
+    monkeypatch.setattr(hue_stream.DtlsStream, "send", die)
+    deadline = time.monotonic() + 6
+    while engine.running and time.monotonic() < deadline:
+        time.sleep(0.1)
+
+    assert engine.running is False, "the sender should have given up"
+    assert released == ["6"]
+    engine.stop()
+
+
+def test_a_failed_handshake_leaves_no_area_behind(stub_bridge):
+    """A start that never connected must not report an area as streaming."""
+    engine = StreamEngine()
+    import app.hue_stream as hue_stream
+    original = hue_stream.STREAM_PORT
+    hue_stream.STREAM_PORT = 1     # nothing is listening there
+    try:
+        with pytest.raises(StreamError):
+            engine.start(stub_bridge["host"], IDENTITY, KEY_HEX, "6", ["1"], "mz", "p",
+                         10.0, 1, 254, None, None)
+    finally:
+        hue_stream.STREAM_PORT = original
+    assert engine.area_id() is None
+    assert engine.status()["running"] is False

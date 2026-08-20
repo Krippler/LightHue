@@ -61,8 +61,14 @@ def rgb_for(state: dict, now: float) -> tuple[int, int, int]:
 class StreamEngine:
     """Runs one entertainment area. The bridge only streams to one at a time."""
 
-    def __init__(self, on_change=None):
+    def __init__(self, on_change=None, on_stopped=None):
         self._on_change = on_change or (lambda: None)
+        # Fired with the area id whenever the sender stops for any reason,
+        # including one nobody asked for. The bridge keeps an area claimed
+        # until it is told otherwise, so a sender that dies quietly would
+        # leave those lights answering to nothing — not this console, not the
+        # Hue app — until the bridge was restarted.
+        self._on_stopped = on_stopped or (lambda area_id: None)
         self._lock = threading.Lock()
         self._state: dict | None = None
         self._thread: threading.Thread | None = None
@@ -115,6 +121,11 @@ class StreamEngine:
         self.stop()
         self._error = None
         self._frames_sent = 0
+        # Connect before recording any state: a failed handshake would
+        # otherwise leave an area id behind with nothing running under it, and
+        # the next status push would claim a stream that does not exist.
+        stream = DtlsStream(bridge_ip, username, client_key)
+        stream.connect()
         with self._lock:
             self._state = {
                 "area_id": area_id,
@@ -128,8 +139,6 @@ class StreamEngine:
                 "sat": sat,
                 "epoch": time.monotonic(),
             }
-        stream = DtlsStream(bridge_ip, username, client_key)
-        stream.connect()
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._run, args=(stream,), name="hue-stream", daemon=True)
@@ -144,6 +153,10 @@ class StreamEngine:
         with self._lock:
             self._state = None
         self._on_change()
+
+    def area_id(self) -> str | None:
+        with self._lock:
+            return self._state["area_id"] if self._state else None
 
     # ---------- the sender ----------
 
@@ -191,6 +204,14 @@ class StreamEngine:
                     self._stop.wait(delay)
         finally:
             stream.close()
+            area = self.area_id()
+            # Told even when the sender is exiting because it was asked to:
+            # releasing an area twice is harmless, never releasing one is not.
+            if area:
+                try:
+                    self._on_stopped(area)
+                except Exception:
+                    logger.exception("Could not hand entertainment area %s back", area)
             self._on_change()
 
 
