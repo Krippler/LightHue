@@ -3,247 +3,284 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Game Hue Flicker Console</title>
+<title>Game Hue Flicker</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@700;800&display=swap" rel="stylesheet">
 <link rel="icon" type="image/png" sizes="256x256" href="/static/icon.png" />
 <link rel="icon" type="image/png" sizes="128x128" href="/static/icon-128.png" />
 <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <div class="scanlines" aria-hidden="true"></div>
+  <div class="scanline" aria-hidden="true"></div>
 
-  <header class="topbar">
-    <h1>GAME HUE FLICKER</h1>
-    <div id="conn-status" class="conn-status">connecting&hellip;</div>
-  </header>
+  <div class="wrap">
 
-  <main id="app">
-
-    <section id="login-panel" class="panel hidden">
-      <div class="panel-head">
-        <h2>Console Locked</h2>
-        <p class="sub">This console has a password set. Enter it to take control of the lights.</p>
-      </div>
-      <div class="login-form">
-        <label class="field">
-          <span>Password</span>
-          <input id="login-password" type="password" autocomplete="current-password" />
-        </label>
-        <button id="btn-login" class="btn btn-accent">Unlock</button>
-      </div>
-      <div id="login-status" class="status-line"></div>
-    </section>
-
-    <section id="setup-panel" class="panel hidden">
-      <div class="panel-head">
-        <h2>Connect a Bridge</h2>
-        <p class="sub">Point this at your Philips Hue Bridge before you can control lights.</p>
-      </div>
-
-      <div class="setup-grid">
-        <div class="setup-col">
-          <h3>Auto-discover</h3>
-          <button id="btn-discover" class="btn">Find bridges on my network</button>
-          <div id="discover-results" class="discover-list"></div>
+    <header>
+      <div class="logo">
+        <div class="logo-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M9 18h6"/><path d="M10 22h4"/>
+            <path d="M15.1 14a5 5 0 1 0-6.2 0c.6.5 1.1 1.2 1.1 2h4c0-.8.5-1.5 1.1-2z"/>
+          </svg>
         </div>
-
-        <div class="setup-col">
-          <h3>Pair</h3>
-          <p class="sub small">Press the physical link button on your bridge, then enter its IP and pair within 30 seconds.</p>
-          <label class="field">
-            <span>Bridge IP</span>
-            <input id="pair-ip" type="text" placeholder="192.168.1.23" />
-          </label>
-          <button id="btn-pair" class="btn btn-accent">Pair with bridge</button>
-          <div id="pair-status" class="status-line"></div>
-        </div>
-
-        <div class="setup-col">
-          <h3>Already have credentials?</h3>
-          <label class="field">
-            <span>Bridge IP</span>
-            <input id="manual-ip" type="text" placeholder="192.168.1.23" />
-          </label>
-          <label class="field">
-            <span>API key</span>
-            <input id="manual-key" type="text" placeholder="paste existing username/key" />
-          </label>
-          <button id="btn-manual-save" class="btn">Save</button>
+        <div>
+          <h1>GAME HUE FLICKER</h1>
+          <p>Quake-style lightstyles for Philips Hue</p>
         </div>
       </div>
-    </section>
-
-    <section id="main-panel" class="hidden">
-      <div class="toolbar">
-        <div class="toolbar-info">
-          <span id="bridge-ip-label" class="bridge-chip"></span>
-          <span id="light-count-label" class="dim"></span>
-        </div>
-        <div class="toolbar-actions">
-          <button id="btn-refresh-lights" class="btn btn-ghost">Refresh lights</button>
-          <button id="btn-stop-all" class="btn btn-danger">Stop all flicker</button>
-          <button id="btn-settings" class="btn btn-ghost">Settings</button>
-          <button id="btn-reconfigure" class="btn btn-ghost">Change bridge</button>
-          <button id="btn-logout" class="btn btn-ghost hidden">Sign out</button>
+      <div class="header-right">
+        <span class="version-badge" title="Which build of the UI this page is running">build __BUILD__</span>
+        <div class="status-badge">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="conn-status" class="conn-status">connecting&hellip;</span>
         </div>
       </div>
+    </header>
 
-      <section id="settings-panel" class="panel settings-panel hidden">
+    <main id="app">
+
+      <section id="login-panel" class="panel gate hidden">
         <div class="panel-head">
-          <h2>Console Settings</h2>
-          <p class="sub">Everything here lives in the console&rsquo;s own config &mdash; nothing needs
-          changing in Docker.</p>
+          <div class="panel-title">Console Locked</div>
         </div>
-
-        <div class="settings-grid">
-          <div class="setup-col">
-            <h3>Bridge send rate</h3>
-            <p class="sub small">Global ceiling on commands sent to the bridge, across every
-            flickering light. Philips advises against sustained bursts past ~10/sec.</p>
+        <div class="panel-body">
+          <p class="hint">This console has a password set. Enter it to take control of the lights.</p>
+          <div class="gate-form">
             <label class="field">
-              <span>Max <em id="rate-value">10</em> commands / sec</span>
-              <input id="rate-input" type="range" min="1" max="30" step="1" value="10" />
+              <span>Password</span>
+              <input id="login-password" type="password" autocomplete="current-password" />
             </label>
-            <button id="btn-save-rate" class="btn">Save rate</button>
-            <div id="rate-status" class="status-line"></div>
-
-            <h3 class="settings-subhead">When flicker stops</h3>
-            <label class="field checkbox-field restore-field">
-              <input type="checkbox" id="restore-toggle" />
-              <span>Put lights back how they were</span>
-            </label>
-            <p class="sub small">The console reads each bulb&rsquo;s colour and brightness before it
-            starts flickering, and restores it on stop &mdash; including after a container restart
-            that interrupted a run.</p>
-            <div id="restore-status" class="status-line"></div>
+            <button id="btn-login" class="btn btn-primary">Unlock</button>
           </div>
+          <div id="login-status" class="status-line"></div>
+        </div>
+      </section>
 
-          <div class="setup-col">
-            <h3>Console password</h3>
-            <p id="pw-explainer" class="sub small">No password set &mdash; anyone on your network can
-            drive these lights. Set one to lock the console.</p>
-            <label id="pw-current-field" class="field hidden">
-              <span>Current password</span>
-              <input id="pw-current" type="password" autocomplete="current-password" />
-            </label>
-            <label class="field">
-              <span>New password</span>
-              <input id="pw-new" type="password" autocomplete="new-password" placeholder="at least 4 characters" />
-            </label>
-            <div class="pw-actions">
-              <button id="btn-save-pw" class="btn btn-accent">Set password</button>
-              <button id="btn-clear-pw" class="btn btn-danger hidden">Remove</button>
+      <section id="setup-panel" class="panel hidden">
+        <div class="panel-head">
+          <div class="panel-title">Connect a Bridge</div>
+        </div>
+        <div class="panel-body">
+          <div class="setup-grid">
+            <div class="setup-col">
+              <h3>Auto-discover</h3>
+              <p class="hint">Ask Philips which bridges are on this network.</p>
+              <button id="btn-discover" class="btn btn-ghost">Find bridges</button>
+              <div id="discover-results" class="discover-list"></div>
             </div>
-            <div id="pw-status" class="status-line"></div>
+
+            <div class="setup-col">
+              <h3>Pair</h3>
+              <p class="hint">Press the bridge&rsquo;s link button, then pair within 30 seconds.</p>
+              <label class="field">
+                <span>Bridge IP</span>
+                <input id="pair-ip" type="text" placeholder="192.168.1.23" />
+              </label>
+              <button id="btn-pair" class="btn btn-primary">Pair with bridge</button>
+              <div id="pair-status" class="status-line"></div>
+            </div>
+
+            <div class="setup-col">
+              <h3>Existing key</h3>
+              <p class="hint">Already paired elsewhere? Paste the credentials.</p>
+              <label class="field">
+                <span>Bridge IP</span>
+                <input id="manual-ip" type="text" placeholder="192.168.1.23" />
+              </label>
+              <label class="field">
+                <span>API key</span>
+                <input id="manual-key" type="text" placeholder="username / key" />
+              </label>
+              <button id="btn-manual-save" class="btn btn-ghost">Save</button>
+            </div>
           </div>
         </div>
       </section>
 
-      <section class="panel groups-panel">
-        <div class="panel-head">
-          <h2>Groups</h2>
-          <p class="sub">Tick the lights you want to run together, name them, and they get one
-          set of controls that drives all of them at once &mdash; or copy a room or zone you
-          already set up in the Hue app.</p>
-        </div>
-        <div class="group-form">
-          <span id="selection-count" class="dim">No lights selected</span>
-          <label class="field">
-            <span>Group name</span>
-            <input id="group-name" type="text" placeholder="Hallway" maxlength="60" />
-          </label>
-          <button id="btn-save-group" class="btn btn-accent">Save as group</button>
-          <button id="btn-clear-selection" class="btn btn-ghost">Clear selection</button>
-          <button id="btn-bridge-groups" class="btn btn-ghost">Use a room from the bridge</button>
-        </div>
-        <div id="group-status" class="status-line"></div>
-        <div id="bridge-groups" class="bridge-groups hidden"></div>
-      </section>
+      <section id="main-panel" class="hidden">
 
-      <section class="panel custom-panel">
-        <div class="panel-head">
-          <h2>Custom Lightstyles</h2>
-          <p class="sub">One letter per frame, <em>a</em> darkest through <em>z</em> brightest &mdash; the same
-          encoding Quake used, and every built-in pattern here is written in it. Speed,
-          brightness range and transition are all saved with the pattern, so picking it
-          later brings its whole feel along. Saved patterns show up in every
-          light&rsquo;s pattern list.</p>
-        </div>
-
-        <div class="custom-form">
-          <label class="field">
-            <span>Name</span>
-            <input id="custom-name" type="text" placeholder="Torchlight" maxlength="60" />
-          </label>
-          <label class="field custom-seq-field">
-            <span>Sequence</span>
-            <input id="custom-seq" type="text" placeholder="mmnmmommommnonmmonqnmmo"
-                   spellcheck="false" autocomplete="off" />
-          </label>
-          <button id="btn-save-pattern" class="btn btn-accent">Save pattern</button>
-        </div>
-
-        <div class="custom-form custom-framing">
-          <label class="field">
-            <span>Speed <em id="custom-hz-value">10</em> Hz</span>
-            <input id="custom-hz" type="range" min="1" max="20" step="1" value="10" />
-          </label>
-          <label class="field">
-            <span>Min brightness <em id="custom-minbri-value">1</em></span>
-            <input id="custom-minbri" type="range" min="1" max="254" step="1" value="1" />
-          </label>
-          <label class="field">
-            <span>Max brightness <em id="custom-maxbri-value">254</em></span>
-            <input id="custom-maxbri" type="range" min="1" max="254" step="1" value="254" />
-          </label>
-          <label class="field">
-            <span>Transition <em id="custom-trans-value">0</em> ms</span>
-            <input id="custom-trans" type="range" min="0" max="1000" step="100" value="0" />
-          </label>
-          <div class="field-row custom-color-row">
-            <label class="field checkbox-field">
-              <input type="checkbox" id="custom-color-enable" />
-              <span>Save a colour with it</span>
-            </label>
-            <input id="custom-color" type="color" value="#c1440e"
-                   title="Pick a colour — this ticks the box for you" />
-            <input id="custom-color-code" type="text" class="color-code"
-                   spellcheck="false" autocomplete="off"
-                   placeholder="#ff991d or 6000,225"
-                   title="Type a hex code, or Hue's own hue,sat numbers for an exact match" />
+        <div class="action-bar">
+          <div class="action-bar-info">
+            <span id="bridge-ip-label" class="bridge-chip"></span>
+            <span id="light-count-label" class="dim"></span>
+          </div>
+          <div class="action-bar-actions">
+            <button id="btn-stop-all" class="btn btn-danger btn-sm">Stop all</button>
+            <button id="btn-refresh-lights" class="btn btn-ghost btn-sm">Refresh</button>
+            <button id="btn-settings" class="btn btn-ghost btn-sm">Settings</button>
+            <button id="btn-reconfigure" class="btn btn-ghost btn-sm">Change bridge</button>
+            <button id="btn-logout" class="btn btn-ghost btn-sm hidden">Sign out</button>
           </div>
         </div>
 
-        <div id="custom-preview" class="waveform custom-preview" aria-hidden="true"></div>
-        <div id="custom-status" class="status-line"></div>
-        <div id="custom-list" class="custom-list"></div>
-
-        <div class="share-row">
-          <h3 class="settings-subhead">Share patterns</h3>
-          <p class="sub small">Export yours to a small JSON file you can send to someone, or load a
-          file they sent you. Anything you already have is left alone.</p>
-          <div class="share-actions">
-            <button id="btn-export-patterns" class="btn">Export to file</button>
-            <button id="btn-import-patterns" class="btn">Import from file&hellip;</button>
-            <input id="import-file" type="file" accept="application/json,.json" hidden />
+        <section id="settings-panel" class="panel hidden">
+          <div class="panel-head">
+            <div class="panel-title">Settings</div>
+            <div class="panel-head-actions">
+              <span class="hint">Stored in the console&rsquo;s own config &mdash; nothing to change in Docker.</span>
+            </div>
           </div>
-          <div id="share-status" class="status-line"></div>
-        </div>
+          <div class="panel-body">
+            <div class="settings-grid">
+
+              <div class="setup-col">
+                <h3>Bridge send rate</h3>
+                <p class="hint">Ceiling across every flickering light. Philips advises no more
+                than ~10/sec sustained.</p>
+                <label class="field">
+                  <span>Max <em id="rate-value">10</em> commands / sec</span>
+                  <input id="rate-input" type="range" min="1" max="30" step="1" value="10" />
+                </label>
+                <div class="action-row">
+                  <button id="btn-save-rate" class="btn btn-ghost btn-sm">Save rate</button>
+                  <span id="rate-status" class="status-line"></span>
+                </div>
+              </div>
+
+              <div class="setup-col">
+                <h3>When flicker stops</h3>
+                <p class="hint">Reads each bulb&rsquo;s colour and brightness before it starts, and
+                puts it back on stop &mdash; even after a container restart.</p>
+                <label class="field checkbox-field">
+                  <input type="checkbox" id="restore-toggle" />
+                  <span>Restore lights to how they were</span>
+                </label>
+                <div id="restore-status" class="status-line"></div>
+              </div>
+
+              <div class="setup-col">
+                <h3>Console password</h3>
+                <p id="pw-explainer" class="hint">No password set &mdash; anyone on your network can
+                drive these lights.</p>
+                <label id="pw-current-field" class="field hidden">
+                  <span>Current password</span>
+                  <input id="pw-current" type="password" autocomplete="current-password" />
+                </label>
+                <label class="field">
+                  <span>New password</span>
+                  <input id="pw-new" type="password" autocomplete="new-password" placeholder="at least 4 characters" />
+                </label>
+                <div class="action-row">
+                  <button id="btn-save-pw" class="btn btn-primary btn-sm">Set password</button>
+                  <button id="btn-clear-pw" class="btn btn-danger btn-sm hidden">Remove</button>
+                </div>
+                <div id="pw-status" class="status-line"></div>
+              </div>
+
+            </div>
+          </div>
+        </section>
+
+        <section class="panel collapsible" data-section="groups">
+          <div class="panel-head">
+            <div class="panel-title">
+              <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
+                   aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+              Groups
+            </div>
+            <div class="panel-head-actions">
+              <span id="selection-count" class="dim">No lights selected</span>
+            </div>
+          </div>
+          <div class="panel-body">
+            <p class="hint">Lights in a group share one set of controls and flicker in step. Tick
+            cards below, or copy a room you already made in the Hue app.</p>
+            <div class="group-form">
+              <label class="field">
+                <span>Group name</span>
+                <input id="group-name" type="text" placeholder="Hallway" maxlength="60" />
+              </label>
+              <div class="action-row">
+                <button id="btn-save-group" class="btn btn-primary btn-sm">Save as group</button>
+                <button id="btn-clear-selection" class="btn btn-ghost btn-sm">Clear selection</button>
+                <button id="btn-bridge-groups" class="btn btn-ghost btn-sm">Use a room from the bridge</button>
+              </div>
+            </div>
+            <div id="group-status" class="status-line"></div>
+            <div id="bridge-groups" class="bridge-groups hidden"></div>
+          </div>
+        </section>
+
+        <section class="panel collapsible is-collapsed" data-section="custom">
+          <div class="panel-head">
+            <div class="panel-title">
+              <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
+                   aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+              Custom Lightstyles
+            </div>
+            <div class="panel-head-actions">
+              <button id="btn-export-patterns" class="btn btn-ghost btn-sm">Export</button>
+              <button id="btn-import-patterns" class="btn btn-ghost btn-sm">Import&hellip;</button>
+              <input id="import-file" type="file" accept="application/json,.json" hidden />
+            </div>
+          </div>
+          <div class="panel-body">
+            <p class="hint">One letter per frame, <em>a</em> darkest through <em>z</em> brightest &mdash; the
+            encoding Quake used. Speed, brightness range, transition and colour all save with the
+            pattern, and it then shows up in every light&rsquo;s list.</p>
+
+            <div class="custom-form">
+              <label class="field">
+                <span>Name</span>
+                <input id="custom-name" type="text" placeholder="Torchlight" maxlength="60" />
+              </label>
+              <label class="field custom-seq-field">
+                <span>Sequence</span>
+                <input id="custom-seq" type="text" placeholder="mmnmmommommnonmmonqnmmo"
+                       spellcheck="false" autocomplete="off" />
+              </label>
+              <button id="btn-save-pattern" class="btn btn-primary btn-sm">Save pattern</button>
+            </div>
+
+            <div class="custom-form custom-framing">
+              <label class="field">
+                <span>Speed <em id="custom-hz-value">10</em> Hz</span>
+                <input id="custom-hz" type="range" min="1" max="20" step="1" value="10" />
+              </label>
+              <label class="field">
+                <span>Min brightness <em id="custom-minbri-value">1</em></span>
+                <input id="custom-minbri" type="range" min="1" max="254" step="1" value="1" />
+              </label>
+              <label class="field">
+                <span>Max brightness <em id="custom-maxbri-value">254</em></span>
+                <input id="custom-maxbri" type="range" min="1" max="254" step="1" value="254" />
+              </label>
+              <label class="field">
+                <span>Transition <em id="custom-trans-value">0</em> ms</span>
+                <input id="custom-trans" type="range" min="0" max="1000" step="100" value="0" />
+              </label>
+              <div class="field-row custom-color-row">
+                <label class="field checkbox-field">
+                  <input type="checkbox" id="custom-color-enable" />
+                  <span>Save a colour with it</span>
+                </label>
+                <input id="custom-color" type="color" value="#c1440e"
+                       title="Pick a colour — this ticks the box for you" />
+                <input id="custom-color-code" type="text" class="color-code"
+                       spellcheck="false" autocomplete="off"
+                       placeholder="#ff991d or 6000,225"
+                       title="Type a hex code, or Hue's own hue,sat numbers for an exact match" />
+              </div>
+            </div>
+
+            <div id="custom-preview" class="waveform custom-preview" aria-hidden="true"></div>
+            <div id="custom-status" class="status-line"></div>
+            <div id="custom-list" class="custom-list"></div>
+            <div id="share-status" class="status-line"></div>
+          </div>
+        </section>
+
+        <div id="lights-grid" class="lights-grid"></div>
       </section>
 
-      <div id="lights-grid" class="lights-grid"></div>
-    </section>
-
-  </main>
-
-  <footer class="foot">
-    <span>Global send rate is capped so multiple flickering lights won't flood your bridge. Shared by everyone connected to this console.</span>
-    <span class="build-id" title="Which build of the UI this page is running">build __BUILD__</span>
-  </footer>
+    </main>
+  </div>
 
   <template id="light-card-template">
-    <article class="light-card" data-light-id="">
+    <article class="light-card panel" data-light-id="">
       <div class="light-card-head">
         <div class="head-left">
           <label class="card-select" title="Select for a group">
@@ -294,23 +331,23 @@
           </label>
         </div>
 
-        <div class="field-row">
+        <div class="field-row color-row">
           <label class="field checkbox-field">
             <input type="checkbox" class="color-enable" />
-            <span>Set color</span>
+            <span>Set colour</span>
           </label>
           <input type="color" class="color-input" value="#c1440e"
-                 title="Pick a color — this ticks Set color for you" />
+                 title="Pick a colour — this ticks Set colour for you" />
+          <input type="text" class="color-code" spellcheck="false" autocomplete="off"
+                 placeholder="#ff991d or 6000,225"
+                 title="Type a hex code, or Hue's own hue,sat numbers for an exact match" />
         </div>
-        <input type="text" class="color-code" spellcheck="false" autocomplete="off"
-               placeholder="#ff991d or 6000,225"
-               title="Type a hex code, or Hue's own hue,sat numbers for an exact match" />
       </div>
 
       <div class="card-actions">
-        <button class="btn btn-accent btn-start">Start flicker</button>
-        <button class="btn btn-danger btn-stop hidden">Stop</button>
-        <button class="btn btn-ghost btn-revert hidden" title="Put this back how it was before flickering">Revert</button>
+        <button class="btn btn-primary btn-sm btn-start">Start flicker</button>
+        <button class="btn btn-danger btn-sm btn-stop hidden">Stop</button>
+        <button class="btn btn-ghost btn-sm btn-revert hidden" title="Put this back how it was before flickering">Revert</button>
       </div>
     </article>
   </template>

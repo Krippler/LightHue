@@ -1354,7 +1354,41 @@ $('#btn-clear-pw').addEventListener('click', async () => {
   }
 });
 
+// ---------- Collapsible panels ----------
+
+// Click a collapsible panel's header to fold it away. Which panels are folded
+// is remembered per-browser so the console opens the way you left it.
+const SECTIONS_KEY = 'ghf.sections';
+
+function readSectionState() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SECTIONS_KEY));
+    return raw && typeof raw === 'object' ? raw : {};
+  } catch { return {}; }
+}
+
+function initCollapsibles() {
+  const state = readSectionState();
+  $$('.panel.collapsible').forEach(panel => {
+    const name = panel.dataset.section;
+    if (name in state) panel.classList.toggle('is-collapsed', !!state[name]);
+    panel.querySelector('.panel-head').addEventListener('click', (ev) => {
+      // A click on a button or input in the header is for that control, not
+      // for folding the panel (e.g. Export / Import).
+      if (ev.target.closest('button, input, select, label, a')) return;
+      const collapsed = !panel.classList.contains('is-collapsed');
+      panel.classList.toggle('is-collapsed', collapsed);
+      const next = readSectionState();
+      next[name] = collapsed;
+      try { localStorage.setItem(SECTIONS_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+    });
+  });
+}
+
+initCollapsibles();
+
 // ---------- Init ----------
+
 
 async function bootstrap() {
   AUTH = await api('/api/auth');

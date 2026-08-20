@@ -290,13 +290,13 @@ That snapshot is written to `config.json`, so a container that dies mid-flicker
 still puts the bulbs back on its next start rather than leaving them stuck at
 whatever brightness the last tick happened to land on.
 
-Turn it off with **Put lights back how they were** in Settings if you'd rather
+Turn it off with **Restore lights to how they were** in Settings if you'd rather
 lights stay where the flicker ends. The snapshot is still kept either way, and
 each card grows a **Revert** button you can hit whenever you want it back.
 
 ## Settings
 
-Open **Settings** in the toolbar.
+Open **Settings** in the bar above the light cards.
 
 **Bridge send rate.** A global ceiling on commands per second across every
 flickering light. Philips advises against sustained bursts past ~10/second,
@@ -338,10 +338,11 @@ unraid-template.xml               Unraid Community Applications template
 
 ## If the UI looks stale
 
-The footer shows the build of the interface the page is running, and
+The badge beside the header's status light shows the build of the interface
+the page is running, and
 `GET /api/version` reports the same string. Asset URLs carry that version and
 the page itself is served `no-store`, so a rebuild always reaches the browser
-rather than sitting behind a cached `app.js`. If the footer doesn't change
+rather than sitting behind a cached `app.js`. If that badge doesn't change
 after an update, the container is still serving the old files — rebuild and
 pull rather than hunting for a UI bug.
 
