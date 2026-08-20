@@ -605,6 +605,13 @@ select {
 
 /* ---------- Footer ---------- */
 
+.build-id {
+  display: block;
+  margin-top: 6px;
+  opacity: 0.6;
+  letter-spacing: 0.06em;
+}
+
 .foot {
   text-align: center;
   padding: 20px;
