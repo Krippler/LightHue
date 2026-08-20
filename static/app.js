@@ -160,11 +160,18 @@ function sequenceFor(patternId) {
   return p ? p.sequence : 'm';
 }
 
-// Speed is part of a pattern, not a separate preference: a sputtering bulb and
-// a slow gothic throb aren't the same shape played faster or slower.
-function hzFor(patternId) {
-  const p = allPatternOptions().find(p => p.id === patternId);
-  return p && p.hz ? p.hz : 10;
+// A pattern isn't just its letters: the speed, how far the bulb swings and how
+// hard the steps are all belong to the effect. A sputtering bulb and a slow
+// gothic throb aren't the same shape played faster or slower.
+const FRAMING_DEFAULTS = { hz: 10, min_bri: 1, max_bri: 254, transition_ms: 0 };
+
+function framingFor(patternId) {
+  const p = allPatternOptions().find(p => p.id === patternId) || {};
+  const framing = {};
+  for (const [field, fallback] of Object.entries(FRAMING_DEFAULTS)) {
+    framing[field] = p[field] === undefined || p[field] === null ? fallback : p[field];
+  }
+  return framing;
 }
 
 // A card drives one light or a whole group; everything below treats them the
@@ -358,12 +365,19 @@ function buildCard(entity) {
     }
     pushLive(entity);
   });
-  const applyPatternRate = () => {
-    hzInput.value = hzFor(select.value);
-    hzValue.textContent = hzInput.value;
+  const applyPatternFraming = () => {
+    const framing = framingFor(select.value);
+    const set = (input, label, value) => {
+      input.value = value;
+      label.textContent = value;
+    };
+    set(hzInput, hzValue, framing.hz);
+    set(minBriInput, minBriValue, framing.min_bri);
+    set(maxBriInput, maxBriValue, framing.max_bri);
+    set(transInput, transValue, framing.transition_ms);
   };
   select.addEventListener('change', () => {
-    applyPatternRate();
+    applyPatternFraming();
     drawWaveform(entity.key, sequenceFor(select.value));
     pushLive(entity);
   });
@@ -391,7 +405,7 @@ function buildCard(entity) {
     await api('/api/flicker/stop', { method: 'POST', body: JSON.stringify({ light_ids: entity.lightIds }) });
   });
 
-  applyPatternRate();
+  applyPatternFraming();
   cardEls[entity.key] = card;
   cardEntities[entity.key] = entity;
   drawWaveform(entity.key, sequenceFor(select.value));
@@ -597,8 +611,23 @@ function setCustomStatus(text, kind = '') {
   customStatus.className = `status-line ${kind}`.trim();
 }
 
-const customHz = $('#custom-hz');
-customHz.addEventListener('input', () => { $('#custom-hz-value').textContent = customHz.value; });
+[['#custom-hz', '#custom-hz-value'],
+ ['#custom-minbri', '#custom-minbri-value'],
+ ['#custom-maxbri', '#custom-maxbri-value'],
+ ['#custom-trans', '#custom-trans-value']].forEach(([input, label]) => {
+  const el = $(input);
+  el.addEventListener('input', () => {
+    $(label).textContent = el.value;
+    // keep the window coherent while it's being dragged
+    const lo = $('#custom-minbri'), hi = $('#custom-maxbri');
+    if (Number(hi.value) < Number(lo.value)) {
+      const follower = input === '#custom-minbri' ? hi : lo;
+      follower.value = el.value;
+      $(input === '#custom-minbri' ? '#custom-maxbri-value' : '#custom-minbri-value')
+        .textContent = el.value;
+    }
+  });
+});
 
 customSeq.addEventListener('input', () => {
   const seq = normalizeSequence(customSeq.value);
@@ -608,17 +637,25 @@ customSeq.addEventListener('input', () => {
 $('#btn-save-pattern').addEventListener('click', async () => {
   const name = customName.value.trim();
   const sequence = normalizeSequence(customSeq.value);
-  const hz = Number($('#custom-hz').value);
+  const framing = {
+    hz: Number($('#custom-hz').value),
+    min_bri: Number($('#custom-minbri').value),
+    max_bri: Number($('#custom-maxbri').value),
+    transition_ms: Number($('#custom-trans').value),
+  };
   if (!name) return setCustomStatus('Give the pattern a name.', 'err');
   if (!sequence) return setCustomStatus('Write a sequence first.', 'err');
   if (!/^[a-z]+$/.test(sequence)) return setCustomStatus('Sequence must only contain letters a-z.', 'err');
   try {
-    await api('/api/patterns', { method: 'POST', body: JSON.stringify({ name, sequence, hz }) });
+    await api('/api/patterns', {
+      method: 'POST',
+      body: JSON.stringify({ name, sequence, ...framing }),
+    });
     customName.value = '';
     customSeq.value = '';
     renderBars($('#custom-preview'), '');
-    const seconds = (sequence.length / hz).toFixed(1);
-    setCustomStatus(`Saved "${name}" at ${hz} Hz — a ${seconds}s cycle.`, 'ok');
+    const seconds = (sequence.length / framing.hz).toFixed(1);
+    setCustomStatus(`Saved "${name}" at ${framing.hz} Hz — a ${seconds}s cycle.`, 'ok');
     await loadPatternsAndLights();
   } catch (e) {
     setCustomStatus(e.message, 'err');
@@ -644,7 +681,9 @@ function renderCustomList() {
 
     const seqEl = document.createElement('span');
     seqEl.className = 'chip-seq';
-    seqEl.textContent = `${p.sequence} · ${p.hz || 10} Hz`;
+    const f = framingFor(p.id);
+    const trans = f.transition_ms ? ` · ${f.transition_ms}ms` : '';
+    seqEl.textContent = `${p.sequence} · ${f.hz} Hz · ${f.min_bri}-${f.max_bri}${trans}`;
 
     const del = document.createElement('button');
     del.className = 'chip-del';

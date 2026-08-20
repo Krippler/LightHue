@@ -21,7 +21,15 @@ from . import auth, config_store, hue_client, packs
 from .auth import ConsoleAuthMiddleware
 from .flicker_engine import FlickerEngine
 from .hue_client import HueClient
-from .patterns import BUILTIN_BY_ID, BUILTIN_PATTERNS, DEFAULT_HZ, GAMES
+from .patterns import (
+    BUILTIN_BY_ID,
+    BUILTIN_PATTERNS,
+    DEFAULT_MAX_BRI,
+    DEFAULT_MIN_BRI,
+    FRAMING_FIELDS,
+    GAMES,
+    framing_of,
+)
 
 
 @asynccontextmanager
@@ -136,7 +144,16 @@ class PairRequest(BaseModel):
 class CustomPatternRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=60)
     sequence: str
-    hz: float = Field(DEFAULT_HZ, gt=0, le=20)
+    hz: float = Field(10.0, gt=0, le=20)
+    min_bri: int = Field(DEFAULT_MIN_BRI, ge=1, le=254)
+    max_bri: int = Field(DEFAULT_MAX_BRI, ge=1, le=254)
+    transition_ms: int = Field(0, ge=0, le=60000)
+
+    @model_validator(mode="after")
+    def _check_range(self):
+        if self.min_bri > self.max_bri:
+            raise ValueError("min_bri must be less than or equal to max_bri")
+        return self
 
 
 class LoginRequest(BaseModel):
@@ -163,15 +180,16 @@ class StartRequest(BaseModel):
     # None means "whatever this pattern was written for" — speed is part of the
     # pattern, so a caller that doesn't care shouldn't have to guess a number.
     hz: float | None = Field(None, gt=0, le=20, description="Hue can't usefully go faster")
-    min_bri: int = Field(1, ge=1, le=254)
-    max_bri: int = Field(254, ge=1, le=254)
+    min_bri: int | None = Field(None, ge=1, le=254)
+    max_bri: int | None = Field(None, ge=1, le=254)
     hue: int | None = Field(None, ge=0, le=65535)
     sat: int | None = Field(None, ge=0, le=254)
-    transition_ms: int = Field(0, ge=0, le=60000)
+    transition_ms: int | None = Field(None, ge=0, le=60000)
 
     @model_validator(mode="after")
     def _check_ranges(self):
-        if self.min_bri > self.max_bri:
+        if (self.min_bri is not None and self.max_bri is not None
+                and self.min_bri > self.max_bri):
             raise ValueError("min_bri must be less than or equal to max_bri")
         if (self.hue is None) != (self.sat is None):
             raise ValueError("hue and sat must be given together, or not at all")
@@ -370,7 +388,8 @@ async def create_pattern(req: CustomPatternRequest):
     pid = f"custom_{uuid.uuid4().hex[:8]}"
     cfg = config_store.load()
     cfg["custom_patterns"][pid] = {
-        "id": pid, "name": req.name.strip(), "sequence": seq, "hz": req.hz,
+        "id": pid, "name": req.name.strip(), "sequence": seq,
+        **{f: getattr(req, f) for f in FRAMING_FIELDS},
     }
     config_store.save(cfg)
     return cfg["custom_patterns"][pid]
@@ -440,7 +459,7 @@ async def import_patterns(payload: dict = Body(...)):
         name = packs.unique_name(entry["name"], names)
         pid = f"custom_{uuid.uuid4().hex[:8]}"
         existing[pid] = {"id": pid, "name": name, "sequence": entry["sequence"],
-                         "hz": entry["hz"]}
+                         **{f: entry[f] for f in FRAMING_FIELDS}}
         by_sequence[entry["sequence"]] = name
         names.add(name)
         added.append(existing[pid])
@@ -513,7 +532,18 @@ async def start_flicker(req: StartRequest):
         raise HTTPException(400, "Bridge not configured yet")
     pattern = _resolve_pattern(req.pattern_id)
     sequence = pattern["sequence"]
-    hz = req.hz if req.hz is not None else pattern.get("hz", DEFAULT_HZ)
+    # Anything the caller left out comes from the pattern: the speed, the
+    # brightness window and the transition are all part of how it was written.
+    framing = framing_of(pattern)
+    for field in FRAMING_FIELDS:
+        supplied = getattr(req, field)
+        if supplied is not None:
+            framing[field] = supplied
+    if framing["min_bri"] > framing["max_bri"]:
+        raise HTTPException(
+            422, "min_bri must be less than or equal to max_bri "
+                 f"(got {framing['min_bri']} against the pattern's {framing['max_bri']})",
+        )
     # Snapshot first — one bulk GET for the whole group — so Stop has something
     # to put back. Lights already running keep their earlier snapshot.
     await engine.capture(req.light_ids)
@@ -522,8 +552,9 @@ async def start_flicker(req: StartRequest):
     epoch = time.monotonic()
     for lid in req.light_ids:
         await engine.start(
-            lid, sequence, req.pattern_id, hz, req.min_bri, req.max_bri,
-            req.hue, req.sat, req.transition_ms, epoch=epoch,
+            lid, sequence, req.pattern_id, framing["hz"],
+            framing["min_bri"], framing["max_bri"],
+            req.hue, req.sat, framing["transition_ms"], epoch=epoch,
         )
     return {"ok": True, **status_payload()}
 
@@ -534,8 +565,9 @@ async def update_flicker(req: UpdateRequest):
     if req.pattern_id is not None:
         pattern = _resolve_pattern(req.pattern_id)
         changes["sequence"] = pattern["sequence"]
-        if req.hz is None:
-            changes["hz"] = pattern.get("hz", DEFAULT_HZ)
+        for field, value in framing_of(pattern).items():
+            if getattr(req, field) is None:
+                changes[field] = value
     updated = [lid for lid in req.light_ids if engine.update(lid, **changes)]
     if not updated:
         raise HTTPException(409, "None of those lights are currently flickering")

@@ -229,3 +229,38 @@ def test_the_menu_is_derived_from_the_table():
     owned = {p["game"] for p in BUILTIN_PATTERNS}
     shared = {g for p in BUILTIN_PATTERNS for g in p.get("shared_with", ())}
     assert set(GAMES) == owned | shared
+
+
+def test_every_pattern_states_its_whole_framing():
+    from app.patterns import FRAMING_FIELDS, framing_of
+
+    for pattern in BUILTIN_PATTERNS:
+        framing = framing_of(pattern)
+        assert set(framing) == set(FRAMING_FIELDS), pattern["id"]
+        assert 1 <= framing["min_bri"] <= framing["max_bri"] <= 254, pattern["id"]
+        assert 0 <= framing["transition_ms"] <= 60000, pattern["id"]
+
+
+def test_engine_styles_are_left_unframed():
+    # The a-z curve is the whole brightness story in those tables, and the
+    # engines step it hard, so smoothing or narrowing would misrepresent them.
+    for pattern in BUILTIN_PATTERNS:
+        if pattern["origin"] == "engine":
+            assert (pattern["min_bri"], pattern["max_bri"], pattern["transition_ms"]) \
+                == (1, 254, 0), pattern["id"]
+
+
+def test_authored_patterns_use_the_framing():
+    framed = [p for p in BUILTIN_PATTERNS
+              if (p["min_bri"], p["max_bri"], p["transition_ms"]) != (1, 254, 0)]
+    assert len(framed) > 10
+    assert all(p["origin"] == "inspired" for p in framed)
+
+
+def test_transitions_sit_on_the_bridges_own_resolution():
+    # Hue takes transitiontime in 100ms units, so a pattern asking for 120ms
+    # would be sent as 100 anyway. Keep the data honest about that.
+    from app.patterns import TRANSITION_STEP_MS
+
+    for pattern in BUILTIN_PATTERNS:
+        assert pattern["transition_ms"] % TRANSITION_STEP_MS == 0, pattern["id"]
