@@ -44,6 +44,10 @@ class RateLimiter:
         self._lock = asyncio.Lock()
         self._last = 0.0
 
+    @property
+    def max_per_second(self) -> float:
+        return 1.0 / self.min_interval
+
     async def wait(self):
         async with self._lock:
             now = time.monotonic()
@@ -133,12 +137,26 @@ class FlickerEngine:
     def running_light_ids(self):
         return list(self._tasks.keys())
 
+    def _share(self) -> float:
+        """Frames per second each running light can actually be sent."""
+        return self.limiter.max_per_second / max(1, len(self._tasks))
+
     def status(self) -> dict:
-        return {lid: dict(st) for lid, st in self._states.items()}
+        # effective_hz is derived here rather than written by the loops: a
+        # status push can happen between ticks, and the number depends on how
+        # many lights are running right now anyway.
+        share = self._share()
+        out = {}
+        for lid, st in self._states.items():
+            entry = dict(st)
+            if st.get("running"):
+                entry["effective_hz"] = round(min(st["hz"], share), 2)
+            out[lid] = entry
+        return out
 
     async def start(self, light_id: str, sequence: str, pattern_id: str, hz: float,
                     min_bri: int, max_bri: int, hue: int | None, sat: int | None,
-                    transition_ms: int):
+                    transition_ms: int, epoch: float | None = None):
         # Clearing any previous loop must not restore: we are about to flicker
         # this bulb again, and the snapshot has to survive until it really stops.
         await self.stop(light_id, notify=False, restore=False)
@@ -156,6 +174,10 @@ class FlickerEngine:
             "hue": hue,
             "sat": sat,
             "transition_ms": transition_ms,
+            # Frame position is derived from this instant rather than counted
+            # per tick, so lights handed the same epoch play the same frame at
+            # the same moment however unevenly the rate limiter serves them.
+            "epoch": time.monotonic() if epoch is None else epoch,
             "running": True,
         }
         self._tasks[light_id] = asyncio.create_task(self._run_light(light_id, client))
@@ -197,13 +219,29 @@ class FlickerEngine:
 
     async def _run_light(self, light_id, client: HueClient):
         state = self._states[light_id]
-        idx = 0
         applied_color = None
 
         try:
             while True:
+                # Wait for the limiter *first*, then work out what to send.
+                # Deciding before the wait would send a value computed up to a
+                # full slot ago, which is exactly how lights end up showing
+                # stale frames when several are competing for the budget.
+                await self.limiter.wait()
+
+                # You cannot show frames you cannot send: running the pattern
+                # faster than this light's share of the bridge budget would
+                # just sample it, and a stride that divides the pattern evenly
+                # (a two-frame strobe at half rate) freezes it outright.
+                hz = min(state["hz"], self._share())
+                interval = 1.0 / max(0.5, hz)
+                epoch = state["epoch"]
+                # Which frame the pattern is on right now. Counting ticks
+                # instead would let a throttled light fall behind, which is
+                # what made lights in a group drift apart.
+                frame = int((time.monotonic() - epoch) / interval)
                 sequence = state["sequence"] or "m"
-                level = level_for_char(sequence[idx % len(sequence)])
+                level = level_for_char(sequence[frame % len(sequence)])
                 min_bri, max_bri = state["min_bri"], state["max_bri"]
                 bri = int(round(min_bri + level * (max_bri - min_bri)))
                 bri = max(1, min(254, bri))
@@ -222,7 +260,6 @@ class FlickerEngine:
                 if wanted is not None and wanted != applied_color:
                     payload["hue"], payload["sat"] = wanted
 
-                await self.limiter.wait()
                 try:
                     await client.set_light_state(light_id, **payload)
                     if "hue" in payload:
@@ -230,7 +267,10 @@ class FlickerEngine:
                 except Exception as e:
                     logger.warning("Hue PUT failed for light %s: %s", light_id, e)
 
-                idx += 1
-                await asyncio.sleep(1.0 / max(0.5, state["hz"]))
+                # Sleep to the next frame boundary rather than a fixed
+                # interval, so slow sends skip frames instead of dragging the
+                # whole pattern out of time.
+                next_frame_at = epoch + (frame + 1) * interval
+                await asyncio.sleep(max(0.0, next_frame_at - time.monotonic()))
         except asyncio.CancelledError:
             raise

@@ -203,3 +203,109 @@ async def test_update_ignores_unknown_and_none_fields():
     assert engine.status()["1"]["hz"] == 10.0
     assert engine.status()["1"]["running"] is True
     await engine.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_lights_in_a_group_stay_in_step():
+    # The limiter serves lights one at a time, so they can never send at the
+    # same instant and one of three will always be the far side of a frame
+    # boundary. What must hold is that every light shows the frame belonging
+    # to its own send time — which is what keeps them mutually in step, and
+    # what stops them drifting further apart the longer they run.
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    engine.limiter.set_rate(30.0)
+    epoch = time.monotonic()
+    seq = "aeimquy"
+    for lid in ("1", "2", "3"):
+        await engine.start(lid, seq, "steady", 10.0, 0, 250, None, None, 0, epoch=epoch)
+    await asyncio.sleep(1.5)
+    await engine.stop_all()
+
+    def bri_at(t):
+        frame = int((t - epoch) / 0.1) % len(seq)
+        # the engine floors brightness at 1, so mirror that here
+        return max(1, round((ord(seq[frame]) - ord("a")) / 25.0 * 250))
+
+    assert len(fake.calls) > 30
+    for sent_at, lid, state in fake.calls:
+        # allow a few ms either side for the send landing next to a boundary
+        allowed = {bri_at(sent_at), bri_at(sent_at - 0.012), bri_at(sent_at + 0.012)}
+        assert state["bri"] in allowed, (lid, sent_at - epoch, state["bri"], allowed)
+
+
+@pytest.mark.asyncio
+async def test_group_lights_do_not_drift_apart_over_time():
+    # Before frames were derived from a shared clock, each light counted its
+    # own ticks, so a light served less often fell progressively further
+    # behind. Compare the first second against the last.
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    engine.limiter.set_rate(30.0)
+    epoch = time.monotonic()
+    seq = "azazaz"
+    for lid in ("1", "2", "3"):
+        await engine.start(lid, seq, "steady", 10.0, 1, 254, None, None, 0, epoch=epoch)
+    await asyncio.sleep(2.0)
+    await engine.stop_all()
+
+    def spread(window):
+        # how far apart the lights' frame positions are inside one window
+        by_light = {}
+        for sent_at, lid, state in window:
+            frame = int((sent_at - epoch) / 0.1)
+            by_light.setdefault(lid, []).append((frame, state["bri"]))
+        mismatches = 0
+        for frames in by_light.values():
+            for frame, bri in frames:
+                expected = 1 if seq[frame % len(seq)] == "a" else 254
+                if bri != expected:
+                    mismatches += 1
+        return mismatches
+
+    early = [c for c in fake.calls if c[0] - epoch < 0.8]
+    late = [c for c in fake.calls if c[0] - epoch > 1.2]
+    assert early and late
+    # drift would make the later window steadily worse; it must not
+    assert spread(late) <= spread(early) + 2
+
+
+@pytest.mark.asyncio
+async def test_an_unthrottled_light_tracks_wall_clock_frames():
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    engine.limiter.set_rate(30.0)
+    epoch = time.monotonic()
+    seq = "aeimquy"
+    await engine.start("1", seq, "steady", 10.0, 0, 250, None, None, 0, epoch=epoch)
+    await asyncio.sleep(1.2)
+    await engine.stop_all()
+
+    for sent_at, _lid, state in fake.calls:
+        frame = int((sent_at - epoch) / 0.1) % len(seq)
+        expected = max(1, round((ord(seq[frame]) - ord("a")) / 25.0 * 250))
+        assert abs(state["bri"] - expected) <= 20, (frame, state["bri"], expected)
+
+
+@pytest.mark.asyncio
+async def test_a_throttled_pattern_still_advances():
+    # Under a limiter slower than the frame rate the clock would alias; the
+    # pattern must keep moving rather than freezing on one value.
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    engine.limiter.set_rate(10.0)
+    await engine.start("1", "az", "steady", 20.0, 50, 200, None, None, 0)
+    await asyncio.sleep(1.0)
+    await engine.stop_all()
+    assert {c[2]["bri"] for c in fake.calls} == {50, 200}
+
+
+@pytest.mark.asyncio
+async def test_separately_started_lights_get_their_own_epoch():
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    await engine.start("1", "az", "steady", 10.0, 1, 254, None, None, 0)
+    await asyncio.sleep(0.05)
+    await engine.start("2", "az", "steady", 10.0, 1, 254, None, None, 0)
+    assert engine.status()["1"]["epoch"] != engine.status()["2"]["epoch"]
+    await engine.stop_all()

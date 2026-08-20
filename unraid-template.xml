@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <Container version="2">
-  <Name>QuakeHueFlicker</Name>
+  <Name>GameHueFlicker</Name>
   <Repository>ghcr.io/krippler/lighthue:latest</Repository>
   <Registry>https://github.com/Krippler/LightHue/pkgs/container/lighthue</Registry>
   <Branch>
@@ -14,13 +14,22 @@
   <Support>https://github.com/Krippler/LightHue/issues</Support>
   <Project>https://github.com/Krippler/LightHue</Project>
   <Overview>
-    Drives Philips Hue lights using Quake's classic "lightstyle" flicker patterns
-    (styles 0-11, straight from id Software's engine), through a small web UI that
-    several people on your network can use at once.&#13;
+    Drives Philips Hue lights with the flicker patterns of classic shooters, through
+    a small web UI that several people on your network can use at once.&#13;
+    &#13;
+    Ships Quake's full lightstyle table (styles 0-11, verbatim from id Software's
+    engine) and Half-Life's addition to it, plus hand-authored takes on the light
+    effects of DOOM, Duke Nukem 3D and Unreal. Every preset is named after the game
+    it comes from.&#13;
     &#13;
     Talks directly to your Hue Bridge over the local API - no Philips cloud account
-    needed. Pick lights, pattern, speed, brightness range and colour; save your own
-    a-z lightstyle strings; watch a live waveform of what each light is doing.&#13;
+    needed. Pick lights, pattern, speed, brightness range and colour, and change any
+    of it while the lights are still running. Group bulbs so they flicker in step,
+    write your own a-z lightstyle strings, and watch a live waveform of what each
+    light is doing.&#13;
+    &#13;
+    The console reads each bulb's colour and brightness before it starts, and puts
+    it back when the flicker stops - even if the container was restarted mid-run.&#13;
     &#13;
     Everything is configured in the web UI, including the optional console password
     and the bridge send-rate cap - there are no environment variables to set here.&#13;
@@ -55,11 +64,11 @@
   <Config
     Name="Config Storage"
     Target="/data"
-    Default="/mnt/user/appdata/quake-hue-flicker"
+    Default="/mnt/user/appdata/game-hue-flicker"
     Mode="rw"
     Description="Holds config.json: your bridge pairing, saved custom patterns, console password and settings. Keep this mapped or you will have to re-pair with the bridge after every update."
     Type="Path"
     Display="always"
     Required="true"
-    Mask="false">/mnt/user/appdata/quake-hue-flicker</Config>
+    Mask="false">/mnt/user/appdata/game-hue-flicker</Config>
 </Container>

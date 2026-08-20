@@ -4,7 +4,7 @@ target-version = "py311"
 [lint]
 select = ["E", "F", "W", "I", "B", "UP", "C4"]
 ignore = [
-    "E501",   # long lines are mostly the Quake lightstyle table
+    "E501",   # long lines are mostly the lightstyle tables
     "B008",   # FastAPI dependencies are declared in defaults by design
 ]
 

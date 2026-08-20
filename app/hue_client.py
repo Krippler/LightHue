@@ -53,7 +53,7 @@ class HueClient:
         return r.json()
 
     @staticmethod
-    async def pair(bridge_ip: str, devicetype: str = "quake_hue_flicker#server") -> dict:
+    async def pair(bridge_ip: str, devicetype: str = "game_hue_flicker#server") -> dict:
         """Call after the user has pressed the physical link button on the bridge."""
         r = await _http().post(f"http://{bridge_ip}/api", json={"devicetype": devicetype}, timeout=6)
         r.raise_for_status()

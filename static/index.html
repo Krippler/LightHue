@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Hue Flicker Console</title>
+<title>Game Hue Flicker Console</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="icon" type="image/png" sizes="256x256" href="/static/icon.png" />
@@ -14,8 +14,8 @@
   <div class="scanlines" aria-hidden="true"></div>
 
   <header class="topbar">
-    <div class="eyebrow">id software // lightstyle emulator</div>
-    <h1>HUE FLICKER CONSOLE</h1>
+    <div class="eyebrow">doom // quake // duke // unreal &mdash; lightstyle emulator</div>
+    <h1>GAME HUE FLICKER</h1>
     <div id="conn-status" class="conn-status">connecting&hellip;</div>
   </header>
 
@@ -163,7 +163,8 @@
         <div class="panel-head">
           <h2>Custom Lightstyles</h2>
           <p class="sub">One letter per frame, <em>a</em> darkest through <em>z</em> brightest &mdash; the same
-          encoding Quake uses. Saved patterns show up in every light&rsquo;s pattern list.</p>
+          encoding Quake used, and every built-in pattern here is written in it. Saved
+          patterns show up in every light&rsquo;s pattern list.</p>
         </div>
 
         <div class="custom-form">
@@ -215,6 +216,7 @@
       </div>
 
       <div class="waveform" aria-hidden="true"></div>
+      <div class="rate-note dim hidden"></div>
 
       <div class="controls">
         <label class="field">

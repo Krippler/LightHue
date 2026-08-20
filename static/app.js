@@ -257,24 +257,26 @@ function buildCard(entity) {
   }
 
   const select = node.querySelector('.pattern-select');
-  const optGroupBuiltin = document.createElement('optgroup');
-  optGroupBuiltin.label = 'Built-in (Quake)';
-  PATTERNS.builtin.forEach(p => {
-    const o = document.createElement('option');
-    o.value = p.id; o.textContent = p.name;
-    optGroupBuiltin.appendChild(o);
-  });
-  select.appendChild(optGroupBuiltin);
-  if (PATTERNS.custom.length) {
-    const optGroupCustom = document.createElement('optgroup');
-    optGroupCustom.label = 'Custom';
-    PATTERNS.custom.forEach(p => {
+  const addGroup = (label, items) => {
+    if (!items.length) return;
+    const group = document.createElement('optgroup');
+    group.label = label;
+    items.forEach(p => {
       const o = document.createElement('option');
-      o.value = p.id; o.textContent = p.name;
-      optGroupCustom.appendChild(o);
+      o.value = p.id;
+      // The game is already the optgroup heading, so don't repeat it.
+      o.textContent = p.game ? p.name.replace(`${p.game} — `, '') : p.name;
+      if (p.origin === 'inspired') o.title = `Inspired by ${p.game}; not an engine lightstyle table`;
+      group.appendChild(o);
     });
-    select.appendChild(optGroupCustom);
-  }
+    select.appendChild(group);
+  };
+  (PATTERNS.games || []).forEach(game => {
+    addGroup(game, PATTERNS.builtin.filter(p => p.game === game));
+  });
+  // Anything whose game isn't in the ordered list still has to appear.
+  addGroup('Other', PATTERNS.builtin.filter(p => !(PATTERNS.games || []).includes(p.game)));
+  addGroup('Custom', PATTERNS.custom);
   select.value = 'flicker_a';
 
   const hzInput = node.querySelector('.hz-input');
@@ -632,11 +634,19 @@ function applyStatus() {
     // whatever the last tick left it at.
     card.querySelector('.btn-revert').classList.toggle('hidden', active || !hasSnapshot(entity));
 
+    const rateNote = card.querySelector('.rate-note');
     if (active && settings) {
       if (!recentlyTouched(key)) syncControls(card, key, settings);
       startWaveformAnimation(key);
+      // The bridge budget is shared, so what you asked for and what the light
+      // actually gets can differ once several are running.
+      const eff = settings.effective_hz;
+      const capped = eff !== undefined && eff !== null && eff < settings.hz - 0.05;
+      rateNote.classList.toggle('hidden', !capped);
+      if (capped) rateNote.textContent = `bridge budget: running at ${eff} Hz`;
     } else {
       stopWaveformAnimation(key);
+      rateNote.classList.add('hidden');
     }
   });
 }

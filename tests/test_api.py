@@ -1,3 +1,8 @@
+import pytest
+
+from app.patterns import BUILTIN_PATTERNS
+
+
 def configure(client):
     r = client.post("/api/bridge/set", json={"bridge_ip": "10.0.0.5", "api_key": "k"})
     assert r.status_code == 200
@@ -41,7 +46,7 @@ def test_custom_pattern_crud(client):
     created = client.post("/api/patterns", json={"name": "Torch", "sequence": " MMA zz "}).json()
     assert created["sequence"] == "mmazz"       # trimmed and lowercased
     listed = client.get("/api/patterns").json()
-    assert len(listed["builtin"]) == 12
+    assert len(listed["builtin"]) == len(BUILTIN_PATTERNS)
     assert [p["id"] for p in listed["custom"]] == [created["id"]]
     assert client.delete(f"/api/patterns/{created['id']}").status_code == 200
     assert client.get("/api/patterns").json()["custom"] == []
@@ -59,7 +64,7 @@ def test_pattern_name_is_required(client):
 def test_builtin_patterns_cannot_be_deleted(client):
     r = client.delete("/api/patterns/steady")
     assert r.status_code == 400
-    assert len(client.get("/api/patterns").json()["builtin"]) == 12
+    assert len(client.get("/api/patterns").json()["builtin"]) == len(BUILTIN_PATTERNS)
 
 
 def test_deleting_an_unknown_pattern_is_404(client):
@@ -409,3 +414,33 @@ def test_status_channel_carries_snapshots(client, bridge):
     assert msg["snapshots"]["1"]["bri"] == 180
     assert msg["lights"]["1"]["running"] is True
     assert client.post("/api/flicker/stop", json={}).json()["snapshots"] == {}
+
+
+def test_status_reports_the_rate_a_light_actually_gets(client, bridge, app_modules):
+    # Three lights at 10Hz want 30 commands/sec from a 10/sec budget, so each
+    # one is really running at a third of what was asked for. The UI needs
+    # that number to tell the truth about what the bridge can carry.
+    configure(client)
+    client.put("/api/settings", json={"max_commands_per_second": 10, "restore_on_stop": True})
+    client.post("/api/flicker/start",
+                json={"light_ids": ["1", "2", "3"], "pattern_id": "flicker_a", "hz": 10})
+    status = client.get("/api/status").json()["lights"]
+    assert status["1"]["hz"] == 10
+    assert status["1"]["effective_hz"] == pytest.approx(3.33, abs=0.01)
+    client.post("/api/flicker/stop", json={"light_ids": ["3"]})
+    # one fewer light means a bigger share for the rest
+    assert client.get("/api/status").json()["lights"]["1"]["effective_hz"] == 5.0
+    client.post("/api/flicker/stop", json={})
+
+
+def test_effective_rate_is_absent_once_stopped(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "steady"})
+    client.post("/api/flicker/stop", json={})
+    assert "effective_hz" not in client.get("/api/status").json()["lights"]["1"]
+
+
+def test_patterns_endpoint_lists_games_in_order(client):
+    body = client.get("/api/patterns").json()
+    assert body["games"][:2] == ["DOOM", "Quake"]
+    assert {p["game"] for p in body["builtin"]} == set(body["games"])

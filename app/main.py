@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 import uuid
 from contextlib import asynccontextmanager
 
@@ -12,7 +13,7 @@ from . import auth, config_store, hue_client
 from .auth import ConsoleAuthMiddleware
 from .flicker_engine import FlickerEngine
 from .hue_client import HueClient
-from .patterns import BUILTIN_BY_ID, BUILTIN_PATTERNS
+from .patterns import BUILTIN_BY_ID, BUILTIN_PATTERNS, GAMES
 
 
 @asynccontextmanager
@@ -36,7 +37,7 @@ async def lifespan(_app: FastAPI):
     await hue_client.aclose()
 
 
-app = FastAPI(title="Quake Hue Flicker", lifespan=lifespan)
+app = FastAPI(title="Game Hue Flicker", lifespan=lifespan)
 app.add_middleware(ConsoleAuthMiddleware)
 
 
@@ -67,7 +68,7 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
-logger = logging.getLogger("quake_hue_flicker")
+logger = logging.getLogger("game_hue_flicker")
 
 # Fire-and-forget tasks are only weakly held by the loop, so keep a strong
 # reference until each one finishes or it can be collected mid-flight.
@@ -338,7 +339,7 @@ async def list_lights():
 async def list_patterns():
     cfg = config_store.load()
     custom = list(cfg.get("custom_patterns", {}).values())
-    return {"builtin": BUILTIN_PATTERNS, "custom": custom}
+    return {"builtin": BUILTIN_PATTERNS, "custom": custom, "games": GAMES}
 
 
 @app.post("/api/patterns")
@@ -358,7 +359,7 @@ async def create_pattern(req: CustomPatternRequest):
 @app.delete("/api/patterns/{pattern_id}")
 async def delete_pattern(pattern_id: str):
     if pattern_id in BUILTIN_BY_ID:
-        raise HTTPException(400, "Built-in Quake patterns can't be deleted")
+        raise HTTPException(400, "Built-in game patterns can't be deleted")
     # A running loop holds its own copy of the sequence, so deleting out from
     # under it would leave lights flickering a pattern the UI can't name.
     in_use = [lid for lid, st in engine.status().items()
@@ -436,10 +437,13 @@ async def start_flicker(req: StartRequest):
     # Snapshot first — one bulk GET for the whole group — so Stop has something
     # to put back. Lights already running keep their earlier snapshot.
     await engine.capture(req.light_ids)
+    # One epoch for the whole request: every light in a group then derives the
+    # same frame from it and they flicker in step.
+    epoch = time.monotonic()
     for lid in req.light_ids:
         await engine.start(
             lid, sequence, req.pattern_id, req.hz, req.min_bri, req.max_bri,
-            req.hue, req.sat, req.transition_ms,
+            req.hue, req.sat, req.transition_ms, epoch=epoch,
         )
     return {"ok": True, **status_payload()}
 

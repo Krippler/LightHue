@@ -1,7 +1,7 @@
-# Quake Hue Flicker Console
+# Game Hue Flicker Console
 
-Drives Philips Hue lights using Quake's classic "lightstyle" flicker patterns
-(styles 0–11, straight from id Software's engine), through a small web UI
+Drives Philips Hue lights with the flicker patterns of classic shooters —
+Quake, DOOM, Duke Nukem 3D, Half-Life and Unreal — through a small web UI
 that multiple people on your network can use at once.
 
 <img src="static/icon.png" width="96" alt="">
@@ -19,7 +19,7 @@ that multiple people on your network can use at once.
   patterns, with a live waveform preview.
 - Retunes running lights on the fly — pattern, speed, brightness and color
   all take effect mid-flicker, no stop-and-restart.
-- Groups any set of bulbs behind one set of controls, so they stay identical.
+- Groups any set of bulbs behind one set of controls, flickering in step.
 - Reads each bulb's colour and brightness before it starts, and puts it back
   when the flicker stops — even if the container was killed mid-run.
 - Optionally locks the console behind a password you set in the UI.
@@ -46,7 +46,7 @@ The easiest route is the template in this repo:
    - **WebUI Port** — defaults to `26000`, Quake's own registered port, chosen
      to stay clear of the 8080 crowd on a typical Unraid box. Change it if you
      already use it for something.
-   - **Config Storage** — defaults to `/mnt/user/appdata/quake-hue-flicker`.
+   - **Config Storage** — defaults to `/mnt/user/appdata/game-hue-flicker`.
      This holds your bridge pairing, saved patterns and console password.
      Keep it mapped or you'll re-pair after every update.
 
@@ -77,6 +77,28 @@ of building, swap the `build: .` line in `docker-compose.yml` for
 or enter its IP manually, then walk you through pairing (press the
 physical link button on the bridge, then hit Pair within ~30 seconds).
 
+## Patterns
+
+Every built-in pattern is named after the game it comes from, and the picker
+groups them by game. There are two kinds, and the difference is worth knowing:
+
+**Straight from the engine.** Quake stored its light effects as literal `a`–`z`
+strings, and all twelve of its styles (0–11) are here verbatim. GoldSrc
+inherited that same table for Half-Life and added one style of its own —
+style 12, the underwater mutation — which is here too. The rest of Half-Life's
+styles are Quake's, so they aren't duplicated.
+
+**Written here, in that style.** DOOM, Duke Nukem 3D and Unreal don't store
+light effects as strings at all — they run procedural sector and actor effects
+in code. Those presets are hand-authored sequences that approximate the
+documented behaviour at roughly the original timing: DOOM's strobe, glow and
+fire-flicker sector types; Build engine flickering, blinking and pulsating
+sectors; Unreal's `LT_Pulse`, `LT_Blink`, `LT_Flicker`, `LT_SubtlePulse` and
+`LT_Strobe`. They're a tribute, not a dump of engine data, and the API marks
+them `origin: "inspired"` so you can tell them apart.
+
+Add your own in `app/patterns.py`, or write them in the UI (see below).
+
 ## Groups
 
 Tick the lights you want to run together in the **Groups** panel, give them a
@@ -87,6 +109,21 @@ group.
 A group card shows `2/3 FLICKERING` when only some members are running, and
 offers **Start the rest** alongside **Stop** so you can bring stragglers into
 line without interrupting the ones already going.
+
+**Staying in step.** Lights in a group are given a shared start instant, and
+each one works out which frame of the pattern is due *now* from that instant
+rather than counting its own ticks. That matters because the bridge budget is
+shared: a light that gets served less often would otherwise fall progressively
+further behind, and a group would drift apart the longer it ran. The rate
+limiter still hands out slots one at a time — bulbs physically cannot be sent
+to simultaneously — so the residual offset is one limiter slot, not a growing
+gap.
+
+If you ask for more frames per second than a light's share of the budget can
+carry, the pattern is run at the rate that share allows rather than sampled at
+the higher one. Sampling would alias: a two-frame strobe served every second
+frame sits on one value and stops flickering altogether. The card shows the
+rate it's actually running at whenever that's below what you asked for.
 
 ## Changing things mid-flicker
 
@@ -153,7 +190,7 @@ app/
   auth.py            Optional console password + gating middleware
   hue_client.py      Hue Bridge HTTP client (discover/pair/lights/state)
   flicker_engine.py  Per-light async flicker loops + rate limiter
-  patterns.py        Built-in Quake lightstyle table
+  patterns.py        Built-in flicker patterns, by game
   config_store.py    Persisted JSON config (bridge creds, patterns, settings)
 static/
   index.html, style.css, app.js   The control UI
