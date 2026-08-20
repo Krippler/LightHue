@@ -18,7 +18,7 @@ being involved at all.
 Everything except `patterns` is optional. Each pattern may state the framing
 it was written for — `hz`, `min_bri`, `max_bri`, `transition_ms` — and anything
 it leaves out falls back to Quake's own defaults: 10 frames a second across the
-bulb's full range with no smoothing between steps. Parsing is deliberately forgiving
+bulb's full range with no smoothing between steps, and no colour of its own. Parsing is deliberately forgiving
 about what it accepts and strict about what it produces: unknown keys are
 ignored, whitespace and case in sequences are normalised, and anything that
 would not be a valid pattern is rejected by name so the caller can say which
@@ -38,6 +38,9 @@ DEFAULT_MIN_BRI = 1
 DEFAULT_MAX_BRI = 254
 DEFAULT_TRANSITION_MS = 0
 MAX_TRANSITION_MS = 60000
+# None means leave the bulb's colour alone.
+DEFAULT_HUE = None
+DEFAULT_SAT = None
 MAX_SEQUENCE = 1000
 MAX_NAME = 60
 ALPHABET = set("abcdefghijklmnopqrstuvwxyz")
@@ -81,6 +84,13 @@ def normalise_hz(raw, default: float = DEFAULT_HZ) -> float:
     return round(hz, 2)
 
 
+def normalise_optional_int(raw, low: int, high: int, field: str):
+    """Like normalise_int but None is a real answer, not a missing one."""
+    if raw is None:
+        return None
+    return normalise_int(raw, 0, low, high, field)
+
+
 def normalise_int(raw, default: int, low: int, high: int, field: str) -> int:
     if raw is None:
         return default
@@ -103,7 +113,9 @@ def build(patterns, name: str | None = None, author: str | None = None) -> dict:
              "hz": p.get("hz", DEFAULT_HZ),
              "min_bri": p.get("min_bri", DEFAULT_MIN_BRI),
              "max_bri": p.get("max_bri", DEFAULT_MAX_BRI),
-             "transition_ms": p.get("transition_ms", DEFAULT_TRANSITION_MS)}
+             "transition_ms": p.get("transition_ms", DEFAULT_TRANSITION_MS),
+             "hue": p.get("hue", DEFAULT_HUE),
+             "sat": p.get("sat", DEFAULT_SAT)}
             for p in patterns
         ],
     }
@@ -153,13 +165,18 @@ def parse(payload) -> list[dict]:
                                           0, MAX_TRANSITION_MS, "transition_ms")
             if min_bri > max_bri:
                 raise PackError("min_bri must be less than or equal to max_bri")
+            hue = normalise_optional_int(entry.get("hue"), 0, 65535, "hue")
+            sat = normalise_optional_int(entry.get("sat"), 0, 254, "sat")
+            if (hue is None) != (sat is None):
+                raise PackError("hue and sat must be given together, or not at all")
         except PackError as e:
             raw_name = entry.get("name")
             label = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else f"pattern {i}"
             raise PackError(f"{label}: {e}") from e
         out.append({"name": name, "sequence": sequence, "hz": hz,
                     "min_bri": min_bri, "max_bri": max_bri,
-                    "transition_ms": transition_ms})
+                    "transition_ms": transition_ms,
+                    "hue": hue, "sat": sat})
     return out
 
 

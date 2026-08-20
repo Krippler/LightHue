@@ -10,6 +10,8 @@ DEFAULT_FRAMING = {
     "min_bri": packs.DEFAULT_MIN_BRI,
     "max_bri": packs.DEFAULT_MAX_BRI,
     "transition_ms": packs.DEFAULT_TRANSITION_MS,
+    "hue": packs.DEFAULT_HUE,
+    "sat": packs.DEFAULT_SAT,
 }
 
 
@@ -155,3 +157,30 @@ def test_an_inverted_window_is_rejected():
     with pytest.raises(packs.PackError, match="min_bri"):
         packs.parse({"patterns": [{"name": "x", "sequence": "az",
                                    "min_bri": 200, "max_bri": 50}]})
+
+
+def test_colour_round_trips_through_a_pack():
+    pack = packs.build([{"name": "Ember", "sequence": "azaz", "hue": 5000, "sat": 240}])
+    assert packs.parse(pack) == [framed("Ember", "azaz", hue=5000, sat=240)]
+
+
+def test_a_pack_without_colour_leaves_the_bulb_alone():
+    assert packs.parse({"patterns": [{"name": "x", "sequence": "az"}]})[0]["hue"] is None
+
+
+@pytest.mark.parametrize("entry", [
+    {"hue": 100}, {"sat": 100}, {"hue": 100, "sat": None},
+])
+def test_half_a_colour_is_rejected(entry):
+    with pytest.raises(packs.PackError, match="together"):
+        packs.parse({"patterns": [{"name": "x", "sequence": "az", **entry}]})
+
+
+@pytest.mark.parametrize("field, value", [
+    ("hue", -1), ("hue", 70000), ("sat", -1), ("sat", 300), ("hue", "red"),
+])
+def test_bad_colour_is_rejected(field, value):
+    other = "sat" if field == "hue" else "hue"
+    with pytest.raises(packs.PackError):
+        packs.parse({"patterns": [{"name": "x", "sequence": "az",
+                                   field: value, other: 100}]})

@@ -19,7 +19,7 @@ web UI that multiple people on your network can use at once.
   open, they see the same running/stopped state and controls in real time.
 - Lets you write and save custom a–z lightstyle strings as reusable
   patterns, with a live waveform preview and their own speed, brightness
-  range and transition.
+  range, transition and colour.
 - Exports your patterns to a small JSON file you can share, and imports
   files other people send you.
 - Retunes running lights on the fly — pattern, speed, brightness and color
@@ -119,18 +119,36 @@ apart. The picker says which is which on hover.
 **Quake III Arena is deliberately absent**: id Tech 3 ships no default
 lightstyle table in its game code, so there's nothing verbatim to claim.
 
-**Every pattern carries its own framing** — speed, brightness window and
-transition, not just the letters. A sputtering bulb and a slow gothic throb
-aren't the same shape played faster or slower, so picking a pattern brings all
-of it along: Shadow Warrior's paper lantern comes up at 4 Hz swinging only
-between 60 and 200 with 300 ms of smoothing, while Doom 3's failing ceiling
-light is 14 Hz across the full range with hard steps. You can still drag any of
-the sliders afterwards and it sticks.
+**Every pattern carries its own framing** — speed, brightness window,
+transition and colour, not just the letters. A sputtering bulb and a slow
+gothic throb aren't the same shape played faster or slower, so picking a
+pattern brings all of it along and the light looks right without you tuning
+anything:
+
+| | |
+|---|---|
+| Blood — Guttering Torch | 10 Hz, 40–215, 100 ms, warm orange |
+| Shadow Warrior — Paper Lantern | 4 Hz, 60–200, 300 ms, soft amber |
+| Doom 3 — Corridor Strobe | 12 Hz, full range, hard steps, no colour |
+| Hexen — Slow Mana Pulse | 5 Hz, 20–230, 200 ms, violet |
+| Quake 4 — Strogg Machinery | 8 Hz, 35–225, 100 ms, sickly green |
+
+Flame effects keep a brightness floor and a little smoothing, because a real
+flame doesn't go out between frames. Failing tubes and strobes do the opposite:
+they snap, and they go dark. You can still drag any slider afterwards and it
+sticks.
+
+**Colour is opt-in per pattern.** Half of them name one — torches are orange,
+neon is magenta, emergency lighting is red — and half deliberately don't, so
+they leave whatever colour you set in the Hue app alone. Unticking **Set
+color** overrides a pattern that names one; the brightness framing still
+applies.
 
 The engine-sourced styles are deliberately left unframed: full range, no
-smoothing, and all 10 Hz because that is the rate those engines step the
-lightstyle table at. Their `a`–`z` curve *is* the whole brightness story, so
-narrowing or softening it would misrepresent them.
+smoothing, no colour, and all 10 Hz because that is the rate those engines step
+the lightstyle table at. Their `a`–`z` curve *is* the whole brightness story,
+and colour came from the map's light entity rather than the style, so framing
+them would misrepresent them.
 
 Transitions move in 100 ms steps, because that is the resolution the bridge
 accepts — anything finer is truncated on the way through.
@@ -159,7 +177,9 @@ editor and sent to someone who then just imports it:
       "hz": 12,
       "min_bri": 40,
       "max_bri": 220,
-      "transition_ms": 100
+      "transition_ms": 100,
+      "hue": 6000,
+      "sat": 220
     }
   ]
 }
@@ -168,7 +188,8 @@ editor and sent to someone who then just imports it:
 Only `patterns` is required — `{"patterns": [...]}` on its own imports fine.
 Each pattern may state the framing it was written for; anything it leaves out
 falls back to Quake's own defaults, 10 frames a second across the bulb's full
-range with no smoothing.
+range with no smoothing and no colour of its own. `hue` and `sat` go together
+or not at all.
 Sequences are normalised on the way in, so spacing and capitalisation don't
 matter. Unknown keys are ignored, which leaves room for packs to carry extra
 metadata without older consoles choking on it.

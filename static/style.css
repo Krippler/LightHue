@@ -497,6 +497,11 @@ select {
 .custom-seq-field { flex: 2 1 260px; }
 .custom-framing { margin-top: 14px; }
 .custom-framing .field { flex: 1 1 150px; }
+.custom-color-row { flex: 1 1 200px; margin-top: 0; align-items: center; }
+.chip-color {
+  width: 11px; height: 11px; border-radius: 2px;
+  border: 1px solid var(--line); flex: 0 0 auto;
+}
 .custom-form .btn { white-space: nowrap; }
 
 .custom-preview { margin-top: 14px; }

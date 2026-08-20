@@ -487,7 +487,8 @@ def test_export_returns_a_downloadable_pack(client):
     assert pack["format"] == "game-hue-flicker/patterns"
     assert sorted(p["name"] for p in pack["patterns"]) == ["Sputter", "Torchlight"]
     # ids are console-local bookkeeping and have no business in a shared file
-    assert all(set(p) == {"name", "sequence", "hz", "min_bri", "max_bri", "transition_ms"}
+    assert all(set(p) == {"name", "sequence", "hz", "min_bri", "max_bri",
+                          "transition_ms", "hue", "sat"}
                for p in pack["patterns"])
 
 
@@ -771,3 +772,85 @@ def test_framing_survives_being_shared(client):
     ]})
     added = r.json()["added"][0]
     assert (added["min_bri"], added["max_bri"], added["transition_ms"]) == (90, 254, 400)
+
+
+# ---------- a pattern's suggested colour ----------
+
+def test_starting_takes_the_patterns_colour_when_none_is_given(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "blood_torch"})
+    st = client.get("/api/status").json()["lights"]["1"]
+    assert (st["hue"], st["sat"]) == (6000, 225)
+    client.post("/api/flicker/stop", json={})
+
+
+def test_an_explicit_colour_beats_the_patterns(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start", json={
+        "light_ids": ["1"], "pattern_id": "blood_torch", "hue": 40000, "sat": 100,
+    })
+    st = client.get("/api/status").json()["lights"]["1"]
+    assert (st["hue"], st["sat"]) == (40000, 100)
+    client.post("/api/flicker/stop", json={})
+
+
+def test_an_explicit_null_colour_means_leave_the_bulb_alone(client, bridge):
+    # This is how the UI says "Set color is unticked" — it must not be read as
+    # "no preference", or the pattern's colour would override the user.
+    configure(client)
+    client.post("/api/flicker/start", json={
+        "light_ids": ["1"], "pattern_id": "blood_torch", "hue": None, "sat": None,
+    })
+    st = client.get("/api/status").json()["lights"]["1"]
+    assert st["hue"] is None and st["sat"] is None
+    client.post("/api/flicker/stop", json={})
+
+
+def test_a_colourless_pattern_leaves_the_bulb_alone(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "doom3_strobe"})
+    st = client.get("/api/status").json()["lights"]["1"]
+    assert st["hue"] is None and st["sat"] is None
+    client.post("/api/flicker/stop", json={})
+
+
+def test_switching_pattern_live_never_recolours_on_its_own(client, bridge):
+    # Brightness and timing re-frame on a pattern switch, but reaching over and
+    # recolouring a running bulb without being asked would be a surprise.
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "doom3_strobe"})
+    client.post("/api/flicker/update", json={"light_ids": ["1"], "pattern_id": "blood_torch"})
+    st = client.get("/api/status").json()["lights"]["1"]
+    assert st["pattern_id"] == "blood_torch"
+    assert st["min_bri"] == 40                 # framing did follow
+    assert st["hue"] is None                   # colour did not
+    client.post("/api/flicker/stop", json={})
+
+
+def test_custom_patterns_can_save_a_colour(client, bridge):
+    configure(client)
+    made = client.post("/api/patterns", json={
+        "name": "Ember", "sequence": "azaz", "hue": 5000, "sat": 240,
+    }).json()
+    assert (made["hue"], made["sat"]) == (5000, 240)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": made["id"]})
+    st = client.get("/api/status").json()["lights"]["1"]
+    assert (st["hue"], st["sat"]) == (5000, 240)
+    client.post("/api/flicker/stop", json={})
+
+
+def test_half_a_colour_is_refused_on_a_custom_pattern(client):
+    r = client.post("/api/patterns", json={"name": "x", "sequence": "az", "hue": 100})
+    assert r.status_code == 422
+
+
+def test_colour_survives_being_shared(client):
+    client.post("/api/patterns", json={
+        "name": "Ember", "sequence": "azaz", "hue": 5000, "sat": 240,
+    })
+    entry = client.get("/api/patterns/export").json()["patterns"][0]
+    assert (entry["hue"], entry["sat"]) == (5000, 240)
+    added = client.post("/api/patterns/import", json={"patterns": [
+        {"name": "Cold", "sequence": "zzaa", "hue": 44000, "sat": 200},
+    ]}).json()["added"][0]
+    assert (added["hue"], added["sat"]) == (44000, 200)
