@@ -58,8 +58,13 @@ def bridge(app_modules, monkeypatch):
               "lights": ["1", "3"]},
         "2": {"name": "Upstairs", "type": "Zone", "lights": ["2", "4"]},
         "3": {"name": "Ceiling fitting", "type": "Luminaire", "lights": ["1"]},
-        "4": {"name": "TV area", "type": "Entertainment", "lights": ["1", "2"]},
+        # Already being streamed to by something else — Hue Sync, a game.
+        "4": {"name": "TV area", "type": "Entertainment", "lights": ["1", "2"],
+              "stream": {"active": True, "owner": "someone-else"}},
         "5": {"name": "Odds and ends", "type": "LightGroup", "lights": ["4"]},
+        "6": {"name": "Game room", "type": "Entertainment", "class": "Other",
+              "lights": ["1", "2", "3", "4"],
+              "stream": {"active": False, "owner": None}},
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -67,12 +72,24 @@ def bridge(app_modules, monkeypatch):
             return httpx.Response(200, json=state["groups"])
         if request.url.path.endswith("/lights"):
             return httpx.Response(200, json=state["lights"])
+        if request.method == "PUT" and "/groups/" in request.url.path:
+            import json
+            body = json.loads(request.content)
+            gid = request.url.path.rsplit("/", 1)[-1]
+            active = bool(body.get("stream", {}).get("active"))
+            state["groups"][gid]["stream"]["active"] = active
+            state.setdefault("stream_calls", []).append((gid, active))
+            return httpx.Response(200, json=[{"success": {}}])
         if request.url.path.endswith("/state"):
             import json
             state["puts"].append(json.loads(request.content))
             return httpx.Response(200, json=[{"success": {}}])
         if request.url.path == "/api":
-            return httpx.Response(200, json=[{"success": {"username": "stub-key"}}])
+            success = {"username": "stub-key"}
+            # Firmware old enough not to issue a streaming key just omits it.
+            if not state.get("omit_client_key"):
+                success["clientkey"] = "stub-client-key"
+            return httpx.Response(200, json=[{"success": success}])
         return httpx.Response(404, json={})
 
     import app.hue_client as hue_client

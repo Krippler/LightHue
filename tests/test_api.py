@@ -10,7 +10,8 @@ def configure(client):
 
 def test_index_and_unconfigured_state(client):
     assert client.get("/").status_code == 200
-    assert client.get("/api/bridge").json() == {"bridge_ip": None, "configured": False}
+    assert client.get("/api/bridge").json() == {
+        "bridge_ip": None, "configured": False, "can_stream": False}
     assert client.get("/api/lights").status_code == 400
     status = client.get("/api/status").json()
     assert status["lights"] == {} and status["snapshots"] == {}
@@ -1019,9 +1020,9 @@ def test_bridge_groups_report_what_was_filtered_out(client, bridge):
     # different problems, and the UI has to be able to tell them apart.
     configure(client)
     body = client.get("/api/bridge/groups").json()
-    assert body["total"] == 5
+    assert body["total"] == 6
     assert body["seen"] == {"Room": 1, "Zone": 1, "Luminaire": 1,
-                            "Entertainment": 1, "LightGroup": 1}
+                            "Entertainment": 2, "LightGroup": 1}
     assert len(body["groups"]) == 3
 
 
@@ -1119,3 +1120,150 @@ def test_raising_the_send_rate_reaches_the_running_lights(client, bridge, app_mo
 
     assert shares() == {4.0}                      # 20 * 0.8 / 4
     assert pushes, "raising the rate has to push a status, or the cards stay stale"
+
+
+def test_pairing_asks_for_a_streaming_key_and_reports_getting_one(client, bridge, app_modules):
+    r = client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    assert r.status_code == 200
+    assert r.json()["can_stream"] is True
+    assert client.get("/api/bridge").json()["can_stream"] is True
+    # The key itself is never handed back out.
+    assert "client_key" not in r.json()
+    assert app_modules.config_store.load()["client_key"] == "stub-client-key"
+
+
+def test_a_bridge_too_old_to_issue_one_still_pairs(client, bridge, app_modules):
+    bridge["omit_client_key"] = True
+    r = client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    assert r.status_code == 200
+    assert r.json()["configured"] is True and r.json()["can_stream"] is False
+
+
+def test_saving_credentials_without_a_client_key_leaves_the_stored_one_alone(client, app_modules):
+    client.post("/api/bridge/set", json={
+        "bridge_ip": "10.0.0.5", "api_key": "k", "client_key": "00" * 16})
+    assert client.get("/api/bridge").json()["can_stream"] is True
+    client.post("/api/bridge/set", json={"bridge_ip": "10.0.0.5", "api_key": "k2"})
+    assert client.get("/api/bridge").json()["can_stream"] is True
+
+
+# ---------- entertainment areas ----------
+
+def test_entertainment_areas_are_offered_separately_from_rooms(client, bridge):
+    configure(client)
+    rooms = client.get("/api/bridge/groups").json()["groups"]
+    assert "Game room" not in [g["name"] for g in rooms]   # not a flicker group
+
+    body = client.get("/api/stream/areas").json()
+    assert [a["name"] for a in body["areas"]] == ["Game room", "TV area"]
+    game = next(a for a in body["areas"] if a["name"] == "Game room")
+    assert game["light_ids"] == ["1", "2", "3", "4"]
+    assert game["too_many_lights"] is False
+    assert game["in_use_by_someone_else"] is False
+
+
+def test_an_area_someone_else_is_streaming_to_is_flagged(client, bridge):
+    configure(client)
+    areas = client.get("/api/stream/areas").json()["areas"]
+    busy = next(a for a in areas if a["name"] == "TV area")
+    assert busy["in_use_by_someone_else"] is True
+
+
+def test_areas_report_whether_this_console_could_stream_at_all(client, bridge):
+    configure(client)                               # no client key stored
+    assert client.get("/api/stream/areas").json()["can_stream"] is False
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    assert client.get("/api/stream/areas").json()["can_stream"] is True
+
+
+def test_handing_an_area_to_the_stream_and_back(client, bridge, app_modules):
+    configure(client)
+    hue_client = app_modules.get_client()
+    import asyncio
+    asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+        hue_client.set_stream("6", True))
+    assert bridge["stream_calls"][-1] == ("6", True)
+    assert bridge["groups"]["6"]["stream"]["active"] is True
+
+
+# ---------- streaming ----------
+
+def stream_body(**kw):
+    return {"area_id": "6", "pattern_id": "flicker_a", **kw}
+
+
+def test_streaming_needs_a_console_paired_for_it(client, bridge):
+    configure(client)                               # api key only, no client key
+    r = client.post("/api/stream/start", json=stream_body())
+    assert r.status_code == 409
+    assert "pair" in r.json()["detail"].lower()
+
+
+def test_streaming_rejects_an_area_the_bridge_does_not_have(client, bridge):
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    assert client.post("/api/stream/start", json=stream_body(area_id="999")).status_code == 404
+    # A room is not an entertainment area, even though both are groups.
+    assert client.post("/api/stream/start", json=stream_body(area_id="1")).status_code == 404
+
+
+def test_streaming_refuses_an_area_someone_else_holds(client, bridge):
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    r = client.post("/api/stream/start", json=stream_body(area_id="4"))   # TV area
+    assert r.status_code == 409
+    assert "already streaming" in r.json()["detail"]
+
+
+def test_a_failed_stream_hands_the_area_back(client, bridge, app_modules, monkeypatch):
+    """The bridge ignores everything else while it holds an area for streaming,
+    so an area claimed for a stream that never opened would strand the lights."""
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+
+    def refuse(*a, **kw):
+        raise app_modules.StreamError("no route to the bridge")
+
+    monkeypatch.setattr(app_modules.stream_engine, "start", refuse)
+    r = client.post("/api/stream/start", json=stream_body())
+    assert r.status_code == 502
+    assert bridge["stream_calls"] == [("6", True), ("6", False)]
+    assert bridge["groups"]["6"]["stream"]["active"] is False
+
+
+def test_starting_a_stream_stops_rest_flicker_on_those_lights(client, bridge, app_modules,
+                                                              monkeypatch):
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    client.post("/api/flicker/start",
+                json={"light_ids": ["1", "2"], "pattern_id": "flicker_a", "hz": 5})
+    assert client.get("/api/status").json()["lights"]["1"]["running"] is True
+
+    monkeypatch.setattr(app_modules.stream_engine, "start", lambda *a, **kw: None)
+    assert client.post("/api/stream/start", json=stream_body()).status_code == 200
+    # Area 6 holds lights 1-4, so both REST loops must have been stood down.
+    lights = client.get("/api/status").json()["lights"]
+    assert lights["1"]["running"] is False and lights["2"]["running"] is False
+
+
+def test_stopping_a_stream_releases_the_area(client, bridge, app_modules, monkeypatch):
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    monkeypatch.setattr(app_modules.stream_engine, "start", lambda *a, **kw: None)
+    monkeypatch.setattr(app_modules.stream_engine, "status",
+                        lambda: {"area_id": "6", "running": True, "settings": {}})
+    client.post("/api/stream/start", json=stream_body())
+    assert client.post("/api/stream/stop").status_code == 200
+    assert bridge["stream_calls"][-1] == ("6", False)
+
+
+def test_updating_when_nothing_is_streaming_is_409(client, bridge):
+    configure(client)
+    assert client.post("/api/stream/update", json={"hz": 5}).status_code == 409
+
+
+def test_status_reports_the_stream(client, bridge):
+    configure(client)
+    body = client.get("/api/status").json()
+    assert body["stream"]["running"] is False
+    assert body["stream"]["max_hz"] == app_stream_max()
+
+
+def app_stream_max():
+    from app.hue_stream import MAX_STREAM_HZ
+    return MAX_STREAM_HZ

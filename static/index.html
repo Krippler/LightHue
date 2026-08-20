@@ -225,6 +225,75 @@
           </div>
         </section>
 
+        <section class="panel collapsible dash-card" data-section="stream">
+          <div class="panel-head">
+            <div class="panel-title">
+              <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
+                   aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+              Entertainment Stream
+            </div>
+            <div class="panel-head-actions">
+              <span id="stream-state" class="dim">idle</span>
+              <button id="btn-stream-refresh" class="btn btn-ghost btn-sm">Refresh areas</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <p class="hint">The normal path sends one command per light and the bridge takes
+            about ten a second in total, so seven bulbs land near 1 Hz each. Streaming sends
+            one frame holding the whole area, so the speed stops being divided &mdash; up to
+            <em id="stream-max-hz">25</em> Hz across every light at once. Set the area up in
+            the Hue app first, under Entertainment areas.</p>
+
+            <div id="stream-unavailable" class="status-line err hidden"></div>
+
+            <div class="custom-form">
+              <label class="field">
+                <span>Area</span>
+                <select id="stream-area"></select>
+              </label>
+              <label class="field custom-seq-field">
+                <span>Pattern</span>
+                <select id="stream-pattern"></select>
+              </label>
+            </div>
+
+            <div class="custom-form custom-framing">
+              <label class="field">
+                <span>Speed <em id="stream-hz-value">10</em> Hz</span>
+                <input id="stream-hz" type="range" min="1" max="25" step="1" value="10" />
+              </label>
+              <label class="field">
+                <span>Min brightness <em id="stream-minbri-value">1</em></span>
+                <input id="stream-minbri" type="range" min="1" max="254" step="1" value="1" />
+              </label>
+              <label class="field">
+                <span>Max brightness <em id="stream-maxbri-value">254</em></span>
+                <input id="stream-maxbri" type="range" min="1" max="254" step="1" value="254" />
+              </label>
+              <div class="field-row custom-color-row">
+                <label class="field checkbox-field">
+                  <input type="checkbox" id="stream-color-enable" />
+                  <span>Set colour</span>
+                </label>
+                <input id="stream-color" type="color" value="#c1440e"
+                       title="Pick a colour — this ticks the box for you" />
+                <input id="stream-color-code" type="text" class="color-code"
+                       spellcheck="false" autocomplete="off"
+                       placeholder="#ff991d or 6000,225"
+                       title="Type a hex code, or Hue's own hue,sat numbers for an exact match" />
+              </div>
+            </div>
+
+            <div id="stream-waveform" class="waveform" aria-hidden="true"></div>
+
+            <div class="action-row">
+              <button id="btn-stream-start" class="btn btn-primary btn-sm">Start stream</button>
+              <button id="btn-stream-stop" class="btn btn-danger btn-sm hidden">Stop stream</button>
+            </div>
+            <div id="stream-status" class="status-line"></div>
+          </div>
+        </section>
+
         <section class="panel collapsible is-collapsed dash-card" data-section="custom">
           <div class="panel-head">
             <div class="panel-title">

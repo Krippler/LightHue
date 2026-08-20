@@ -17,6 +17,10 @@ _DEFAULT_SETTINGS = {
 _DEFAULT = {
     "bridge_ip": None,
     "api_key": None,
+    # The DTLS pre-shared key for entertainment streaming. Only issued at
+    # pairing time, so a console paired before streaming existed has None here
+    # and has to be paired again before it can stream.
+    "client_key": None,
     "custom_patterns": {},   # id -> {id, name, sequence}
     "groups": {},            # id -> {id, name, light_ids}
     "snapshots": {},         # light_id -> bulb state captured before flickering
