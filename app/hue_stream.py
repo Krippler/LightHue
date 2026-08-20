@@ -28,6 +28,7 @@ Wire format, confirmed against two independent implementations
              -- channel id (1), R (2), G (2), B (2)
 """
 import socket
+import time
 
 from .hue_client import parse_bridge_address
 
@@ -144,7 +145,15 @@ class DtlsStream:
         self.port = STREAM_PORT if port is None else port
         self._sock = None
 
-    def connect(self, timeout: float = 5.0):
+    def connect(self, timeout: float = 4.0, attempts: int = 3):
+        """Handshake with the bridge, retrying a few times.
+
+        The bridge opens port 2100 only once the area has been handed to the
+        stream over REST, and it does not open it the instant the REST call
+        returns — a first handshake landing a moment early gets no answer at
+        all, which surfaces as a timeout rather than a refusal. Retrying costs
+        a few seconds and turns a race into a non-event.
+        """
         try:
             from mbedtls import tls
         except ImportError as e:      # pragma: no cover - dependency is declared
@@ -157,16 +166,23 @@ class DtlsStream:
             ciphers=DTLS_CIPHERS,
             validate_certificates=False,
         )
-        raw = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        raw.settimeout(timeout)
-        sock = tls.ClientContext(config).wrap_socket(raw, server_hostname=None)
-        try:
-            sock.connect((self.bridge_ip, self.port))
-            sock.do_handshake()
-        except Exception as e:
-            sock.close()
-            raise StreamError(f"Could not open the entertainment stream: {e}") from e
-        self._sock = sock
+        last = None
+        for attempt in range(max(1, attempts)):
+            raw = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            raw.settimeout(timeout)
+            sock = tls.ClientContext(config).wrap_socket(raw, server_hostname=None)
+            try:
+                sock.connect((self.bridge_ip, self.port))
+                sock.do_handshake()
+            except Exception as e:
+                last = e
+                sock.close()
+                if attempt + 1 < max(1, attempts):
+                    time.sleep(0.5)
+                continue
+            self._sock = sock
+            return
+        raise StreamError(f"Could not open the entertainment stream: {last}") from last
 
     def send(self, frame: bytes):
         if self._sock is None:

@@ -78,6 +78,7 @@ def bridge(app_modules, monkeypatch):
             gid = request.url.path.rsplit("/", 1)[-1]
             active = bool(body.get("stream", {}).get("active"))
             state["groups"][gid]["stream"]["active"] = active
+            state["groups"][gid]["stream"]["owner"] = "k" if active else None
             state.setdefault("stream_calls", []).append((gid, active))
             return httpx.Response(200, json=[{"success": {}}])
         if request.url.path.endswith("/state"):

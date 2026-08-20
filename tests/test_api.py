@@ -1167,6 +1167,28 @@ def test_an_area_someone_else_is_streaming_to_is_flagged(client, bridge):
     areas = client.get("/api/stream/areas").json()["areas"]
     busy = next(a for a in areas if a["name"] == "TV area")
     assert busy["in_use_by_someone_else"] is True
+    assert busy["claimed_by_us"] is False
+
+
+def test_a_claim_this_console_left_reads_as_ours_not_a_conflict(client, bridge):
+    configure(client)                                   # stores api_key "k"
+    bridge["groups"]["6"]["stream"] = {"active": True, "owner": "k"}
+    area = next(a for a in client.get("/api/stream/areas").json()["areas"]
+                if a["name"] == "Game room")
+    assert area["claimed_by_us"] is True
+    assert area["in_use_by_someone_else"] is False
+
+
+def test_the_areas_listing_never_returns_the_api_key(client, bridge):
+    """Ownership is worked out server-side precisely so the key never has to
+    be handed to the browser to compare against."""
+    secret = "Xk7Qv2zPmNb4Ls9Wd1Tr"
+    client.post("/api/bridge/set", json={"bridge_ip": "10.0.0.5", "api_key": secret})
+    bridge["groups"]["6"]["stream"] = {"active": True, "owner": secret}
+    body = client.get("/api/stream/areas").json()
+    assert secret not in str(body)
+    area = next(a for a in body["areas"] if a["name"] == "Game room")
+    assert area["claimed_by_us"] is True
 
 
 def test_areas_report_whether_this_console_could_stream_at_all(client, bridge):
@@ -1224,7 +1246,8 @@ def test_a_failed_stream_hands_the_area_back(client, bridge, app_modules, monkey
     monkeypatch.setattr(app_modules.stream_engine, "start", refuse)
     r = client.post("/api/stream/start", json=stream_body())
     assert r.status_code == 502
-    assert bridge["stream_calls"] == [("6", True), ("6", False)]
+    # Cleared, claimed, then handed straight back when the stream didn't open.
+    assert bridge["stream_calls"] == [("6", False), ("6", True), ("6", False)]
     assert bridge["groups"]["6"]["stream"]["active"] is False
 
 
@@ -1267,3 +1290,50 @@ def test_status_reports_the_stream(client, bridge):
 def app_stream_max():
     from app.hue_stream import MAX_STREAM_HZ
     return MAX_STREAM_HZ
+
+
+def test_an_area_this_console_left_claimed_is_taken_back(client, bridge, app_modules,
+                                                         monkeypatch):
+    """A session that died without letting go leaves the claim behind. From the
+    outside that looks like the bridge ignoring the streaming port, so the claim
+    is cleared and remade rather than reported as a conflict."""
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    # As if a previous run of this console had claimed it and never returned.
+    bridge["groups"]["6"]["stream"] = {"active": True, "owner": "stub-key"}
+    monkeypatch.setattr(app_modules.stream_engine, "start", lambda *a, **kw: None)
+
+    r = client.post("/api/stream/start", json=stream_body())
+    assert r.status_code == 200
+    # Cleared first, then claimed — that order is what unsticks the bridge.
+    assert bridge["stream_calls"][-2:] == [("6", False), ("6", True)]
+
+
+def test_an_area_someone_else_claimed_is_still_a_conflict(client, bridge):
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    bridge["groups"]["6"]["stream"] = {"active": True, "owner": "hue-sync"}
+    r = client.post("/api/stream/start", json=stream_body())
+    assert r.status_code == 409
+    assert "already streaming" in r.json()["detail"]
+
+
+def test_an_area_can_be_handed_back_by_hand(client, bridge):
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    bridge["groups"]["6"]["stream"] = {"active": True, "owner": "whoever"}
+    assert client.post("/api/stream/release", json={"area_id": "6"}).status_code == 200
+    assert bridge["groups"]["6"]["stream"]["active"] is False
+
+
+def test_a_timeout_says_what_to_try(client, bridge, app_modules, monkeypatch):
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+
+    def slow(*a, **kw):
+        raise app_modules.StreamError(
+            "Could not open the entertainment stream: timed out")
+
+    monkeypatch.setattr(app_modules.stream_engine, "start", slow)
+    r = client.post("/api/stream/start", json=stream_body())
+    assert r.status_code == 502
+    detail = r.json()["detail"]
+    assert "Release area" in detail and "never answered" in detail
+    # And the area is not left held by a stream that never opened.
+    assert bridge["groups"]["6"]["stream"]["active"] is False

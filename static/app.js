@@ -1527,8 +1527,12 @@ async function loadStreamAreas() {
       o.value = a.id;
       const n = a.light_ids.length;
       o.textContent = `${a.name} (${n} light${n === 1 ? '' : 's'})`;
-      if (a.in_use_by_someone_else) {
-        o.textContent += ' — in use';
+      if (a.claimed_by_us) {
+        // Left behind by this console, so it is ours to take back rather than
+        // a conflict — Start clears it first.
+        o.textContent += ' — left claimed, will be taken back';
+      } else if (a.in_use_by_someone_else) {
+        o.textContent += ' — in use elsewhere';
         o.disabled = true;
       }
       streamArea.appendChild(o);
@@ -1615,6 +1619,18 @@ streamColorCode.addEventListener('input', () => {
 });
 
 $('#btn-stream-refresh').addEventListener('click', loadStreamAreas);
+
+$('#btn-stream-release').addEventListener('click', async () => {
+  const areaId = streamArea.value || STREAM.area_id;
+  if (!areaId) return;
+  try {
+    await api('/api/stream/release', { method: 'POST', body: JSON.stringify({ area_id: areaId }) });
+    setStreamStatus('Area handed back to the bridge.', 'ok');
+    await loadStreamAreas();
+  } catch (e) {
+    setStreamStatus(e.message, 'err');
+  }
+});
 
 $('#btn-stream-start').addEventListener('click', async () => {
   if (!streamArea.value) return;
