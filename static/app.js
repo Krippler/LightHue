@@ -7,7 +7,6 @@ let GROUPS = [];
 let STATUS = {}; // light_id -> settings from server
 let cardEls = {}; // card key -> DOM element
 let cardEntities = {}; // card key -> { kind, id, name, lightIds }
-let waveformTimers = {}; // card key -> interval id for local playhead animation
 let selected = new Set(); // light ids ticked for a new group
 let SNAPSHOTS = {}; // light_id -> pre-flicker bulb state the server can restore
 
@@ -130,6 +129,7 @@ async function loadPatternsAndLights() {
   PATTERNS = patterns;
   STATUS = statusRes.lights;
   SNAPSHOTS = statusRes.snapshots || {};
+  noteServerClock(statusRes.now);
   GROUPS = groupsRes.groups;
 
   // Only the light list actually needs the bridge. If it's unreachable, say so
@@ -336,7 +336,6 @@ function buildCard(entity) {
 
   hzInput.addEventListener('input', () => {
     hzValue.textContent = hzInput.value;
-    restartWaveform(entity.key);
     pushLive(entity);
   });
   transInput.addEventListener('input', () => {
@@ -366,7 +365,6 @@ function buildCard(entity) {
   select.addEventListener('change', () => {
     applyPatternRate();
     drawWaveform(entity.key, sequenceFor(select.value));
-    restartWaveform(entity.key);
     pushLive(entity);
   });
 
@@ -506,43 +504,82 @@ function renderBars(container, sequence) {
   }
 }
 
-function drawWaveform(lightId, sequence) {
-  const card = cardEls[lightId];
+function drawWaveform(key, sequence) {
+  const card = cardEls[key];
   if (!card) return;
   renderBars(card.querySelector('.waveform'), sequence);
+  delete lastFrame[key];   // bars were replaced; the old index means nothing
 }
 
-function restartWaveform(lightId) {
-  const card = cardEls[lightId];
-  if (!card) return;
-  const running = card.classList.contains('is-running');
-  stopWaveformAnimation(lightId);
-  if (running) startWaveformAnimation(lightId);
+// The playhead is driven off the server's clock, not a local timer: the engine
+// caps each light to its share of the bridge budget, so what you asked for and
+// what the bulb actually does are often different numbers. Animating at the
+// slider value made the bar run visibly faster than the light.
+
+let playheadTimer = null;
+let serverClockOffset = 0;   // server monotonic seconds minus our own
+const lastFrame = {};        // card key -> frame currently lit, to avoid churn
+
+function clientSeconds() {
+  return performance.now() / 1000;
 }
 
-function startWaveformAnimation(lightId) {
-  const card = cardEls[lightId];
-  if (!card) return;
-  const hzInput = card.querySelector('.hz-input');
-  const bars = $$('.bar', card.querySelector('.waveform'));
-  if (!bars.length) return;
-  let idx = 0;
-  stopWaveformAnimation(lightId);
-  const hz = Number(hzInput.value) || 10;
-  waveformTimers[lightId] = setInterval(() => {
-    bars.forEach(b => b.classList.remove('active'));
-    bars[idx % bars.length].classList.add('active');
-    idx++;
-  }, 1000 / hz);
+function noteServerClock(now) {
+  if (typeof now === 'number') serverClockOffset = now - clientSeconds();
 }
 
-function stopWaveformAnimation(lightId) {
-  if (waveformTimers[lightId]) {
-    clearInterval(waveformTimers[lightId]);
-    delete waveformTimers[lightId];
+function serverSeconds() {
+  return clientSeconds() + serverClockOffset;
+}
+
+function clearPlayhead(card, key) {
+  delete lastFrame[key];
+  card.querySelectorAll('.waveform .bar.active').forEach(b => b.classList.remove('active'));
+}
+
+function updatePlayheads() {
+  let anyRunning = false;
+
+  Object.entries(cardEls).forEach(([key, card]) => {
+    const entity = cardEntities[key];
+    if (!entity) return;
+    const { running, partial, settings } = entityState(entity);
+    const bars = card.querySelectorAll('.waveform .bar');
+    if (!(running || partial) || !settings || !bars.length) {
+      clearPlayhead(card, key);
+      return;
+    }
+    anyRunning = true;
+
+    // effective_hz is what the light is really being sent at; hz is what was
+    // asked for. Prefer the truth.
+    const hz = settings.effective_hz || settings.hz || 10;
+    const epoch = settings.epoch;
+    const elapsed = epoch === undefined ? 0 : serverSeconds() - epoch;
+    const frame = Math.floor(Math.max(0, elapsed) * hz);
+    const idx = ((frame % bars.length) + bars.length) % bars.length;
+    if (lastFrame[key] === idx) return;
+
+    if (lastFrame[key] !== undefined && bars[lastFrame[key]]) {
+      bars[lastFrame[key]].classList.remove('active');
+    } else {
+      bars.forEach(b => b.classList.remove('active'));
+    }
+    bars[idx].classList.add('active');
+    lastFrame[key] = idx;
+  });
+
+  if (!anyRunning) {
+    clearInterval(playheadTimer);
+    playheadTimer = null;
   }
-  const card = cardEls[lightId];
-  if (card) $$('.bar', card.querySelector('.waveform')).forEach(b => b.classList.remove('active'));
+}
+
+// One loop for every card. It recomputes position from the clock each tick, so
+// a rate change or a light joining the budget is picked up without restarting
+// anything.
+function ensurePlayheadLoop() {
+  if (!playheadTimer) playheadTimer = setInterval(updatePlayheads, 40);
 }
 
 // ---------- Custom lightstyles ----------
@@ -754,7 +791,7 @@ function applyStatus() {
     const rateNote = card.querySelector('.rate-note');
     if (active && settings) {
       if (!recentlyTouched(key)) syncControls(card, key, settings);
-      startWaveformAnimation(key);
+      ensurePlayheadLoop();
       // The bridge budget is shared, so what you asked for and what the light
       // actually gets can differ once several are running.
       const eff = settings.effective_hz;
@@ -762,7 +799,7 @@ function applyStatus() {
       rateNote.classList.toggle('hidden', !capped);
       if (capped) rateNote.textContent = `bridge budget: running at ${eff} Hz`;
     } else {
-      stopWaveformAnimation(key);
+      clearPlayhead(card, key);
       rateNote.classList.add('hidden');
     }
   });
@@ -863,6 +900,7 @@ function connectWs() {
     if (msg.type === 'status') {
       STATUS = msg.lights;
       SNAPSHOTS = msg.snapshots || {};
+      noteServerClock(msg.now);
       applyStatus();
     }
   });

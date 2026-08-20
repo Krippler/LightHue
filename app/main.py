@@ -84,7 +84,14 @@ _background: set[asyncio.Task] = set()
 
 
 def status_payload() -> dict:
-    return {"lights": engine.status(), "snapshots": engine.snapshots}
+    # "now" is the same monotonic clock the loops derive their frame from, so a
+    # browser can work out the offset to its own clock and show the frame each
+    # light is actually on rather than animating at its own pace.
+    return {
+        "lights": engine.status(),
+        "snapshots": engine.snapshots,
+        "now": time.monotonic(),
+    }
 
 
 def _broadcast_status_soon():

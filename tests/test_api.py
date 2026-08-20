@@ -12,7 +12,9 @@ def test_index_and_unconfigured_state(client):
     assert client.get("/").status_code == 200
     assert client.get("/api/bridge").json() == {"bridge_ip": None, "configured": False}
     assert client.get("/api/lights").status_code == 400
-    assert client.get("/api/status").json() == {"lights": {}, "snapshots": {}}
+    status = client.get("/api/status").json()
+    assert status["lights"] == {} and status["snapshots"] == {}
+    assert isinstance(status["now"], float)
 
 
 def test_lights_are_listed_sorted_by_name(client, bridge):
@@ -158,7 +160,11 @@ def test_settings_rejects_out_of_range_rate(client):
 def test_websocket_pushes_status_on_connect(client, bridge):
     configure(client)
     with client.websocket_connect("/ws") as ws:
-        assert ws.receive_json() == {"type": "status", "lights": {}, "snapshots": {}}
+        msg = ws.receive_json()
+    assert msg["type"] == "status"
+    assert msg["lights"] == {} and msg["snapshots"] == {}
+    # the browser needs this to line its playhead up with the running loops
+    assert isinstance(msg["now"], float)
 
 
 # ---------- live update ----------
@@ -665,3 +671,18 @@ def test_patterns_endpoint_reports_every_rate(client):
     assert all("hz" in p for p in body["builtin"])
     rates = {p["id"]: p["hz"] for p in body["builtin"]}
     assert rates["sw_lantern"] == 4 and rates["unreal_flicker"] == 16
+
+
+def test_status_carries_the_clock_the_loops_run_on(client, bridge):
+    configure(client)
+    client.put("/api/settings", json={"max_commands_per_second": 10, "restore_on_stop": True})
+    client.post("/api/flicker/start",
+                json={"light_ids": ["1", "2", "3"], "pattern_id": "flicker_a", "hz": 10})
+    status = client.get("/api/status").json()
+    light = status["lights"]["1"]
+    # epoch and now share a clock, so a browser can work out which frame is due
+    assert light["epoch"] <= status["now"]
+    assert status["now"] - light["epoch"] < 60
+    # and the rate to advance it at is the one the light really gets
+    assert light["effective_hz"] < light["hz"]
+    client.post("/api/flicker/stop", json={})
