@@ -309,3 +309,80 @@ async def test_separately_started_lights_get_their_own_epoch():
     await engine.start("2", "az", "steady", 10.0, 1, 254, None, None, 0)
     assert engine.status()["1"]["epoch"] != engine.status()["2"]["epoch"]
     await engine.stop_all()
+
+
+class DeadClient(FakeClient):
+    async def set_light_state(self, light_id, **state):
+        self.calls.append((time.monotonic(), light_id, state))
+        raise RuntimeError("light is not reachable")
+
+
+@pytest.mark.asyncio
+async def test_a_light_that_never_answers_is_written_off():
+    # Regression: an unplugged bulb kept its loop forever, taking rate-limiter
+    # slots from lights that could still answer and logging every tick.
+    from app.flicker_engine import GIVE_UP_AFTER_FAILURES
+
+    fake = DeadClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    engine.limiter.set_rate(30.0)
+    await engine.start("1", "mmnn", "x", 20.0, 1, 254, None, None, 0)
+    for _ in range(200):
+        await asyncio.sleep(0.05)
+        if not engine.running_light_ids():
+            break
+    assert engine.running_light_ids() == []
+    assert engine.status()["1"]["running"] is False
+    assert len(fake.calls) == GIVE_UP_AFTER_FAILURES
+    # the snapshot is kept so a manual revert can still try later
+    await engine.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_writing_one_light_off_leaves_the_others_running():
+    class Mixed(FakeClient):
+        async def set_light_state(self, light_id, **state):
+            self.calls.append((time.monotonic(), light_id, state))
+            if light_id == "dead":
+                raise RuntimeError("gone")
+
+    fake = Mixed()
+    engine = FlickerEngine(get_client=lambda: fake)
+    engine.limiter.set_rate(40.0)
+    for lid in ("alive", "dead"):
+        await engine.start(lid, "mmnn", "x", 20.0, 1, 254, None, None, 0)
+    for _ in range(200):
+        await asyncio.sleep(0.05)
+        if "dead" not in engine.running_light_ids():
+            break
+    assert engine.running_light_ids() == ["alive"]
+
+    # once it's gone, the working light has the budget to itself
+    before = len([c for c in fake.calls if c[1] == "alive"])
+    await asyncio.sleep(0.5)
+    after = len([c for c in fake.calls if c[1] == "alive"])
+    assert after - before > 5
+    assert not [c for c in fake.calls[-10:] if c[1] == "dead"]
+    await engine.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_an_occasional_failure_does_not_write_a_light_off():
+    class Flaky(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.n = 0
+
+        async def set_light_state(self, light_id, **state):
+            self.calls.append((time.monotonic(), light_id, state))
+            self.n += 1
+            if self.n % 3 == 0:
+                raise RuntimeError("transient")
+
+    fake = Flaky()
+    engine = FlickerEngine(get_client=lambda: fake)
+    engine.limiter.set_rate(40.0)
+    await engine.start("1", "mmnn", "x", 20.0, 1, 254, None, None, 0)
+    await asyncio.sleep(2.0)
+    assert engine.running_light_ids() == ["1"]   # a third failing is not fatal
+    await engine.stop_all()

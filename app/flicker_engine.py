@@ -8,6 +8,11 @@ from .patterns import level_for_char
 
 logger = logging.getLogger("flicker_engine")
 
+# How many sends in a row may fail before a light is written off. A bulb that
+# has been unplugged or removed from the bridge otherwise keeps its loop
+# forever, taking rate-limiter slots from lights that can still answer.
+GIVE_UP_AFTER_FAILURES = 40
+
 # Settings a running loop will pick up without being restarted.
 LIVE_FIELDS = ("sequence", "pattern_id", "hz", "min_bri", "max_bri",
                "hue", "sat", "transition_ms")
@@ -210,6 +215,17 @@ class FlickerEngine:
         if notify:
             self._on_change()
 
+    def _abandon(self, light_id: str):
+        """Drop a light that has stopped answering, without cancelling itself.
+
+        The snapshot is kept: the bulb may come back, and a manual revert
+        should still have something to put back.
+        """
+        self._tasks.pop(light_id, None)
+        if light_id in self._states:
+            self._states[light_id]["running"] = False
+        self._on_change()
+
     async def stop_all(self, restore: bool = True):
         for lid in list(self._tasks.keys()):
             await self.stop(lid, notify=False, restore=False)
@@ -220,6 +236,7 @@ class FlickerEngine:
     async def _run_light(self, light_id, client: HueClient):
         state = self._states[light_id]
         applied_color = None
+        failures = 0
 
         try:
             while True:
@@ -264,8 +281,21 @@ class FlickerEngine:
                     await client.set_light_state(light_id, **payload)
                     if "hue" in payload:
                         applied_color = wanted
+                    failures = 0
                 except Exception as e:
-                    logger.warning("Hue PUT failed for light %s: %s", light_id, e)
+                    failures += 1
+                    if failures == 1:
+                        # Only the first of a run: at 10Hz a dead light would
+                        # otherwise write a line to the log ten times a second.
+                        logger.warning("Hue PUT failed for light %s: %s", light_id, e)
+                    if failures >= GIVE_UP_AFTER_FAILURES:
+                        logger.error(
+                            "Giving up on light %s after %d failed sends in a row; "
+                            "freeing its share of the bridge budget",
+                            light_id, failures,
+                        )
+                        self._abandon(light_id)
+                        return
 
                 # Sleep to the next frame boundary rather than a fixed
                 # interval, so slow sends skip frames instead of dragging the

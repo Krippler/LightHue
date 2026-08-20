@@ -854,3 +854,73 @@ def test_colour_survives_being_shared(client):
         {"name": "Cold", "sequence": "zzaa", "hue": 44000, "sat": 200},
     ]}).json()["added"][0]
     assert (added["hue"], added["sat"]) == (44000, 200)
+
+
+def test_update_cannot_invert_the_window_with_one_bound(client, bridge):
+    # Regression: supplying only max_bri was validated against nothing, so it
+    # could land below the min already running and play the waveform upside
+    # down with a 200 OK.
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "sw_lantern"})
+    running = client.get("/api/status").json()["lights"]["1"]
+    assert (running["min_bri"], running["max_bri"]) == (60, 200)
+
+    r = client.post("/api/flicker/update", json={"light_ids": ["1"], "max_bri": 20})
+    assert r.status_code == 422
+    assert "60-200" in r.json()["detail"]
+
+    unchanged = client.get("/api/status").json()["lights"]["1"]
+    assert (unchanged["min_bri"], unchanged["max_bri"]) == (60, 200)
+    client.post("/api/flicker/stop", json={})
+
+
+def test_update_accepts_one_bound_that_still_fits(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "sw_lantern"})
+    assert client.post("/api/flicker/update",
+                       json={"light_ids": ["1"], "max_bri": 120}).status_code == 200
+    st = client.get("/api/status").json()["lights"]["1"]
+    assert (st["min_bri"], st["max_bri"]) == (60, 120)
+    client.post("/api/flicker/stop", json={})
+
+
+def test_update_rejects_the_whole_request_not_just_one_light(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "flicker_a"})
+    client.post("/api/flicker/start", json={"light_ids": ["2"], "pattern_id": "sw_lantern"})
+    # light 2 is running 60-200, so this is fine for light 1 and not for 2
+    r = client.post("/api/flicker/update", json={"light_ids": ["1", "2"], "max_bri": 30})
+    assert r.status_code == 422
+    st = client.get("/api/status").json()["lights"]
+    assert st["1"]["max_bri"] == 254 and st["2"]["max_bri"] == 200
+    client.post("/api/flicker/stop", json={})
+
+
+def test_changing_one_setting_leaves_the_other_alone(client, app_modules):
+    # Regression: the model defaulted restore_on_stop to True, so a caller
+    # sending only the rate silently switched restoring back on.
+    client.put("/api/settings", json={"max_commands_per_second": 10, "restore_on_stop": False})
+    assert client.get("/api/settings").json()["restore_on_stop"] is False
+
+    client.put("/api/settings", json={"max_commands_per_second": 5})
+    settings = client.get("/api/settings").json()
+    assert settings["max_commands_per_second"] == 5.0
+    assert settings["restore_on_stop"] is False
+    assert app_modules.engine.restore_on_stop is False
+
+    client.put("/api/settings", json={"restore_on_stop": True})
+    settings = client.get("/api/settings").json()
+    assert settings["restore_on_stop"] is True
+    assert settings["max_commands_per_second"] == 5.0     # rate survived
+
+
+def test_an_empty_settings_body_changes_nothing(client):
+    client.put("/api/settings", json={"max_commands_per_second": 7, "restore_on_stop": False})
+    r = client.put("/api/settings", json={})
+    assert r.status_code == 200
+    assert r.json() == {"max_commands_per_second": 7.0, "restore_on_stop": False}
+
+
+def test_settings_still_rejects_out_of_range_values(client):
+    assert client.put("/api/settings", json={"max_commands_per_second": 0}).status_code == 422
+    assert client.put("/api/settings", json={"max_commands_per_second": 99}).status_code == 422

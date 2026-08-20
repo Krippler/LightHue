@@ -556,7 +556,12 @@ function renderBars(container, sequence) {
 function drawWaveform(key, sequence) {
   const card = cardEls[key];
   if (!card) return;
-  renderBars(card.querySelector('.waveform'), sequence);
+  const waveform = card.querySelector('.waveform');
+  // Status arrives on every change anyone makes, and rebuilding identical bars
+  // each time threw the playhead away and blinked it off for a frame.
+  if (waveform.dataset.sequence === sequence) return;
+  waveform.dataset.sequence = sequence;
+  renderBars(waveform, sequence);
   delete lastFrame[key];   // bars were replaced; the old index means nothing
 }
 
