@@ -12,7 +12,9 @@ def test_index_and_unconfigured_state(client):
     assert client.get("/").status_code == 200
     assert client.get("/api/bridge").json() == {"bridge_ip": None, "configured": False}
     assert client.get("/api/lights").status_code == 400
-    assert client.get("/api/status").json() == {"lights": {}, "snapshots": {}}
+    status = client.get("/api/status").json()
+    assert status["lights"] == {} and status["snapshots"] == {}
+    assert isinstance(status["now"], float)
 
 
 def test_lights_are_listed_sorted_by_name(client, bridge):
@@ -158,7 +160,11 @@ def test_settings_rejects_out_of_range_rate(client):
 def test_websocket_pushes_status_on_connect(client, bridge):
     configure(client)
     with client.websocket_connect("/ws") as ws:
-        assert ws.receive_json() == {"type": "status", "lights": {}, "snapshots": {}}
+        msg = ws.receive_json()
+    assert msg["type"] == "status"
+    assert msg["lights"] == {} and msg["snapshots"] == {}
+    # the browser needs this to line its playhead up with the running loops
+    assert isinstance(msg["now"], float)
 
 
 # ---------- live update ----------
@@ -481,7 +487,8 @@ def test_export_returns_a_downloadable_pack(client):
     assert pack["format"] == "game-hue-flicker/patterns"
     assert sorted(p["name"] for p in pack["patterns"]) == ["Sputter", "Torchlight"]
     # ids are console-local bookkeeping and have no business in a shared file
-    assert all(set(p) == {"name", "sequence", "hz"} for p in pack["patterns"])
+    assert all(set(p) == {"name", "sequence", "hz", "min_bri", "max_bri", "transition_ms"}
+               for p in pack["patterns"])
 
 
 def test_export_with_nothing_to_share_is_404(client):
@@ -665,3 +672,102 @@ def test_patterns_endpoint_reports_every_rate(client):
     assert all("hz" in p for p in body["builtin"])
     rates = {p["id"]: p["hz"] for p in body["builtin"]}
     assert rates["sw_lantern"] == 4 and rates["unreal_flicker"] == 16
+
+
+def test_status_carries_the_clock_the_loops_run_on(client, bridge):
+    configure(client)
+    client.put("/api/settings", json={"max_commands_per_second": 10, "restore_on_stop": True})
+    client.post("/api/flicker/start",
+                json={"light_ids": ["1", "2", "3"], "pattern_id": "flicker_a", "hz": 10})
+    status = client.get("/api/status").json()
+    light = status["lights"]["1"]
+    # epoch and now share a clock, so a browser can work out which frame is due
+    assert light["epoch"] <= status["now"]
+    assert status["now"] - light["epoch"] < 60
+    # and the rate to advance it at is the one the light really gets
+    assert light["effective_hz"] < light["hz"]
+    client.post("/api/flicker/stop", json={})
+
+
+def test_starting_adopts_the_patterns_whole_framing(client, bridge):
+    configure(client)
+    # The paper lantern is written mellow: 4Hz, a narrow window, soft steps.
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "sw_lantern"})
+    st = client.get("/api/status").json()["lights"]["1"]
+    assert (st["hz"], st["min_bri"], st["max_bri"], st["transition_ms"]) == (4, 60, 200, 300)
+    client.post("/api/flicker/stop", json={})
+
+
+def test_engine_styles_keep_the_full_range_and_hard_steps(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "flicker_a"})
+    st = client.get("/api/status").json()["lights"]["1"]
+    assert (st["min_bri"], st["max_bri"], st["transition_ms"]) == (1, 254, 0)
+    client.post("/api/flicker/stop", json={})
+
+
+def test_explicit_framing_still_overrides_the_pattern(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start", json={
+        "light_ids": ["1"], "pattern_id": "sw_lantern",
+        "min_bri": 10, "max_bri": 100, "transition_ms": 0,
+    })
+    st = client.get("/api/status").json()["lights"]["1"]
+    assert (st["min_bri"], st["max_bri"], st["transition_ms"]) == (10, 100, 0)
+    assert st["hz"] == 4          # unspecified, so still the pattern's
+    client.post("/api/flicker/stop", json={})
+
+
+def test_a_supplied_bound_that_crosses_the_patterns_own_is_refused(client, bridge):
+    configure(client)
+    # sw_lantern tops out at 200; asking for a floor above that is incoherent
+    r = client.post("/api/flicker/start", json={
+        "light_ids": ["1"], "pattern_id": "sw_lantern", "min_bri": 240,
+    })
+    assert r.status_code == 422
+    assert "min_bri" in r.json()["detail"]
+
+
+def test_switching_pattern_live_adopts_the_new_framing(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "flicker_a"})
+    client.post("/api/flicker/update", json={"light_ids": ["1"], "pattern_id": "sw_lantern"})
+    st = client.get("/api/status").json()["lights"]["1"]
+    assert (st["hz"], st["min_bri"], st["max_bri"], st["transition_ms"]) == (4, 60, 200, 300)
+    client.post("/api/flicker/stop", json={})
+
+
+def test_custom_patterns_carry_their_whole_framing(client, bridge):
+    configure(client)
+    made = client.post("/api/patterns", json={
+        "name": "Soft One", "sequence": "azaz",
+        "hz": 6, "min_bri": 30, "max_bri": 180, "transition_ms": 250,
+    }).json()
+    assert (made["hz"], made["min_bri"], made["max_bri"], made["transition_ms"]) == (6, 30, 180, 250)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": made["id"]})
+    st = client.get("/api/status").json()["lights"]["1"]
+    assert (st["min_bri"], st["max_bri"], st["transition_ms"]) == (30, 180, 250)
+    client.post("/api/flicker/stop", json={})
+
+
+def test_a_custom_pattern_cannot_be_saved_with_an_inverted_window(client):
+    r = client.post("/api/patterns", json={
+        "name": "Backwards", "sequence": "azaz", "min_bri": 200, "max_bri": 50,
+    })
+    assert r.status_code == 422
+
+
+def test_framing_survives_being_shared(client):
+    client.post("/api/patterns", json={
+        "name": "Soft One", "sequence": "azaz",
+        "hz": 6, "min_bri": 30, "max_bri": 180, "transition_ms": 250,
+    })
+    pack = client.get("/api/patterns/export").json()
+    entry = pack["patterns"][0]
+    assert (entry["hz"], entry["min_bri"], entry["max_bri"], entry["transition_ms"]) \
+        == (6, 30, 180, 250)
+    r = client.post("/api/patterns/import", json={"patterns": [
+        {"name": "From Afar", "sequence": "zzaa", "min_bri": 90, "transition_ms": 400},
+    ]})
+    added = r.json()["added"][0]
+    assert (added["min_bri"], added["max_bri"], added["transition_ms"]) == (90, 254, 400)

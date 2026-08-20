@@ -162,9 +162,10 @@
         <div class="panel-head">
           <h2>Custom Lightstyles</h2>
           <p class="sub">One letter per frame, <em>a</em> darkest through <em>z</em> brightest &mdash; the same
-          encoding Quake used, and every built-in pattern here is written in it. The speed
-          is saved with the pattern, so picking it later brings its timing along. Saved
-          patterns show up in every light&rsquo;s pattern list.</p>
+          encoding Quake used, and every built-in pattern here is written in it. Speed,
+          brightness range and transition are all saved with the pattern, so picking it
+          later brings its whole feel along. Saved patterns show up in every
+          light&rsquo;s pattern list.</p>
         </div>
 
         <div class="custom-form">
@@ -177,11 +178,26 @@
             <input id="custom-seq" type="text" placeholder="mmnmmommommnonmmonqnmmo"
                    spellcheck="false" autocomplete="off" />
           </label>
-          <label class="field custom-hz-field">
+          <button id="btn-save-pattern" class="btn btn-accent">Save pattern</button>
+        </div>
+
+        <div class="custom-form custom-framing">
+          <label class="field">
             <span>Speed <em id="custom-hz-value">10</em> Hz</span>
             <input id="custom-hz" type="range" min="1" max="20" step="1" value="10" />
           </label>
-          <button id="btn-save-pattern" class="btn btn-accent">Save pattern</button>
+          <label class="field">
+            <span>Min brightness <em id="custom-minbri-value">1</em></span>
+            <input id="custom-minbri" type="range" min="1" max="254" step="1" value="1" />
+          </label>
+          <label class="field">
+            <span>Max brightness <em id="custom-maxbri-value">254</em></span>
+            <input id="custom-maxbri" type="range" min="1" max="254" step="1" value="254" />
+          </label>
+          <label class="field">
+            <span>Transition <em id="custom-trans-value">0</em> ms</span>
+            <input id="custom-trans" type="range" min="0" max="1000" step="100" value="0" />
+          </label>
         </div>
 
         <div id="custom-preview" class="waveform custom-preview" aria-hidden="true"></div>
@@ -247,7 +263,7 @@
           </label>
           <label class="field">
             <span>Transition <em class="trans-value">0</em> ms</span>
-            <input type="range" class="trans-input" min="0" max="1000" step="50" value="0" />
+            <input type="range" class="trans-input" min="0" max="1000" step="100" value="0" />
           </label>
         </div>
 

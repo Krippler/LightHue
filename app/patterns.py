@@ -121,7 +121,7 @@ BUILTIN_PATTERNS = [
      "sequence": "zaaaaaaaaaa",
      "origin": "inspired"},
     {"id": "doom_glow", "game": "DOOM",
-     "name": "DOOM — Glow", "hz": 12,
+     "name": "DOOM — Glow", "min_bri": 1, "max_bri": 254, "transition_ms": 100, "hz": 12,
      "sequence": "acegikmoqsuwywusqomkigeca",
      "origin": "inspired"},
     {"id": "doom_fire_flicker", "game": "DOOM",
@@ -143,13 +143,13 @@ BUILTIN_PATTERNS = [
      "sequence": "yzxwyzvwyxzwyv",
      "origin": "inspired"},
     {"id": "marathon_pulse", "game": "Marathon",
-     "name": "Marathon — Smooth Phase", "hz": 6,
+     "name": "Marathon — Smooth Phase", "min_bri": 1, "max_bri": 254, "transition_ms": 200, "hz": 6,
      "sequence": "nprtvxzvtrpnlj",
      "origin": "inspired"},
 
     # ---- Heretic ----
     {"id": "heretic_wall_torch", "game": "Heretic",
-     "name": "Heretic — Wall Torch", "hz": 10,
+     "name": "Heretic — Wall Torch", "min_bri": 40, "max_bri": 210, "transition_ms": 100, "hz": 10,
      "sequence": "stutsrstutsvutsrstutvuts",
      "origin": "inspired"},
     {"id": "heretic_brazier", "game": "Heretic",
@@ -157,7 +157,7 @@ BUILTIN_PATTERNS = [
      "sequence": "rqstrqpqrstusrqpqrstsrq",
      "origin": "inspired"},
     {"id": "heretic_enchanted", "game": "Heretic",
-     "name": "Heretic — Enchanted Glow", "hz": 6,
+     "name": "Heretic — Enchanted Glow", "min_bri": 50, "max_bri": 230, "transition_ms": 200, "hz": 6,
      "sequence": "klmnopqrstuvwxyvutsrqponmlk",
      "origin": "inspired"},
 
@@ -177,11 +177,11 @@ BUILTIN_PATTERNS = [
 
     # ---- Hexen ----
     {"id": "hexen_sconce", "game": "Hexen",
-     "name": "Hexen — Guttering Sconce", "hz": 9,
+     "name": "Hexen — Guttering Sconce", "min_bri": 40, "max_bri": 200, "transition_ms": 100, "hz": 9,
      "sequence": "pqrsrqpnopqrqpoprqponmop",
      "origin": "inspired"},
     {"id": "hexen_mana_pulse", "game": "Hexen",
-     "name": "Hexen — Slow Mana Pulse", "hz": 5,
+     "name": "Hexen — Slow Mana Pulse", "min_bri": 20, "max_bri": 230, "transition_ms": 200, "hz": 5,
      "sequence": "ikmoqsuwyzyxwusqomkigeca",
      "origin": "inspired"},
     {"id": "hexen_storm", "game": "Hexen",
@@ -191,11 +191,11 @@ BUILTIN_PATTERNS = [
 
     # ---- Rise of the Triad ----
     {"id": "rott_torch", "game": "Rise of the Triad",
-     "name": "Rise of the Triad — Flickering Torch", "hz": 10,
+     "name": "Rise of the Triad — Flickering Torch", "min_bri": 45, "max_bri": 205, "transition_ms": 100, "hz": 10,
      "sequence": "tuvutsrtuvwvutstuv",
      "origin": "inspired"},
     {"id": "rott_ambush", "game": "Rise of the Triad",
-     "name": "Rise of the Triad — Ambush Pulse", "hz": 7,
+     "name": "Rise of the Triad — Ambush Pulse", "min_bri": 1, "max_bri": 254, "transition_ms": 100, "hz": 7,
      "sequence": "hjlnprtvxvtrpnljh",
      "origin": "inspired"},
     {"id": "rott_trap", "game": "Rise of the Triad",
@@ -213,7 +213,7 @@ BUILTIN_PATTERNS = [
      "sequence": "zzzaaazzzaaaaaa",
      "origin": "inspired"},
     {"id": "duke_pulse", "game": "Duke Nukem 3D",
-     "name": "Duke Nukem 3D — Pulsating Sector", "hz": 8,
+     "name": "Duke Nukem 3D — Pulsating Sector", "min_bri": 20, "max_bri": 240, "transition_ms": 100, "hz": 8,
      "sequence": "hjlnprtvxzxvtrpnljh",
      "origin": "inspired"},
     {"id": "duke_broken_neon", "game": "Duke Nukem 3D",
@@ -223,11 +223,11 @@ BUILTIN_PATTERNS = [
 
     # ---- Blood ----
     {"id": "blood_torch", "game": "Blood",
-     "name": "Blood — Guttering Torch", "hz": 10,
+     "name": "Blood — Guttering Torch", "min_bri": 40, "max_bri": 215, "transition_ms": 100, "hz": 10,
      "sequence": "rstusrtsuvtsrqstuvutsrst",
      "origin": "inspired"},
     {"id": "blood_candle", "game": "Blood",
-     "name": "Blood — Gothic Candle", "hz": 8,
+     "name": "Blood — Gothic Candle", "min_bri": 40, "max_bri": 180, "transition_ms": 100, "hz": 8,
      "sequence": "nmlmnonmlkjklmnonmlmnmlk",
      "origin": "inspired"},
     {"id": "blood_lightning", "game": "Blood",
@@ -235,11 +235,11 @@ BUILTIN_PATTERNS = [
      "sequence": "aaaaaaaaaazzaazaaaaaaaaaaaaaaaazzzaaaaaa",
      "origin": "inspired"},
     {"id": "blood_throb", "game": "Blood",
-     "name": "Blood — Slow Throb", "hz": 5,
+     "name": "Blood — Slow Throb", "min_bri": 30, "max_bri": 220, "transition_ms": 200, "hz": 5,
      "sequence": "fhjlnprtvxvtrpnljhf",
      "origin": "inspired"},
     {"id": "blood_dying_flame", "game": "Blood",
-     "name": "Blood — Dying Flame", "hz": 6,
+     "name": "Blood — Dying Flame", "min_bri": 1, "max_bri": 230, "transition_ms": 200, "hz": 6,
      "sequence": "utsrqponmlkjihgfedcba",
      "origin": "inspired"},
 
@@ -253,7 +253,7 @@ BUILTIN_PATTERNS = [
      "sequence": "zzazzzazazzzzzzazazzzzazzz",
      "origin": "inspired"},
     {"id": "sw_lantern", "game": "Shadow Warrior",
-     "name": "Shadow Warrior — Paper Lantern", "hz": 4,
+     "name": "Shadow Warrior — Paper Lantern", "min_bri": 60, "max_bri": 200, "transition_ms": 300, "hz": 4,
      "sequence": "qrstutsrqpopqrstutsrq",
      "origin": "inspired"},
     {"id": "sw_sputter", "game": "Shadow Warrior",
@@ -263,11 +263,11 @@ BUILTIN_PATTERNS = [
 
     # ---- Unreal ----
     {"id": "unreal_pulse", "game": "Unreal", "shared_with": UE1_LINEAGE,
-     "name": "Unreal — LT_Pulse", "hz": 8,
+     "name": "Unreal — LT_Pulse", "min_bri": 1, "max_bri": 254, "transition_ms": 100, "hz": 8,
      "sequence": "moqsuwyzywusqomkigecaacegik",
      "origin": "inspired"},
     {"id": "unreal_subtle_pulse", "game": "Unreal", "shared_with": UE1_LINEAGE,
-     "name": "Unreal — LT_SubtlePulse", "hz": 6,
+     "name": "Unreal — LT_SubtlePulse", "min_bri": 120, "max_bri": 220, "transition_ms": 200, "hz": 6,
      "sequence": "pqrstuvwxyxwvutsrqp",
      "origin": "inspired"},
     {"id": "unreal_blink", "game": "Unreal", "shared_with": UE1_LINEAGE,
@@ -285,11 +285,11 @@ BUILTIN_PATTERNS = [
 
     # ---- Thief ----
     {"id": "thief_torch", "game": "Thief",
-     "name": "Thief — Wall Torch", "hz": 9,
+     "name": "Thief — Wall Torch", "min_bri": 45, "max_bri": 205, "transition_ms": 100, "hz": 9,
      "sequence": "rstusrtusrqstursqtus",
      "origin": "inspired"},
     {"id": "thief_gaslight", "game": "Thief",
-     "name": "Thief — Gaslight", "hz": 7,
+     "name": "Thief — Gaslight", "min_bri": 70, "max_bri": 190, "transition_ms": 100, "hz": 7,
      "sequence": "opqrqponoqrsrqpoqrs",
      "origin": "inspired"},
     {"id": "thief_electric", "game": "Thief",
@@ -335,7 +335,7 @@ BUILTIN_PATTERNS = [
      "sequence": "vxzxvutvxzyxvuvxzxv",
      "origin": "inspired"},
     {"id": "quake4_medlab", "game": "Quake 4",
-     "name": "Quake 4 — Med-Lab Throb", "hz": 6,
+     "name": "Quake 4 — Med-Lab Throb", "min_bri": 60, "max_bri": 200, "transition_ms": 200, "hz": 6,
      "sequence": "lnprtvxwvtrpnlkjlnp",
      "origin": "inspired"},
 ]
@@ -359,7 +359,35 @@ def _menu_games() -> list:
 GAMES = _menu_games()
 
 
+# A pattern is more than its letters: the speed it runs at, how far the bulb
+# swings, and how hard the steps are all belong to the effect. Anything a
+# pattern doesn't state falls back to these.
 DEFAULT_HZ = 10.0
+DEFAULT_MIN_BRI = 1
+DEFAULT_MAX_BRI = 254
+DEFAULT_TRANSITION_MS = 0
+# The bridge takes transitions in 100ms units, so that is the real resolution;
+# anything finer is truncated on the way through and only misleads the UI.
+TRANSITION_STEP_MS = 100
+
+FRAMING_FIELDS = ("hz", "min_bri", "max_bri", "transition_ms")
+_FRAMING_DEFAULTS = {
+    "hz": DEFAULT_HZ,
+    "min_bri": DEFAULT_MIN_BRI,
+    "max_bri": DEFAULT_MAX_BRI,
+    "transition_ms": DEFAULT_TRANSITION_MS,
+}
+
+# Filled in here rather than repeated on every entry above, so the table stays
+# about the patterns and every consumer can read the fields unconditionally.
+for _pattern in BUILTIN_PATTERNS:
+    for _field, _default in _FRAMING_DEFAULTS.items():
+        _pattern.setdefault(_field, _default)
+
+
+def framing_of(pattern: dict) -> dict:
+    """The speed and brightness framing a pattern was written for."""
+    return {f: pattern.get(f, _FRAMING_DEFAULTS[f]) for f in FRAMING_FIELDS}
 
 
 def patterns_for(game: str) -> list:

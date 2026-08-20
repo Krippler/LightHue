@@ -15,9 +15,10 @@ being involved at all.
       ]
     }
 
-Everything except `patterns` is optional, including each pattern's `hz` —
-the speed it was written for, which defaults to 10 the way Quake's own
-lightstyles run. Parsing is deliberately forgiving
+Everything except `patterns` is optional. Each pattern may state the framing
+it was written for — `hz`, `min_bri`, `max_bri`, `transition_ms` — and anything
+it leaves out falls back to Quake's own defaults: 10 frames a second across the
+bulb's full range with no smoothing between steps. Parsing is deliberately forgiving
 about what it accepts and strict about what it produces: unknown keys are
 ignored, whitespace and case in sequences are normalised, and anything that
 would not be a valid pattern is rejected by name so the caller can say which
@@ -33,6 +34,10 @@ MAX_PATTERNS = 200
 MIN_HZ = 0.5
 MAX_HZ = 20.0
 DEFAULT_HZ = 10.0
+DEFAULT_MIN_BRI = 1
+DEFAULT_MAX_BRI = 254
+DEFAULT_TRANSITION_MS = 0
+MAX_TRANSITION_MS = 60000
 MAX_SEQUENCE = 1000
 MAX_NAME = 60
 ALPHABET = set("abcdefghijklmnopqrstuvwxyz")
@@ -76,6 +81,17 @@ def normalise_hz(raw, default: float = DEFAULT_HZ) -> float:
     return round(hz, 2)
 
 
+def normalise_int(raw, default: int, low: int, high: int, field: str) -> int:
+    if raw is None:
+        return default
+    if isinstance(raw, bool) or not isinstance(raw, int | float) or raw != int(raw):
+        raise PackError(f"{field} must be a whole number")
+    value = int(raw)
+    if not (low <= value <= high):
+        raise PackError(f"{field} must be between {low} and {high}")
+    return value
+
+
 def build(patterns, name: str | None = None, author: str | None = None) -> dict:
     """Assemble a pack for export."""
     pack = {
@@ -84,7 +100,10 @@ def build(patterns, name: str | None = None, author: str | None = None) -> dict:
         "exported_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
         "patterns": [
             {"name": p["name"], "sequence": p["sequence"],
-             "hz": p.get("hz", DEFAULT_HZ)}
+             "hz": p.get("hz", DEFAULT_HZ),
+             "min_bri": p.get("min_bri", DEFAULT_MIN_BRI),
+             "max_bri": p.get("max_bri", DEFAULT_MAX_BRI),
+             "transition_ms": p.get("transition_ms", DEFAULT_TRANSITION_MS)}
             for p in patterns
         ],
     }
@@ -128,11 +147,19 @@ def parse(payload) -> list[dict]:
             name = normalise_name(entry.get("name"))
             sequence = normalise_sequence(entry.get("sequence"))
             hz = normalise_hz(entry.get("hz"))
+            min_bri = normalise_int(entry.get("min_bri"), DEFAULT_MIN_BRI, 1, 254, "min_bri")
+            max_bri = normalise_int(entry.get("max_bri"), DEFAULT_MAX_BRI, 1, 254, "max_bri")
+            transition_ms = normalise_int(entry.get("transition_ms"), DEFAULT_TRANSITION_MS,
+                                          0, MAX_TRANSITION_MS, "transition_ms")
+            if min_bri > max_bri:
+                raise PackError("min_bri must be less than or equal to max_bri")
         except PackError as e:
             raw_name = entry.get("name")
             label = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else f"pattern {i}"
             raise PackError(f"{label}: {e}") from e
-        out.append({"name": name, "sequence": sequence, "hz": hz})
+        out.append({"name": name, "sequence": sequence, "hz": hz,
+                    "min_bri": min_bri, "max_bri": max_bri,
+                    "transition_ms": transition_ms})
     return out
 
 

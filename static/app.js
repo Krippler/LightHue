@@ -7,7 +7,6 @@ let GROUPS = [];
 let STATUS = {}; // light_id -> settings from server
 let cardEls = {}; // card key -> DOM element
 let cardEntities = {}; // card key -> { kind, id, name, lightIds }
-let waveformTimers = {}; // card key -> interval id for local playhead animation
 let selected = new Set(); // light ids ticked for a new group
 let SNAPSHOTS = {}; // light_id -> pre-flicker bulb state the server can restore
 
@@ -130,6 +129,7 @@ async function loadPatternsAndLights() {
   PATTERNS = patterns;
   STATUS = statusRes.lights;
   SNAPSHOTS = statusRes.snapshots || {};
+  noteServerClock(statusRes.now);
   GROUPS = groupsRes.groups;
 
   // Only the light list actually needs the bridge. If it's unreachable, say so
@@ -160,11 +160,18 @@ function sequenceFor(patternId) {
   return p ? p.sequence : 'm';
 }
 
-// Speed is part of a pattern, not a separate preference: a sputtering bulb and
-// a slow gothic throb aren't the same shape played faster or slower.
-function hzFor(patternId) {
-  const p = allPatternOptions().find(p => p.id === patternId);
-  return p && p.hz ? p.hz : 10;
+// A pattern isn't just its letters: the speed, how far the bulb swings and how
+// hard the steps are all belong to the effect. A sputtering bulb and a slow
+// gothic throb aren't the same shape played faster or slower.
+const FRAMING_DEFAULTS = { hz: 10, min_bri: 1, max_bri: 254, transition_ms: 0 };
+
+function framingFor(patternId) {
+  const p = allPatternOptions().find(p => p.id === patternId) || {};
+  const framing = {};
+  for (const [field, fallback] of Object.entries(FRAMING_DEFAULTS)) {
+    framing[field] = p[field] === undefined || p[field] === null ? fallback : p[field];
+  }
+  return framing;
 }
 
 // A card drives one light or a whole group; everything below treats them the
@@ -336,7 +343,6 @@ function buildCard(entity) {
 
   hzInput.addEventListener('input', () => {
     hzValue.textContent = hzInput.value;
-    restartWaveform(entity.key);
     pushLive(entity);
   });
   transInput.addEventListener('input', () => {
@@ -359,14 +365,20 @@ function buildCard(entity) {
     }
     pushLive(entity);
   });
-  const applyPatternRate = () => {
-    hzInput.value = hzFor(select.value);
-    hzValue.textContent = hzInput.value;
+  const applyPatternFraming = () => {
+    const framing = framingFor(select.value);
+    const set = (input, label, value) => {
+      input.value = value;
+      label.textContent = value;
+    };
+    set(hzInput, hzValue, framing.hz);
+    set(minBriInput, minBriValue, framing.min_bri);
+    set(maxBriInput, maxBriValue, framing.max_bri);
+    set(transInput, transValue, framing.transition_ms);
   };
   select.addEventListener('change', () => {
-    applyPatternRate();
+    applyPatternFraming();
     drawWaveform(entity.key, sequenceFor(select.value));
-    restartWaveform(entity.key);
     pushLive(entity);
   });
 
@@ -393,7 +405,7 @@ function buildCard(entity) {
     await api('/api/flicker/stop', { method: 'POST', body: JSON.stringify({ light_ids: entity.lightIds }) });
   });
 
-  applyPatternRate();
+  applyPatternFraming();
   cardEls[entity.key] = card;
   cardEntities[entity.key] = entity;
   drawWaveform(entity.key, sequenceFor(select.value));
@@ -506,43 +518,82 @@ function renderBars(container, sequence) {
   }
 }
 
-function drawWaveform(lightId, sequence) {
-  const card = cardEls[lightId];
+function drawWaveform(key, sequence) {
+  const card = cardEls[key];
   if (!card) return;
   renderBars(card.querySelector('.waveform'), sequence);
+  delete lastFrame[key];   // bars were replaced; the old index means nothing
 }
 
-function restartWaveform(lightId) {
-  const card = cardEls[lightId];
-  if (!card) return;
-  const running = card.classList.contains('is-running');
-  stopWaveformAnimation(lightId);
-  if (running) startWaveformAnimation(lightId);
+// The playhead is driven off the server's clock, not a local timer: the engine
+// caps each light to its share of the bridge budget, so what you asked for and
+// what the bulb actually does are often different numbers. Animating at the
+// slider value made the bar run visibly faster than the light.
+
+let playheadTimer = null;
+let serverClockOffset = 0;   // server monotonic seconds minus our own
+const lastFrame = {};        // card key -> frame currently lit, to avoid churn
+
+function clientSeconds() {
+  return performance.now() / 1000;
 }
 
-function startWaveformAnimation(lightId) {
-  const card = cardEls[lightId];
-  if (!card) return;
-  const hzInput = card.querySelector('.hz-input');
-  const bars = $$('.bar', card.querySelector('.waveform'));
-  if (!bars.length) return;
-  let idx = 0;
-  stopWaveformAnimation(lightId);
-  const hz = Number(hzInput.value) || 10;
-  waveformTimers[lightId] = setInterval(() => {
-    bars.forEach(b => b.classList.remove('active'));
-    bars[idx % bars.length].classList.add('active');
-    idx++;
-  }, 1000 / hz);
+function noteServerClock(now) {
+  if (typeof now === 'number') serverClockOffset = now - clientSeconds();
 }
 
-function stopWaveformAnimation(lightId) {
-  if (waveformTimers[lightId]) {
-    clearInterval(waveformTimers[lightId]);
-    delete waveformTimers[lightId];
+function serverSeconds() {
+  return clientSeconds() + serverClockOffset;
+}
+
+function clearPlayhead(card, key) {
+  delete lastFrame[key];
+  card.querySelectorAll('.waveform .bar.active').forEach(b => b.classList.remove('active'));
+}
+
+function updatePlayheads() {
+  let anyRunning = false;
+
+  Object.entries(cardEls).forEach(([key, card]) => {
+    const entity = cardEntities[key];
+    if (!entity) return;
+    const { running, partial, settings } = entityState(entity);
+    const bars = card.querySelectorAll('.waveform .bar');
+    if (!(running || partial) || !settings || !bars.length) {
+      clearPlayhead(card, key);
+      return;
+    }
+    anyRunning = true;
+
+    // effective_hz is what the light is really being sent at; hz is what was
+    // asked for. Prefer the truth.
+    const hz = settings.effective_hz || settings.hz || 10;
+    const epoch = settings.epoch;
+    const elapsed = epoch === undefined ? 0 : serverSeconds() - epoch;
+    const frame = Math.floor(Math.max(0, elapsed) * hz);
+    const idx = ((frame % bars.length) + bars.length) % bars.length;
+    if (lastFrame[key] === idx) return;
+
+    if (lastFrame[key] !== undefined && bars[lastFrame[key]]) {
+      bars[lastFrame[key]].classList.remove('active');
+    } else {
+      bars.forEach(b => b.classList.remove('active'));
+    }
+    bars[idx].classList.add('active');
+    lastFrame[key] = idx;
+  });
+
+  if (!anyRunning) {
+    clearInterval(playheadTimer);
+    playheadTimer = null;
   }
-  const card = cardEls[lightId];
-  if (card) $$('.bar', card.querySelector('.waveform')).forEach(b => b.classList.remove('active'));
+}
+
+// One loop for every card. It recomputes position from the clock each tick, so
+// a rate change or a light joining the budget is picked up without restarting
+// anything.
+function ensurePlayheadLoop() {
+  if (!playheadTimer) playheadTimer = setInterval(updatePlayheads, 40);
 }
 
 // ---------- Custom lightstyles ----------
@@ -560,8 +611,23 @@ function setCustomStatus(text, kind = '') {
   customStatus.className = `status-line ${kind}`.trim();
 }
 
-const customHz = $('#custom-hz');
-customHz.addEventListener('input', () => { $('#custom-hz-value').textContent = customHz.value; });
+[['#custom-hz', '#custom-hz-value'],
+ ['#custom-minbri', '#custom-minbri-value'],
+ ['#custom-maxbri', '#custom-maxbri-value'],
+ ['#custom-trans', '#custom-trans-value']].forEach(([input, label]) => {
+  const el = $(input);
+  el.addEventListener('input', () => {
+    $(label).textContent = el.value;
+    // keep the window coherent while it's being dragged
+    const lo = $('#custom-minbri'), hi = $('#custom-maxbri');
+    if (Number(hi.value) < Number(lo.value)) {
+      const follower = input === '#custom-minbri' ? hi : lo;
+      follower.value = el.value;
+      $(input === '#custom-minbri' ? '#custom-maxbri-value' : '#custom-minbri-value')
+        .textContent = el.value;
+    }
+  });
+});
 
 customSeq.addEventListener('input', () => {
   const seq = normalizeSequence(customSeq.value);
@@ -571,17 +637,25 @@ customSeq.addEventListener('input', () => {
 $('#btn-save-pattern').addEventListener('click', async () => {
   const name = customName.value.trim();
   const sequence = normalizeSequence(customSeq.value);
-  const hz = Number($('#custom-hz').value);
+  const framing = {
+    hz: Number($('#custom-hz').value),
+    min_bri: Number($('#custom-minbri').value),
+    max_bri: Number($('#custom-maxbri').value),
+    transition_ms: Number($('#custom-trans').value),
+  };
   if (!name) return setCustomStatus('Give the pattern a name.', 'err');
   if (!sequence) return setCustomStatus('Write a sequence first.', 'err');
   if (!/^[a-z]+$/.test(sequence)) return setCustomStatus('Sequence must only contain letters a-z.', 'err');
   try {
-    await api('/api/patterns', { method: 'POST', body: JSON.stringify({ name, sequence, hz }) });
+    await api('/api/patterns', {
+      method: 'POST',
+      body: JSON.stringify({ name, sequence, ...framing }),
+    });
     customName.value = '';
     customSeq.value = '';
     renderBars($('#custom-preview'), '');
-    const seconds = (sequence.length / hz).toFixed(1);
-    setCustomStatus(`Saved "${name}" at ${hz} Hz — a ${seconds}s cycle.`, 'ok');
+    const seconds = (sequence.length / framing.hz).toFixed(1);
+    setCustomStatus(`Saved "${name}" at ${framing.hz} Hz — a ${seconds}s cycle.`, 'ok');
     await loadPatternsAndLights();
   } catch (e) {
     setCustomStatus(e.message, 'err');
@@ -607,7 +681,9 @@ function renderCustomList() {
 
     const seqEl = document.createElement('span');
     seqEl.className = 'chip-seq';
-    seqEl.textContent = `${p.sequence} · ${p.hz || 10} Hz`;
+    const f = framingFor(p.id);
+    const trans = f.transition_ms ? ` · ${f.transition_ms}ms` : '';
+    seqEl.textContent = `${p.sequence} · ${f.hz} Hz · ${f.min_bri}-${f.max_bri}${trans}`;
 
     const del = document.createElement('button');
     del.className = 'chip-del';
@@ -754,7 +830,7 @@ function applyStatus() {
     const rateNote = card.querySelector('.rate-note');
     if (active && settings) {
       if (!recentlyTouched(key)) syncControls(card, key, settings);
-      startWaveformAnimation(key);
+      ensurePlayheadLoop();
       // The bridge budget is shared, so what you asked for and what the light
       // actually gets can differ once several are running.
       const eff = settings.effective_hz;
@@ -762,7 +838,7 @@ function applyStatus() {
       rateNote.classList.toggle('hidden', !capped);
       if (capped) rateNote.textContent = `bridge budget: running at ${eff} Hz`;
     } else {
-      stopWaveformAnimation(key);
+      clearPlayhead(card, key);
       rateNote.classList.add('hidden');
     }
   });
@@ -863,6 +939,7 @@ function connectWs() {
     if (msg.type === 'status') {
       STATUS = msg.lights;
       SNAPSHOTS = msg.snapshots || {};
+      noteServerClock(msg.now);
       applyStatus();
     }
   });

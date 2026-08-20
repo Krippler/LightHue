@@ -2,10 +2,24 @@ import pytest
 
 from app import packs
 
+# The framing a pattern gets when a pack doesn't state one. Tests compare
+# against this rather than hardcoding the fields, so adding another one to a
+# pattern doesn't mean rewriting every assertion here.
+DEFAULT_FRAMING = {
+    "hz": packs.DEFAULT_HZ,
+    "min_bri": packs.DEFAULT_MIN_BRI,
+    "max_bri": packs.DEFAULT_MAX_BRI,
+    "transition_ms": packs.DEFAULT_TRANSITION_MS,
+}
+
+
+def framed(name, sequence, **overrides):
+    return {"name": name, "sequence": sequence, **DEFAULT_FRAMING, **overrides}
+
 
 def test_round_trip_through_build_and_parse():
-    original = [{"name": "Torchlight", "sequence": "mmnmmo", "hz": 10.0},
-                {"name": "Sputter", "sequence": "azaz", "hz": 15.0}]
+    original = [framed("Torchlight", "mmnmmo"),
+                framed("Sputter", "azaz", hz=15.0, min_bri=40, max_bri=220, transition_ms=90)]
     pack = packs.build(original, name="My pack", author="someone")
     assert pack["format"] == packs.FORMAT
     assert pack["name"] == "My pack" and pack["author"] == "someone"
@@ -20,13 +34,13 @@ def test_build_omits_optional_fields_when_absent():
 
 def test_parse_normalises_names_and_sequences():
     got = packs.parse({"patterns": [{"name": "  Torch   light ", "sequence": " MM Az\n"}]})
-    assert got == [{"name": "Torch light", "sequence": "mmaz", "hz": 10.0}]
+    assert got == [framed("Torch light", "mmaz")]
 
 
 def test_parse_accepts_a_hand_written_pack_without_boilerplate():
     # Someone should be able to write one in a text editor.
     assert packs.parse({"patterns": [{"name": "Hand made", "sequence": "abc"}]}) == [
-        {"name": "Hand made", "sequence": "abc", "hz": 10.0}
+        framed("Hand made", "abc")
     ]
 
 
@@ -35,7 +49,7 @@ def test_parse_ignores_unknown_keys():
         "format": packs.FORMAT, "version": 1, "notes": "hello",
         "patterns": [{"name": "x", "sequence": "az", "colour": "red"}],
     })
-    assert got == [{"name": "x", "sequence": "az", "hz": 10.0}]
+    assert got == [framed("x", "az")]
 
 
 @pytest.mark.parametrize("payload, message", [
@@ -113,3 +127,31 @@ def test_bad_hz_is_rejected(hz):
 @pytest.mark.parametrize("hz", [0.5, 1, 10, 12.5, 20])
 def test_sensible_hz_is_accepted(hz):
     assert packs.parse({"patterns": [{"name": "x", "sequence": "az", "hz": hz}]})[0]["hz"] == hz
+
+
+def test_framing_round_trips_through_a_pack():
+    pack = packs.build([{"name": "Soft", "sequence": "azaz",
+                         "hz": 6, "min_bri": 30, "max_bri": 180, "transition_ms": 250}])
+    assert packs.parse(pack) == [framed("Soft", "azaz", hz=6.0, min_bri=30,
+                                        max_bri=180, transition_ms=250)]
+
+
+def test_a_pack_may_state_only_some_framing():
+    got = packs.parse({"patterns": [{"name": "x", "sequence": "az", "min_bri": 50}]})
+    assert got == [framed("x", "az", min_bri=50)]
+
+
+@pytest.mark.parametrize("field, value", [
+    ("min_bri", 0), ("min_bri", 255), ("max_bri", 0), ("max_bri", 300),
+    ("transition_ms", -1), ("transition_ms", 99999),
+    ("min_bri", "bright"), ("max_bri", True), ("transition_ms", 12.5),
+])
+def test_bad_framing_is_rejected_by_field(field, value):
+    with pytest.raises(packs.PackError, match=field):
+        packs.parse({"patterns": [{"name": "x", "sequence": "az", field: value}]})
+
+
+def test_an_inverted_window_is_rejected():
+    with pytest.raises(packs.PackError, match="min_bri"):
+        packs.parse({"patterns": [{"name": "x", "sequence": "az",
+                                   "min_bri": 200, "max_bri": 50}]})

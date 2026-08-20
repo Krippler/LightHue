@@ -18,7 +18,8 @@ web UI that multiple people on your network can use at once.
 - Broadcasts live state over a WebSocket, so if two people have the page
   open, they see the same running/stopped state and controls in real time.
 - Lets you write and save custom a–z lightstyle strings as reusable
-  patterns, with a live waveform preview and their own speed.
+  patterns, with a live waveform preview and their own speed, brightness
+  range and transition.
 - Exports your patterns to a small JSON file you can share, and imports
   files other people send you.
 - Retunes running lights on the fly — pattern, speed, brightness and color
@@ -84,7 +85,8 @@ physical link button on the bridge, then hit Pair within ~30 seconds).
 ## Patterns
 
 Every built-in pattern is named after the game it comes from, and the picker
-groups them by game, listed alphabetically. There are two kinds, and the difference is worth knowing:
+groups them by game, listed alphabetically. There are two kinds, and the
+difference is worth knowing:
 
 **Straight from the engine.** Quake stored its light effects as literal `a`–`z`
 strings — styles 0–11 plus 63 — and they're here transcribed from id's released
@@ -117,13 +119,21 @@ apart. The picker says which is which on hover.
 **Quake III Arena is deliberately absent**: id Tech 3 ships no default
 lightstyle table in its game code, so there's nothing verbatim to claim.
 
-**Every pattern carries its own speed.** A sputtering bulb and a slow gothic
-throb aren't the same shape played faster or slower, so the rate is stored with
-the sequence and picking a pattern brings its timing along — Shadow Warrior's
-paper lantern comes up at 4 Hz, Unreal's `LT_Flicker` at 16. The engine-sourced
-styles are all 10 Hz because that is the rate those engines step the lightstyle
-table at; that one isn't a taste call. You can still drag
-the speed slider afterwards and it will stick.
+**Every pattern carries its own framing** — speed, brightness window and
+transition, not just the letters. A sputtering bulb and a slow gothic throb
+aren't the same shape played faster or slower, so picking a pattern brings all
+of it along: Shadow Warrior's paper lantern comes up at 4 Hz swinging only
+between 60 and 200 with 300 ms of smoothing, while Doom 3's failing ceiling
+light is 14 Hz across the full range with hard steps. You can still drag any of
+the sliders afterwards and it sticks.
+
+The engine-sourced styles are deliberately left unframed: full range, no
+smoothing, and all 10 Hz because that is the rate those engines step the
+lightstyle table at. Their `a`–`z` curve *is* the whole brightness story, so
+narrowing or softening it would misrepresent them.
+
+Transitions move in 100 ms steps, because that is the resolution the bridge
+accepts — anything finer is truncated on the way through.
 
 Add your own in `app/patterns.py`, or write them in the UI (see below).
 
@@ -143,13 +153,22 @@ editor and sent to someone who then just imports it:
   "name": "Doom 3 style flicker",
   "author": "someone",
   "patterns": [
-    { "name": "Sputtering Lamp", "sequence": "mmnnaamm", "hz": 12 }
+    {
+      "name": "Sputtering Lamp",
+      "sequence": "mmnnaamm",
+      "hz": 12,
+      "min_bri": 40,
+      "max_bri": 220,
+      "transition_ms": 100
+    }
   ]
 }
 ```
 
-Only `patterns` is required — `{"patterns": [...]}` on its own imports fine,
-and a pattern's `hz` defaults to 10 the way Quake's own lightstyles run.
+Only `patterns` is required — `{"patterns": [...]}` on its own imports fine.
+Each pattern may state the framing it was written for; anything it leaves out
+falls back to Quake's own defaults, 10 frames a second across the bulb's full
+range with no smoothing.
 Sequences are normalised on the way in, so spacing and capitalisation don't
 matter. Unknown keys are ignored, which leaves room for packs to carry extra
 metadata without older consoles choking on it.
