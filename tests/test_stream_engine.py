@@ -52,6 +52,31 @@ def test_a_named_colour_rides_through_the_frame():
 
 # ---------- the sender, over a real handshake ----------
 
+def local_ipv4() -> str:
+    """An address of this machine that the bridge-address rules accept.
+
+    The stub has to live somewhere DtlsStream will actually dial, and that rules
+    out loopback: the same check that stops the console being aimed at the
+    host's private services applies to the stream socket too.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("192.0.2.1", 9))          # TEST-NET-1; no packet is sent
+        return probe.getsockname()[0]
+    finally:
+        probe.close()
+
+
+def usable_stub_host() -> str:
+    from app.hue_client import BridgeAddressError, parse_bridge_address
+    host = local_ipv4()
+    try:
+        parse_bridge_address(host)
+    except BridgeAddressError:
+        pytest.skip(f"no non-loopback address to host the stub bridge on (got {host})")
+    return host
+
+
 @pytest.fixture
 def stub_bridge():
     tls = pytest.importorskip("mbedtls.tls")
@@ -63,7 +88,8 @@ def stub_bridge():
         pre_shared_key_store={IDENTITY: bytes.fromhex(KEY_HEX)},
         ciphers=DTLS_CIPHERS, validate_certificates=False)
     sock = tls.ServerContext(config).wrap_socket(raw)
-    sock.bind(("127.0.0.1", 0))
+    host = usable_stub_host()
+    sock.bind((host, 0))
     port = sock.getsockname()[1]
 
     def serve():
@@ -87,7 +113,7 @@ def stub_bridge():
 
     threading.Thread(target=serve, daemon=True).start()
     ready.wait(2)
-    yield {"port": port, "frames": frames}
+    yield {"host": host, "port": port, "frames": frames}
     sock.close()
 
 
@@ -96,7 +122,7 @@ def run_area(engine, stub, light_ids, hz=10.0, seconds=1.0, **kw):
     original = hue_stream.STREAM_PORT
     hue_stream.STREAM_PORT = stub["port"]
     try:
-        engine.start("127.0.0.1", IDENTITY, KEY_HEX, "6", light_ids,
+        engine.start(stub["host"], IDENTITY, KEY_HEX, "6", light_ids,
                      kw.pop("sequence", "mz"), "p", hz,
                      kw.pop("min_bri", 1), kw.pop("max_bri", 254),
                      kw.pop("hue", None), kw.pop("sat", None))
@@ -151,7 +177,7 @@ def test_retuning_mid_stream_changes_what_goes_out(stub_bridge):
     original = hue_stream.STREAM_PORT
     hue_stream.STREAM_PORT = stub_bridge["port"]
     try:
-        engine.start("127.0.0.1", IDENTITY, KEY_HEX, "6", ["1"], "z", "p",
+        engine.start(stub_bridge["host"], IDENTITY, KEY_HEX, "6", ["1"], "z", "p",
                      10.0, 1, 1, None, None)          # pinned dark
         time.sleep(0.4)
         dark = len(stub_bridge["frames"])

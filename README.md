@@ -302,6 +302,45 @@ Turn it off with **Restore lights to how they were** in Settings if you'd rather
 lights stay where the flicker ends. The snapshot is still kept either way, and
 each card grows a **Revert** button you can hit whenever you want it back.
 
+## Entertainment streaming
+
+The ordinary path sends one HTTP command per light, and the bridge takes about
+ten a second in total for everything. That budget is shared, so the more lights
+flicker at once the slower each one gets:
+
+| lights | at 10/sec | at 20/sec | at 30/sec |
+|-------:|----------:|----------:|----------:|
+| 2      | 4.00 Hz   | 8.00 Hz   | 12.00 Hz  |
+| 4      | 2.00 Hz   | 4.00 Hz   | 6.00 Hz   |
+| 7      | 1.14 Hz   | 2.29 Hz   | 3.43 Hz   |
+
+Seven bulbs at a real 10 Hz would need about 88 commands a second, which is not
+something the REST API will do at any setting.
+
+**Entertainment streaming is the way past that.** One UDP socket carries a
+frame holding every light in the area, so a frame costs the same whether it
+holds one bulb or ten, and the speed stops being divided — up to 25 Hz across
+the whole area at once, every light changing on the same frame.
+
+Three things it needs:
+
+1. **An entertainment area**, set up in the Hue app under *Entertainment
+   areas*. The bridge will only stream to one it already knows about, it holds
+   at most ten lights, and they have to be colour-capable.
+2. **A pairing that includes a streaming key.** The DTLS pre-shared key is only
+   issued when the pairing request asks for it, and there is no way to fetch
+   one for an existing user — so a console set up before this feature has to
+   pair again. The panel says so when that applies.
+3. **Nothing else streaming to the same area.** Hue Sync and games claim the
+   area exclusively; areas already taken are listed but greyed out.
+
+While an area is streaming the bridge ignores everything else for those lights,
+including the Hue app, so the console hands the area back when you press Stop
+and on the way out if the container is stopped mid-stream.
+
+Streaming has no transition setting: every frame is sent, so there is nothing
+to interpolate between.
+
 ## Settings
 
 Open **Settings** in the bar above the panels.

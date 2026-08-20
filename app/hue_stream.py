@@ -29,6 +29,8 @@ Wire format, confirmed against two independent implementations
 """
 import socket
 
+from .hue_client import parse_bridge_address
+
 MAGIC = b"HueStream"
 COLOUR_SPACE_RGB = 0x00
 COLOUR_SPACE_XY = 0x01
@@ -127,7 +129,11 @@ class DtlsStream:
 
     def __init__(self, bridge_ip: str, username: str, client_key: str,
                  port: int | None = None):
-        self.bridge_ip = bridge_ip
+        # The stored address can carry the REST port ("192.168.1.23:8080"), and
+        # streaming does not use it — the entertainment endpoint is its own
+        # port. Take the host and leave the rest behind, or the port ends up
+        # inside the hostname and the connect fails a name lookup.
+        self.bridge_ip, _rest_port = parse_bridge_address(bridge_ip)
         self.username = username
         try:
             self.psk = bytes.fromhex(client_key)

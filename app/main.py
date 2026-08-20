@@ -34,6 +34,7 @@ from .patterns import (
     GAMES,
     framing_of,
 )
+from .stream_engine import StreamEngine, StreamError
 
 
 @asynccontextmanager
@@ -51,6 +52,13 @@ async def lifespan(_app: FastAPI):
             restored = await engine.restore()
             logger.info("Restored %d light(s) left flickering by a previous run", len(restored))
     yield
+    # The area has to go back before anything else: while the bridge holds one
+    # in streaming mode, nothing can drive those lights — not this console, not
+    # the Hue app — so a container stopped mid-stream would strand them.
+    streaming = stream_engine.status().get("area_id")
+    stream_engine.stop()
+    if streaming:
+        await _release_area(streaming)
     # Cancel the flicker loops before tearing down the pool they send through,
     # otherwise in-flight ticks fail against a closed client on the way out.
     await engine.stop_all()
@@ -103,6 +111,7 @@ def status_payload() -> dict:
         "lights": engine.status(),
         "snapshots": engine.snapshots,
         "now": time.monotonic(),
+        "stream": stream_engine.status(),
     }
 
 
@@ -148,6 +157,7 @@ def _persist_snapshots(snapshots: dict):
 
 engine = FlickerEngine(get_client=get_client, on_change=_broadcast_status_soon,
                        on_snapshots=_persist_snapshots)
+stream_engine = StreamEngine(on_change=_broadcast_status_soon)
 
 
 # ---------- Models ----------
@@ -239,6 +249,38 @@ class StartRequest(BaseModel):
         if (self.hue is None) != (self.sat is None):
             raise ValueError("hue and sat must be given together, or not at all")
         return self
+
+
+class StreamStartRequest(BaseModel):
+    """Run a pattern across a whole entertainment area over the DTLS stream."""
+
+    area_id: str = Field(..., min_length=1, max_length=64)
+    pattern_id: str
+    # The stream's ceiling, not the REST path's: 25 frames a second, and the
+    # area gets all of it rather than a share.
+    hz: float | None = Field(None, gt=0, le=MAX_STREAM_HZ)
+    min_bri: int | None = Field(None, ge=1, le=254)
+    max_bri: int | None = Field(None, ge=1, le=254)
+    hue: int | None = Field(None, ge=0, le=65535)
+    sat: int | None = Field(None, ge=0, le=254)
+
+    @model_validator(mode="after")
+    def _check_ranges(self):
+        if (self.min_bri is not None and self.max_bri is not None
+                and self.min_bri > self.max_bri):
+            raise ValueError("min_bri must be less than or equal to max_bri")
+        if (self.hue is None) != (self.sat is None):
+            raise ValueError("hue and sat must be given together, or not at all")
+        return self
+
+
+class StreamUpdateRequest(BaseModel):
+    hz: float | None = Field(None, gt=0, le=MAX_STREAM_HZ)
+    min_bri: int | None = Field(None, ge=1, le=254)
+    max_bri: int | None = Field(None, ge=1, le=254)
+    hue: int | None = Field(None, ge=0, le=65535)
+    sat: int | None = Field(None, ge=0, le=254)
+    pattern_id: str | None = None
 
 
 class StopRequest(BaseModel):
@@ -633,6 +675,135 @@ async def list_stream_areas():
         "can_stream": bool(cfg.get("client_key")),
         "max_stream_hz": MAX_STREAM_HZ,
     }
+
+
+async def _area_or_400(area_id: str) -> dict:
+    client = get_client()
+    if client is None:
+        raise HTTPException(400, "Bridge not configured yet")
+    try:
+        groups = await client.get_groups()
+    except Exception as e:
+        raise HTTPException(502, bridge_error(e, "read the entertainment areas")) from e
+    info = groups.get(area_id)
+    if not info or (info.get("type") or "") != ENTERTAINMENT_GROUP_TYPE:
+        raise HTTPException(404, "That entertainment area isn't on this bridge")
+    return info
+
+
+async def _release_area(area_id: str):
+    """Hand the area back, whatever else went wrong.
+
+    While the bridge has an area in streaming mode nothing else can drive those
+    lights — not this console, not the Hue app — so failing to release one
+    leaves the user's lights stuck until they restart the bridge.
+    """
+    client = get_client()
+    if client is None:
+        return
+    try:
+        await client.set_stream(area_id, False)
+    except Exception:
+        logger.exception("Could not hand entertainment area %s back", area_id)
+
+
+@app.post("/api/stream/start")
+async def start_stream(req: StreamStartRequest):
+    cfg = config_store.load()
+    if not cfg.get("client_key"):
+        raise HTTPException(
+            409,
+            "This console was paired before it could stream. Pair with the bridge "
+            "again — press its link button and hit Pair — to get a streaming key.",
+        )
+    info = await _area_or_400(req.area_id)
+    light_ids = [str(x) for x in info.get("lights", [])]
+    if not light_ids:
+        raise HTTPException(422, "That entertainment area has no lights in it")
+    if (info.get("stream") or {}).get("active"):
+        raise HTTPException(
+            409,
+            "Something else is already streaming to that area — Hue Sync, or a game. "
+            "Stop it there first.",
+        )
+
+    pattern = _resolve_pattern(req.pattern_id)
+    framing = framing_of(pattern)
+    for field in FRAMING_FIELDS:
+        if field in ("hue", "sat"):
+            if field in req.model_fields_set:
+                framing[field] = getattr(req, field)
+            continue
+        if field == "transition_ms":
+            continue        # the stream has no transitions: every frame is sent
+        supplied = getattr(req, field, None)
+        if supplied is not None:
+            framing[field] = supplied
+    if (framing["hue"] is None) != (framing["sat"] is None):
+        framing["hue"] = framing["sat"] = None
+    if framing["min_bri"] > framing["max_bri"]:
+        raise HTTPException(
+            422, "min_bri must be less than or equal to max_bri "
+                 f"(got {framing['min_bri']} against the pattern's {framing['max_bri']})",
+        )
+
+    # The REST path and the stream would fight over any light in both, and the
+    # stream wins because the bridge stops listening to REST for those lights.
+    for lid in light_ids:
+        await engine.stop(lid, notify=False, restore=False)
+
+    client = get_client()
+    try:
+        await client.set_stream(req.area_id, True)
+    except Exception as e:
+        raise HTTPException(502, bridge_error(e, "hand the area to the stream")) from e
+
+    try:
+        stream_engine.start(
+            cfg["bridge_ip"], cfg["api_key"], cfg["client_key"],
+            req.area_id, light_ids, pattern["sequence"], req.pattern_id,
+            min(framing["hz"], MAX_STREAM_HZ),
+            framing["min_bri"], framing["max_bri"], framing["hue"], framing["sat"],
+        )
+    except StreamError as e:
+        # Never leave the area held by a stream that isn't running.
+        await _release_area(req.area_id)
+        raise HTTPException(502, str(e)) from e
+
+    _broadcast_status_soon()
+    return {"ok": True, **status_payload()}
+
+
+@app.post("/api/stream/update")
+async def update_stream(req: StreamUpdateRequest):
+    changes = req.model_dump(exclude_none=True)
+    if req.pattern_id is not None:
+        pattern = _resolve_pattern(req.pattern_id)
+        changes["sequence"] = pattern["sequence"]
+        for field, value in framing_of(pattern).items():
+            if field in ("hue", "sat", "transition_ms"):
+                continue
+            if getattr(req, field, None) is None:
+                changes[field] = value
+    current = stream_engine.status().get("settings") or {}
+    low = changes.get("min_bri", current.get("min_bri", 1))
+    high = changes.get("max_bri", current.get("max_bri", 254))
+    if low > high:
+        raise HTTPException(422, "min_bri must be less than or equal to max_bri")
+    if not stream_engine.update(**changes):
+        raise HTTPException(409, "Nothing is streaming right now")
+    _broadcast_status_soon()
+    return {"ok": True, **status_payload()}
+
+
+@app.post("/api/stream/stop")
+async def stop_stream():
+    area_id = stream_engine.status().get("area_id")
+    stream_engine.stop()
+    if area_id:
+        await _release_area(area_id)
+    _broadcast_status_soon()
+    return {"ok": True, **status_payload()}
 
 
 @app.get("/api/groups")

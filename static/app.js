@@ -143,6 +143,7 @@ async function loadPatternsAndLights() {
   PATTERNS = patterns;
   STATUS = statusRes.lights;
   SNAPSHOTS = statusRes.snapshots || {};
+  STREAM = statusRes.stream || { running: false };
   noteServerClock(statusRes.now);
   GROUPS = groupsRes.groups;
 
@@ -163,6 +164,12 @@ async function loadPatternsAndLights() {
   selected = new Set([...selected].filter(id => known.has(id)));
   renderCustomList();
   renderGrid();
+  // The entertainment panel draws from the same pattern list as the cards.
+  fillPatternSelect(streamPattern);
+  selectPattern(streamPattern, 'flicker_a');
+  applyStreamFraming();
+  applyStreamStatus();
+  await loadStreamAreas();
 }
 
 function allPatternOptions() {
@@ -186,6 +193,46 @@ function selectPattern(select, patternId) {
   const own = home && options.find(o => o.parentElement.label === home);
   (own || options[0]).selected = true;
   return true;
+}
+
+// Builds the whole pattern menu into a <select>. Shared by every light card
+// and by the entertainment panel, which needs exactly the same list.
+function fillPatternSelect(select) {
+  select.innerHTML = '';
+  // Which optgroups name a game, and so should re-prefix their options.
+  // "Custom" and "Other" don't: their entries already read the way they should.
+  const gameGroups = new Set(PATTERNS.games || []);
+  const addGroup = (label, items) => {
+    if (!items.length) return;
+    const group = document.createElement('optgroup');
+    group.label = label;
+    items.forEach(p => {
+      const o = document.createElement('option');
+      o.value = p.id;
+      // A closed <select> shows only the chosen option's own text, so the game
+      // has to be in it — the optgroup heading is visible while the list is
+      // open and gone the moment it isn't. Named for the menu it was picked
+      // from, so a Quake style chosen under Half-Life reads "Half-Life — ...";
+      // the tooltip is where the inheritance gets explained.
+      o.textContent = gameGroups.has(label) ? `${label} — ${bareName(p.name)}` : p.name;
+      if (p.game !== label && label !== 'Custom') {
+        o.title = `${p.game}'s lightstyle, inherited wholesale by ${label}`;
+      } else if (p.origin === 'inspired') {
+        o.title = `Inspired by ${p.game}; not an engine lightstyle table`;
+      }
+      group.appendChild(o);
+    });
+    select.appendChild(group);
+  };
+  const games = PATTERNS.games || [];
+  // A pattern can belong to more than one game's menu: GoldSrc inherited
+  // Quake's table, so those styles appear under Half-Life too.
+  const forGame = g => PATTERNS.builtin.filter(
+    p => p.game === g || (p.shared_with || []).includes(g));
+  games.forEach(game => addGroup(game, forGame(game)));
+  // Anything whose game isn't in the ordered list still has to appear.
+  addGroup('Other', PATTERNS.builtin.filter(p => !games.includes(p.game)));
+  addGroup('Custom', PATTERNS.custom);
 }
 
 function sequenceFor(patternId) {
@@ -330,40 +377,7 @@ function buildCard(entity) {
   }
 
   const select = node.querySelector('.pattern-select');
-  // Which optgroups name a game, and so should re-prefix their options.
-  // "Custom" and "Other" don't: their entries already read the way they should.
-  const GAME_GROUPS = new Set(PATTERNS.games || []);
-  const addGroup = (label, items) => {
-    if (!items.length) return;
-    const group = document.createElement('optgroup');
-    group.label = label;
-    items.forEach(p => {
-      const o = document.createElement('option');
-      o.value = p.id;
-      // A closed <select> shows only the chosen option's own text, so the game
-      // has to be in it — the optgroup heading is visible while the list is
-      // open and gone the moment it isn't. Named for the menu it was picked
-      // from, so a Quake style chosen under Half-Life reads "Half-Life — ...";
-      // the tooltip is where the inheritance gets explained.
-      o.textContent = GAME_GROUPS.has(label) ? `${label} — ${bareName(p.name)}` : p.name;
-      if (p.game !== label && label !== 'Custom') {
-        o.title = `${p.game}'s lightstyle, inherited wholesale by ${label}`;
-      } else if (p.origin === 'inspired') {
-        o.title = `Inspired by ${p.game}; not an engine lightstyle table`;
-      }
-      group.appendChild(o);
-    });
-    select.appendChild(group);
-  };
-  const games = PATTERNS.games || [];
-  // A pattern can belong to more than one game's menu: GoldSrc inherited
-  // Quake's table, so those styles appear under Half-Life too.
-  const forGame = g => PATTERNS.builtin.filter(
-    p => p.game === g || (p.shared_with || []).includes(g));
-  games.forEach(game => addGroup(game, forGame(game)));
-  // Anything whose game isn't in the ordered list still has to appear.
-  addGroup('Other', PATTERNS.builtin.filter(p => !games.includes(p.game)));
-  addGroup('Custom', PATTERNS.custom);
+  fillPatternSelect(select);
   selectPattern(select, 'flicker_a');
 
   const hzInput = node.querySelector('.hz-input');
@@ -727,10 +741,11 @@ function renderBars(container, sequence) {
   }
 }
 
-function drawWaveform(key, sequence) {
-  const card = cardEls[key];
-  if (!card) return;
-  const waveform = card.querySelector('.waveform');
+function drawWaveform(key, sequence, container = null) {
+  // The entertainment panel has a waveform but is not a card, so it passes its
+  // own element rather than being looked up in cardEls.
+  const waveform = container || (cardEls[key] && cardEls[key].querySelector('.waveform'));
+  if (!waveform) return;
   // Status arrives on every change anyone makes, and rebuilding identical bars
   // each time threw the playhead away and blinked it off for a frame.
   if (waveform.dataset.sequence === sequence) return;
@@ -1261,6 +1276,8 @@ function connectWs() {
     if (msg.type === 'status') {
       STATUS = msg.lights;
       SNAPSHOTS = msg.snapshots || {};
+      STREAM = msg.stream || { running: false };
+      applyStreamStatus();
       noteServerClock(msg.now);
       applyStatus();
     }
@@ -1439,6 +1456,209 @@ function initCollapsibles() {
 }
 
 initCollapsibles();
+
+// ---------- Entertainment stream ----------
+
+// The REST path divides the bridge's command budget between every flickering
+// light, which is why a seven-bulb room lands near 1 Hz each. Streaming sends
+// one frame carrying the whole area, so nothing is divided.
+let STREAM = { running: false };
+let streamAreas = [];
+
+const streamArea = $('#stream-area');
+const streamPattern = $('#stream-pattern');
+const streamHz = $('#stream-hz');
+const streamMinBri = $('#stream-minbri');
+const streamMaxBri = $('#stream-maxbri');
+const streamColorEnable = $('#stream-color-enable');
+const streamColor = $('#stream-color');
+const streamColorCode = $('#stream-color-code');
+
+function setStreamStatus(text, kind = '') {
+  const el = $('#stream-status');
+  el.textContent = text;
+  el.className = `status-line ${kind}`.trim();
+}
+
+function streamSettings() {
+  const hue = streamColorEnable.checked ? Number(streamColor.dataset.hue) : null;
+  const sat = streamColorEnable.checked ? Number(streamColor.dataset.sat) : null;
+  return {
+    hz: Number(streamHz.value),
+    min_bri: Number(streamMinBri.value),
+    max_bri: Number(streamMaxBri.value),
+    ...(hue === null ? {} : { hue, sat }),
+  };
+}
+
+function setStreamColor(hue, sat) {
+  streamColor.dataset.hue = hue;
+  streamColor.dataset.sat = sat;
+  streamColor.value = hueSatToHex(hue, sat);
+  streamColorCode.value = `${hue},${sat}`;
+}
+
+async function loadStreamAreas() {
+  try {
+    const body = await api('/api/stream/areas');
+    streamAreas = body.areas || [];
+    $('#stream-max-hz').textContent = body.max_stream_hz;
+    streamHz.max = body.max_stream_hz;
+    const warning = $('#stream-unavailable');
+    if (!body.can_stream) {
+      // The DTLS key is only handed out at pairing time, so there is no way to
+      // acquire one for a console that was paired before streaming existed.
+      warning.textContent = 'This console was paired before it could stream. '
+        + 'Use Change bridge and pair again — press the link button, then Pair — '
+        + 'to get a streaming key.';
+      warning.classList.remove('hidden');
+    } else {
+      warning.classList.add('hidden');
+    }
+    streamArea.innerHTML = '';
+    if (!streamAreas.length) {
+      const o = document.createElement('option');
+      o.textContent = 'No entertainment areas on this bridge';
+      o.value = '';
+      streamArea.appendChild(o);
+    }
+    streamAreas.forEach(a => {
+      const o = document.createElement('option');
+      o.value = a.id;
+      const n = a.light_ids.length;
+      o.textContent = `${a.name} (${n} light${n === 1 ? '' : 's'})`;
+      if (a.in_use_by_someone_else) {
+        o.textContent += ' — in use';
+        o.disabled = true;
+      }
+      streamArea.appendChild(o);
+    });
+    $('#btn-stream-start').disabled = !body.can_stream || !streamAreas.length;
+  } catch (e) {
+    setStreamStatus(e.message, 'err');
+  }
+}
+
+function drawStreamWaveform() {
+  drawWaveform('stream', sequenceFor(streamPattern.value), $('#stream-waveform'));
+}
+
+function applyStreamFraming() {
+  const framing = framingFor(streamPattern.value);
+  const set = (input, labelSel, value) => {
+    input.value = Math.min(value, Number(input.max));
+    $(labelSel).textContent = input.value;
+  };
+  set(streamHz, '#stream-hz-value', framing.hz);
+  set(streamMinBri, '#stream-minbri-value', framing.min_bri);
+  set(streamMaxBri, '#stream-maxbri-value', framing.max_bri);
+  if (framing.hue !== null && framing.sat !== null) {
+    streamColorEnable.checked = true;
+    setStreamColor(framing.hue, framing.sat);
+  } else {
+    streamColorEnable.checked = false;
+  }
+  drawStreamWaveform();
+}
+
+function pushStreamLive() {
+  if (!STREAM.running) return;
+  clearTimeout(pushStreamLive._t);
+  pushStreamLive._t = setTimeout(async () => {
+    try {
+      await api('/api/stream/update', {
+        method: 'POST',
+        body: JSON.stringify({ pattern_id: streamPattern.value, ...streamSettings() }),
+      });
+    } catch (e) {
+      if (!/Nothing is streaming/i.test(e.message)) setStreamStatus(e.message, 'err');
+    }
+  }, 180);
+}
+
+[[streamHz, '#stream-hz-value'], [streamMinBri, '#stream-minbri-value'],
+ [streamMaxBri, '#stream-maxbri-value']].forEach(([input, label]) => {
+  input.addEventListener('input', () => {
+    $(label).textContent = input.value;
+    if (input === streamMinBri && Number(streamMaxBri.value) < Number(input.value)) {
+      streamMaxBri.value = input.value;
+      $('#stream-maxbri-value').textContent = input.value;
+    }
+    if (input === streamMaxBri && Number(streamMinBri.value) > Number(input.value)) {
+      streamMinBri.value = input.value;
+      $('#stream-minbri-value').textContent = input.value;
+    }
+    pushStreamLive();
+  });
+});
+
+streamPattern.addEventListener('change', () => { applyStreamFraming(); pushStreamLive(); });
+streamColor.addEventListener('input', () => {
+  const hs = rgbToHueSat(hexToRgb(streamColor.value));
+  setStreamColor(hs.hue, hs.sat);
+  if (!streamColorEnable.checked) streamColorEnable.checked = true;
+  pushStreamLive();
+});
+streamColorEnable.addEventListener('change', pushStreamLive);
+streamColorCode.addEventListener('input', () => {
+  const parsed = parseColorCode(streamColorCode.value);
+  if (!parsed) {
+    streamColorCode.classList.toggle('err', streamColorCode.value.trim() !== '');
+    return;
+  }
+  streamColorCode.classList.remove('err');
+  streamColor.dataset.hue = parsed.hue;
+  streamColor.dataset.sat = parsed.sat;
+  streamColor.value = hueSatToHex(parsed.hue, parsed.sat);
+  if (!streamColorEnable.checked) streamColorEnable.checked = true;
+  pushStreamLive();
+});
+
+$('#btn-stream-refresh').addEventListener('click', loadStreamAreas);
+
+$('#btn-stream-start').addEventListener('click', async () => {
+  if (!streamArea.value) return;
+  setStreamStatus('Opening the stream...');
+  try {
+    await api('/api/stream/start', {
+      method: 'POST',
+      body: JSON.stringify({
+        area_id: streamArea.value, pattern_id: streamPattern.value, ...streamSettings(),
+      }),
+    });
+    setStreamStatus('Streaming.', 'ok');
+  } catch (e) {
+    setStreamStatus(e.message, 'err');
+  }
+});
+
+$('#btn-stream-stop').addEventListener('click', async () => {
+  try {
+    await api('/api/stream/stop', { method: 'POST' });
+    setStreamStatus('Stopped. The area is back with the Hue app.', 'ok');
+  } catch (e) {
+    setStreamStatus(e.message, 'err');
+  }
+});
+
+function applyStreamStatus() {
+  const running = !!STREAM.running;
+  $('#btn-stream-start').classList.toggle('hidden', running);
+  $('#btn-stream-stop').classList.toggle('hidden', !running);
+  streamArea.disabled = running;
+  const state = $('#stream-state');
+  if (running) {
+    const area = streamAreas.find(a => a.id === STREAM.area_id);
+    const n = (STREAM.light_ids || []).length;
+    state.textContent = `streaming ${area ? area.name : 'area'} · `
+      + `${STREAM.effective_hz} Hz across ${n} light${n === 1 ? '' : 's'}`;
+    state.className = 'dim ok';
+  } else {
+    state.textContent = 'idle';
+    state.className = 'dim';
+  }
+  if (STREAM.error) setStreamStatus(STREAM.error, 'err');
+}
 
 // ---------- Panel order ----------
 

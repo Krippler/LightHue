@@ -100,6 +100,31 @@ def test_a_client_key_that_is_not_hex_is_refused():
         DtlsStream("10.0.0.5", "user", "not-hex!")
 
 
+def local_ipv4() -> str:
+    """An address of this machine that the bridge-address rules accept.
+
+    The stub has to live somewhere DtlsStream will actually dial, and that rules
+    out loopback: the same check that stops the console being aimed at the
+    host's private services applies to the stream socket too.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("192.0.2.1", 9))          # TEST-NET-1; no packet is sent
+        return probe.getsockname()[0]
+    finally:
+        probe.close()
+
+
+def usable_stub_host() -> str:
+    from app.hue_client import BridgeAddressError, parse_bridge_address
+    host = local_ipv4()
+    try:
+        parse_bridge_address(host)
+    except BridgeAddressError:
+        pytest.skip(f"no non-loopback address to host the stub bridge on (got {host})")
+    return host
+
+
 @pytest.fixture
 def stub_bridge():
     """A DTLS-PSK listener standing in for the bridge's port 2100."""
@@ -115,7 +140,8 @@ def stub_bridge():
     config = tls.DTLSConfiguration(pre_shared_key_store={identity: key},
                                    ciphers=DTLS_CIPHERS, validate_certificates=False)
     sock = tls.ServerContext(config).wrap_socket(raw)
-    sock.bind(("127.0.0.1", 0))
+    host = usable_stub_host()
+    sock.bind((host, 0))
     port = sock.getsockname()[1]
 
     def serve():
@@ -144,12 +170,13 @@ def stub_bridge():
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
     ready.wait(2)
-    yield {"port": port, "identity": identity, "key": key.hex(), "received": received}
+    yield {"host": host, "port": port, "identity": identity,
+           "key": key.hex(), "received": received}
     sock.close()
 
 
 def test_frames_reach_the_bridge_over_a_real_handshake(stub_bridge):
-    stream = DtlsStream("127.0.0.1", stub_bridge["identity"], stub_bridge["key"],
+    stream = DtlsStream(stub_bridge["host"], stub_bridge["identity"], stub_bridge["key"],
                         port=stub_bridge["port"])
     with stream:
         for seq in range(3):
@@ -165,7 +192,7 @@ def test_frames_reach_the_bridge_over_a_real_handshake(stub_bridge):
 
 
 def test_the_wrong_key_does_not_get_a_stream(stub_bridge):
-    stream = DtlsStream("127.0.0.1", stub_bridge["identity"],
+    stream = DtlsStream(stub_bridge["host"], stub_bridge["identity"],
                         "ffffffffffffffffffffffffffffffff", port=stub_bridge["port"])
     with pytest.raises(StreamError, match="Could not open"):
         stream.connect(timeout=2.0)
@@ -174,3 +201,19 @@ def test_the_wrong_key_does_not_get_a_stream(stub_bridge):
 def test_sending_before_connecting_is_an_error():
     with pytest.raises(StreamError, match="isn't open"):
         DtlsStream("10.0.0.5", "u", "00" * 16).send(b"x")
+
+
+def test_a_rest_port_in_the_address_does_not_follow_into_the_stream():
+    """The console stores "host" or "host:port", and that port is the REST
+    one. Streaming has its own endpoint, so only the host carries over —
+    passed through whole it lands inside the hostname and fails a lookup."""
+    from app.hue_stream import STREAM_PORT
+    stream = DtlsStream("192.0.2.2:9950", "user", "00" * 16)
+    assert stream.bridge_ip == "192.0.2.2"
+    assert stream.port == STREAM_PORT
+
+
+def test_a_bad_bridge_address_is_refused_here_too():
+    from app.hue_client import BridgeAddressError
+    with pytest.raises(BridgeAddressError):
+        DtlsStream("127.0.0.1", "user", "00" * 16)
