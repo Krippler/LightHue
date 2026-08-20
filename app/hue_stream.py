@@ -126,14 +126,16 @@ class DtlsStream:
     """
 
     def __init__(self, bridge_ip: str, username: str, client_key: str,
-                 port: int = STREAM_PORT):
+                 port: int | None = None):
         self.bridge_ip = bridge_ip
         self.username = username
         try:
             self.psk = bytes.fromhex(client_key)
         except ValueError as e:
             raise StreamError("The bridge's client key isn't valid hex") from e
-        self.port = port
+        # Resolved now rather than baked into the signature at import, so the
+        # module-level default stays the one source of truth.
+        self.port = STREAM_PORT if port is None else port
         self._sock = None
 
     def connect(self, timeout: float = 5.0):
