@@ -24,9 +24,9 @@ def test_builtins_are_well_formed():
     assert len(BUILTIN_BY_ID) == len(BUILTIN_PATTERNS)   # ids are unique
 
 
-def test_quake_still_ships_its_full_twelve_styles():
+def test_quake_ships_its_whole_table():
     quake = [p for p in BUILTIN_PATTERNS if p["game"] == "Quake"]
-    assert len(quake) == 12
+    assert len(quake) == 13          # styles 0-11 plus 63
     assert all(p["origin"] == "engine" for p in quake)
 
 
@@ -43,9 +43,11 @@ def test_engine_sourced_patterns_are_only_the_ones_with_real_tables():
     assert verbatim == {"Quake", "Half-Life"}
 
 
-def test_every_game_contributes_patterns():
+def test_every_game_owns_or_inherits_patterns():
+    from app.patterns import patterns_for
+
     for game in GAMES:
-        assert any(p["game"] == game for p in BUILTIN_PATTERNS), game
+        assert patterns_for(game), game
 
 
 def test_level_for_char_spans_zero_to_one():
@@ -66,7 +68,7 @@ def test_half_life_offers_quakes_table_without_duplicating_it():
     from app.patterns import patterns_for
 
     hl = patterns_for("Half-Life")
-    assert len(hl) == 13
+    assert len(hl) == 14          # Quake's 0-11 and 63, plus style 12
     owned = [p for p in hl if p["game"] == "Half-Life"]
     assert [p["id"] for p in owned] == ["hl_underwater"]
     assert all(p["game"] == "Quake" for p in hl if p["id"] != "hl_underwater")
@@ -76,7 +78,7 @@ def test_quakes_menu_does_not_pick_up_half_lifes_addition():
     from app.patterns import patterns_for
 
     assert "hl_underwater" not in [p["id"] for p in patterns_for("Quake")]
-    assert len(patterns_for("Quake")) == 12
+    assert len(patterns_for("Quake")) == 13
 
 
 def test_shared_patterns_are_the_same_objects_not_copies():
@@ -129,3 +131,87 @@ def test_no_pattern_takes_absurdly_long_to_cycle():
     for pattern in BUILTIN_PATTERNS:
         seconds = len(pattern["sequence"]) / pattern["hz"]
         assert seconds <= 8, (pattern["id"], seconds)
+
+
+# The table below is transcribed from the released game sources, not from
+# memory. Style 8 shipped wrong here for a while precisely because nothing
+# checked; this is the check.
+#
+#   Quake      id-Software/Quake             QW/progs/world.qc
+#   Quake II   id-Software/Quake-2           game/g_spawn.c
+#   Half-Life  ValveSoftware/halflife        dlls/world.cpp
+#   Source     ValveSoftware/source-sdk-2013 mp/src/game/server/world.cpp
+#
+# All four define styles 0-11 and 63 identically; GoldSrc and Source add 12.
+ID_SOFTWARE_LIGHTSTYLES = {
+    0: "m",
+    1: "mmnmmommommnonmmonqnmmo",
+    2: "abcdefghijklmnopqrstuvwxyzyxwvutsrqponmlkjihgfedcba",
+    3: "mmmmmaaaaammmmmaaaaaabcdefgabcdefg",
+    4: "mamamamamama",
+    5: "jklmnopqrstuvwxyzyxwvutsrqponmlkj",
+    6: "nmonqnmomnmomomno",
+    7: "mmmaaaabcdefgmmmmaaaammmaamm",
+    8: "mmmaaammmaaammmabcdefaaaammmmabcdefmmmaaaa",
+    9: "aaaaaaaazzzzzzzz",
+    10: "mmamammmmammamamaaamammma",
+    11: "abcdefghijklmnopqrrqponmlkjihgfedcba",
+    63: "a",
+}
+GOLDSRC_ADDITION = {12: "mmnnmmnnnmmnn"}
+
+QUAKE_STYLE_IDS = {
+    0: "steady", 1: "flicker_a", 2: "slow_strong_pulse", 3: "candle_a",
+    4: "fast_strobe", 5: "gentle_pulse", 6: "flicker_b", 7: "candle_b",
+    8: "candle_c", 9: "hard_strobe", 10: "fluorescent", 11: "slow_pulse_nb",
+    63: "quake_testing",
+}
+
+
+def test_quake_lightstyles_match_the_released_source_exactly():
+    for style, sequence in ID_SOFTWARE_LIGHTSTYLES.items():
+        pattern = BUILTIN_BY_ID[QUAKE_STYLE_IDS[style]]
+        assert pattern["sequence"] == sequence, f"style {style}"
+        assert pattern["origin"] == "engine"
+        assert pattern["name"].startswith(f"Quake — {style} ")
+
+
+def test_goldsrc_addition_matches_the_released_source_exactly():
+    assert BUILTIN_BY_ID["hl_underwater"]["sequence"] == GOLDSRC_ADDITION[12]
+    assert BUILTIN_BY_ID["hl_underwater"]["origin"] == "engine"
+
+
+def test_the_quake_lineage_shares_one_table_rather_than_copying_it():
+    from app.patterns import patterns_for
+
+    lineage = ["Quake", "Quake II", "Half-Life", "Half-Life 2 / Source"]
+    tables = {g: {p["sequence"] for p in patterns_for(g)} for g in lineage}
+    quake = tables["Quake"]
+    # Quake II runs the same table; GoldSrc and Source add exactly style 12.
+    assert tables["Quake II"] == quake
+    assert tables["Half-Life"] == quake | {GOLDSRC_ADDITION[12]}
+    assert tables["Half-Life 2 / Source"] == tables["Half-Life"]
+    # and none of the inheritors own a pattern of their own beyond that
+    for game in ["Quake II", "Half-Life 2 / Source"]:
+        assert not [p for p in BUILTIN_PATTERNS if p["game"] == game], game
+
+
+def test_unreal_engine_one_games_share_unreals_light_types():
+    from app.patterns import patterns_for
+
+    unreal = {p["id"] for p in patterns_for("Unreal")}
+    assert {p["id"] for p in patterns_for("Unreal Tournament")} == unreal
+    assert {p["id"] for p in patterns_for("Deus Ex")} == unreal
+
+
+def test_only_verified_tables_claim_engine_origin():
+    # Everything else is authored here, however faithful it aims to be.
+    owners = {p["game"] for p in BUILTIN_PATTERNS if p["origin"] == "engine"}
+    assert owners == {"Quake", "Half-Life"}
+
+
+def test_quake_three_is_deliberately_absent():
+    # id Tech 3 ships no default lightstyle table in its game code, so there
+    # is nothing verbatim to claim and nothing distinctive to author.
+    assert "Quake III" not in GAMES
+    assert not any("Quake III" in p["game"] for p in BUILTIN_PATTERNS)

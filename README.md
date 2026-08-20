@@ -1,7 +1,9 @@
 # Game Hue Flicker Console
 
-Drives Philips Hue lights with the flicker patterns of classic shooters —
-DOOM, Duke Nukem 3D, Quake, Blood, Shadow Warrior, Half-Life and Unreal —
+Drives Philips Hue lights with the flicker patterns of twenty classic games —
+DOOM, Marathon, Heretic, Descent, Hexen, Rise of the Triad, Duke Nukem 3D,
+Quake, Blood, Shadow Warrior, Quake II, Unreal, Half-Life, Thief, System
+Shock 2, Unreal Tournament, Deus Ex, Doom 3, Half-Life 2 and Quake 4 —
 through a small web UI that multiple people on your network can use at once.
 
 <img src="static/icon.png" width="96" alt="">
@@ -85,34 +87,42 @@ Every built-in pattern is named after the game it comes from, and the picker
 groups them by game. There are two kinds, and the difference is worth knowing:
 
 **Straight from the engine.** Quake stored its light effects as literal `a`–`z`
-strings, and all twelve of its styles (0–11) are here verbatim. GoldSrc
-inherited that exact table for Half-Life and added style 12, the underwater
-mutation.
+strings — styles 0–11 plus 63 — and they're here transcribed from id's released
+source, not from memory. Quake II ships that table byte for byte. GoldSrc
+(Half-Life) and Source (Half-Life 2, Portal, TF2, Left 4 Dead) ship it too and
+add style 12, the underwater mutation.
 
-So Half-Life's menu lists all thirteen of its styles, but styles 0–11 are the
-*same entries* as Quake's rather than copies — one pattern appearing under both
-games, marked `shared_with` in the API. Picking "Half-Life — 4 Fast Strobe" and
-"Quake — 4 Fast Strobe" runs the same lightstyle, because in the engines they
-are the same lightstyle. Duplicating the strings would have put two identical
-effects in the list under different names.
+Because those are literally the same strings, they exist once and are *shared*
+into each game's menu rather than copied — `shared_with` in the API. Picking
+"Quake II — 4 Fast Strobe" and "Quake — 4 Fast Strobe" runs the same lightstyle,
+because in the engines it is the same lightstyle. The same goes for the Unreal
+Engine 1 games: Unreal Tournament and Deus Ex list Unreal's `LT_*` light types.
+Copying the strings would have filled the picker with dozens of identical
+effects under different names.
 
-**Written here, in that style.** DOOM, the Build games (Duke Nukem 3D, Blood,
-Shadow Warrior) and Unreal don't store light effects as strings at all — they
-run procedural sector and actor effects in code. Those presets are hand-authored
-sequences approximating the documented behaviour at roughly the original timing:
-DOOM's strobe, glow and fire-flicker sector types; Build engine flickering,
-blinking and pulsating sectors; Blood's guttering torches and lightning; Shadow
-Warrior's neon and failing fluorescents; Unreal's `LT_Pulse`, `LT_Blink`,
-`LT_Flicker`, `LT_SubtlePulse` and `LT_Strobe`. They're a tribute, not a dump of
+The exact tables are pinned in `tests/test_patterns.py` against the four
+released sources, because a wrong style 8 sat here unnoticed until someone
+checked.
+
+**Written here, in that style.** Everything else — DOOM and its descendants
+(Heretic, Hexen), the Build games (Duke Nukem 3D, Blood, Shadow Warrior), the
+Dark engine games (Thief, System Shock 2), id Tech 4 (Doom 3, Quake 4),
+Descent, Marathon, Rise of the Triad and Unreal — doesn't store light effects
+as strings at all. They run procedural sector, actor and material effects in
+code. Those presets are hand-authored sequences approximating the documented
+behaviour at roughly the original timing. They're a tribute, not a dump of
 engine data, and the API marks them `origin: "inspired"` so you can tell them
 apart. The picker says which is which on hover.
+
+**Quake III Arena is deliberately absent**: id Tech 3 ships no default
+lightstyle table in its game code, so there's nothing verbatim to claim.
 
 **Every pattern carries its own speed.** A sputtering bulb and a slow gothic
 throb aren't the same shape played faster or slower, so the rate is stored with
 the sequence and picking a pattern brings its timing along — Shadow Warrior's
-paper lantern comes up at 4 Hz, Unreal's `LT_Flicker` at 16. Quake's and
-Half-Life's engine styles are all 10 Hz because that is the rate their engines
-step the lightstyle table at; that one isn't a taste call. You can still drag
+paper lantern comes up at 4 Hz, Unreal's `LT_Flicker` at 16. The engine-sourced
+styles are all 10 Hz because that is the rate those engines step the lightstyle
+table at; that one isn't a taste call. You can still drag
 the speed slider afterwards and it will stick.
 
 Add your own in `app/patterns.py`, or write them in the UI (see below).
