@@ -430,12 +430,19 @@ def test_status_reports_the_rate_a_light_actually_gets(client, bridge, app_modul
     client.put("/api/settings", json={"max_commands_per_second": 10, "restore_on_stop": True})
     client.post("/api/flicker/start",
                 json={"light_ids": ["1", "2", "3"], "pattern_id": "flicker_a", "hz": 10})
+    from app.flicker_engine import GROUP_HEADROOM
+
     status = client.get("/api/status").json()["lights"]
     assert status["1"]["hz"] == 10
-    assert status["1"]["effective_hz"] == pytest.approx(3.33, abs=0.01)
+    # Lights sharing the bridge leave a little of the budget unspent so their
+    # sends can go out as one burst instead of strung out across the second.
+    assert status["1"]["effective_hz"] == pytest.approx(10 * GROUP_HEADROOM / 3, abs=0.01)
     client.post("/api/flicker/stop", json={"light_ids": ["3"]})
-    # one fewer light means a bigger share for the rest
-    assert client.get("/api/status").json()["lights"]["1"]["effective_hz"] == 5.0
+    assert client.get("/api/status").json()["lights"]["1"]["effective_hz"] == pytest.approx(
+        10 * GROUP_HEADROOM / 2, abs=0.01)
+    client.post("/api/flicker/stop", json={"light_ids": ["2"]})
+    # the last light left has nothing to stay in step with, so it gets the lot
+    assert client.get("/api/status").json()["lights"]["1"]["effective_hz"] == 10.0
     client.post("/api/flicker/stop", json={})
 
 
@@ -854,3 +861,154 @@ def test_colour_survives_being_shared(client):
         {"name": "Cold", "sequence": "zzaa", "hue": 44000, "sat": 200},
     ]}).json()["added"][0]
     assert (added["hue"], added["sat"]) == (44000, 200)
+
+
+def test_update_cannot_invert_the_window_with_one_bound(client, bridge):
+    # Regression: supplying only max_bri was validated against nothing, so it
+    # could land below the min already running and play the waveform upside
+    # down with a 200 OK.
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "sw_lantern"})
+    running = client.get("/api/status").json()["lights"]["1"]
+    assert (running["min_bri"], running["max_bri"]) == (60, 200)
+
+    r = client.post("/api/flicker/update", json={"light_ids": ["1"], "max_bri": 20})
+    assert r.status_code == 422
+    assert "60-200" in r.json()["detail"]
+
+    unchanged = client.get("/api/status").json()["lights"]["1"]
+    assert (unchanged["min_bri"], unchanged["max_bri"]) == (60, 200)
+    client.post("/api/flicker/stop", json={})
+
+
+def test_update_accepts_one_bound_that_still_fits(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "sw_lantern"})
+    assert client.post("/api/flicker/update",
+                       json={"light_ids": ["1"], "max_bri": 120}).status_code == 200
+    st = client.get("/api/status").json()["lights"]["1"]
+    assert (st["min_bri"], st["max_bri"]) == (60, 120)
+    client.post("/api/flicker/stop", json={})
+
+
+def test_update_rejects_the_whole_request_not_just_one_light(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "flicker_a"})
+    client.post("/api/flicker/start", json={"light_ids": ["2"], "pattern_id": "sw_lantern"})
+    # light 2 is running 60-200, so this is fine for light 1 and not for 2
+    r = client.post("/api/flicker/update", json={"light_ids": ["1", "2"], "max_bri": 30})
+    assert r.status_code == 422
+    st = client.get("/api/status").json()["lights"]
+    assert st["1"]["max_bri"] == 254 and st["2"]["max_bri"] == 200
+    client.post("/api/flicker/stop", json={})
+
+
+def test_changing_one_setting_leaves_the_other_alone(client, app_modules):
+    # Regression: the model defaulted restore_on_stop to True, so a caller
+    # sending only the rate silently switched restoring back on.
+    client.put("/api/settings", json={"max_commands_per_second": 10, "restore_on_stop": False})
+    assert client.get("/api/settings").json()["restore_on_stop"] is False
+
+    client.put("/api/settings", json={"max_commands_per_second": 5})
+    settings = client.get("/api/settings").json()
+    assert settings["max_commands_per_second"] == 5.0
+    assert settings["restore_on_stop"] is False
+    assert app_modules.engine.restore_on_stop is False
+
+    client.put("/api/settings", json={"restore_on_stop": True})
+    settings = client.get("/api/settings").json()
+    assert settings["restore_on_stop"] is True
+    assert settings["max_commands_per_second"] == 5.0     # rate survived
+
+
+def test_an_empty_settings_body_changes_nothing(client):
+    client.put("/api/settings", json={"max_commands_per_second": 7, "restore_on_stop": False})
+    r = client.put("/api/settings", json={})
+    assert r.status_code == 200
+    assert r.json() == {"max_commands_per_second": 7.0, "restore_on_stop": False}
+
+
+def test_settings_still_rejects_out_of_range_values(client):
+    assert client.put("/api/settings", json={"max_commands_per_second": 0}).status_code == 422
+    assert client.put("/api/settings", json={"max_commands_per_second": 99}).status_code == 422
+
+
+def test_starting_a_group_sizes_the_send_budget_for_it(client, bridge, app_modules):
+    # The limiter has to know the batch size before anything is sent, or the
+    # snapshot read spends the only token and the group's first round is
+    # strung out behind it. The read counts too, hence one more than the
+    # number of lights.
+    configure(client)
+    client.post("/api/flicker/start",
+                json={"light_ids": ["1", "2", "3"], "pattern_id": "flicker_a"})
+    assert app_modules.engine.limiter.burst == 4
+
+    # and it shrinks back as lights stop, so a single light doesn't sit on a
+    # bucket sized for a group
+    client.post("/api/flicker/stop", json={"light_ids": ["3"]})
+    assert app_modules.engine.limiter.burst == 2
+    client.post("/api/flicker/stop", json={})
+    assert app_modules.engine.limiter.burst == 1
+
+
+# ---------- importing the bridge's own rooms ----------
+
+def test_bridge_rooms_and_zones_are_offered(client, bridge):
+    configure(client)
+    groups = client.get("/api/bridge/groups").json()["groups"]
+    by_name = {g["name"]: g for g in groups}
+    assert set(by_name) == {"Living room", "Upstairs", "Odds and ends"}
+    assert by_name["Living room"]["type"] == "Room"
+    assert by_name["Living room"]["class"] == "Living room"
+    assert by_name["Living room"]["light_ids"] == ["1", "3"]
+    assert by_name["Upstairs"]["type"] == "Zone"
+
+
+def test_luminaires_and_entertainment_areas_are_not_offered(client, bridge):
+    # A Luminaire describes the innards of one fitting and an Entertainment
+    # area belongs to the streaming API; neither is a group you'd flicker.
+    configure(client)
+    names = [g["name"] for g in client.get("/api/bridge/groups").json()["groups"]]
+    assert "Ceiling fitting" not in names
+    assert "TV area" not in names
+
+
+def test_rooms_are_listed_before_zones(client, bridge):
+    configure(client)
+    types = [g["type"] for g in client.get("/api/bridge/groups").json()["groups"]]
+    assert types.index("Room") < types.index("Zone")
+
+
+def test_bridge_groups_need_a_bridge(client):
+    assert client.get("/api/bridge/groups").status_code == 400
+
+
+def test_bridge_groups_surface_a_failure(client, app_modules, monkeypatch):
+    configure(client)
+
+    async def boom(self):
+        raise RuntimeError("no route to host")
+
+    monkeypatch.setattr(app_modules.HueClient, "get_groups", boom)
+    assert client.get("/api/bridge/groups").status_code == 502
+
+
+def test_a_bridge_room_can_be_saved_as_a_group(client, bridge):
+    configure(client)
+    room = next(g for g in client.get("/api/bridge/groups").json()["groups"]
+                if g["name"] == "Living room")
+    made = client.post("/api/groups",
+                       json={"name": room["name"], "light_ids": room["light_ids"]}).json()
+    assert made["light_ids"] == ["1", "3"]
+    # and it drives its members like any other group
+    client.post("/api/flicker/start",
+                json={"light_ids": made["light_ids"], "pattern_id": "flicker_a"})
+    status = client.get("/api/status").json()["lights"]
+    assert status["1"]["running"] and status["3"]["running"]
+    client.post("/api/flicker/stop", json={})
+
+
+def test_importing_is_gated_by_the_console_password(client):
+    client.put("/api/auth/password", json={"new_password": "quaddamage"})
+    client.cookies.clear()
+    assert client.get("/api/bridge/groups").status_code == 401

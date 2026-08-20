@@ -40,6 +40,12 @@ class HueClient:
         r.raise_for_status()
         return r.json()
 
+    async def get_groups(self) -> dict:
+        """The bridge's own groups: the Rooms and Zones set up in the Hue app."""
+        r = await _http().get(f"{self.base_url}/groups", timeout=5)
+        r.raise_for_status()
+        return r.json()
+
     async def set_light_state(self, light_id: str, **state) -> dict:
         r = await _http().put(f"{self.base_url}/lights/{light_id}/state", json=state, timeout=3)
         r.raise_for_status()

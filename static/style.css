@@ -461,6 +461,32 @@ select {
 .settings-grid .field { margin-bottom: 12px; flex: 0 0 auto; }
 .settings-grid .btn { align-self: flex-start; }
 
+.bridge-groups { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+
+.bridge-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--void);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+.bridge-group .bg-name { color: var(--bone); }
+.bridge-group .bg-meta { color: var(--bone-dim); font-size: 11px; }
+.bridge-group .bg-type {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--brimstone);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 1px 5px;
+}
+.bridge-group .btn { padding: 4px 10px; font-size: 11px; }
+.bridge-group.taken { opacity: 0.55; }
+
 .pw-actions { display: flex; gap: 10px; }
 
 .share-row .settings-subhead { margin-top: 20px; }
@@ -497,7 +523,29 @@ select {
 .custom-seq-field { flex: 2 1 260px; }
 .custom-framing { margin-top: 14px; }
 .custom-framing .field { flex: 1 1 150px; }
-.custom-color-row { flex: 1 1 200px; margin-top: 0; align-items: center; }
+.custom-color-row {
+  flex: 1 1 100%;          /* its own line: the label and code box need room */
+  margin-top: 0;
+  align-items: center;
+  gap: 12px;
+}
+.custom-color-row .checkbox-field { flex: 0 0 auto; white-space: nowrap; }
+.color-code {
+  font-family: var(--font-mono);
+  background: var(--void);
+  border: 1px solid var(--line);
+  color: var(--bone);
+  padding: 5px 8px;
+  border-radius: 2px;
+  font-size: 12px;
+  width: 100%;
+  min-width: 0;
+  margin-top: 8px;
+}
+.color-code:focus { outline: none; border-color: var(--ember); }
+.color-code.err { border-color: var(--danger-bright); color: var(--danger-bright); }
+.custom-color-row .color-code { margin-top: 0; flex: 0 1 220px; width: auto; }
+
 .chip-color {
   width: 11px; height: 11px; border-radius: 2px;
   border: 1px solid var(--line); flex: 0 0 auto;

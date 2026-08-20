@@ -24,7 +24,8 @@ web UI that multiple people on your network can use at once.
   files other people send you.
 - Retunes running lights on the fly — pattern, speed, brightness and color
   all take effect mid-flicker, no stop-and-restart.
-- Groups any set of bulbs behind one set of controls, flickering in step.
+- Groups any set of bulbs behind one set of controls, flickering in step,
+  and can copy the rooms and zones already set up in the Hue app.
 - Reads each bulb's colour and brightness before it starts, and puts it back
   when the flicker stops — even if the container was killed mid-run.
 - Optionally locks the console behind a password you set in the UI.
@@ -144,6 +145,20 @@ they leave whatever colour you set in the Hue app alone. Unticking **Set
 color** overrides a pattern that names one; the brightness framing still
 applies.
 
+Under each swatch is a box you can type a colour into, which is the way to get
+an exact one. It takes either form:
+
+| You type | You get |
+|---|---|
+| `6000,225` | exactly that — Hue's own hue and saturation |
+| `#ff991d` | the nearest hue/sat, `5993,225` |
+| `#f80` | shorthand hex, expanded |
+
+`hue,sat` is the exact form because it's what the bridge actually takes and
+what the pattern table stores; a trip through RGB has to round. The box shows
+the numbers being sent, so picking a preset tells you its exact colour. Typing
+something unparseable marks the box red and changes nothing.
+
 The engine-sourced styles are deliberately left unframed: full range, no
 smoothing, no colour, and all 10 Hz because that is the rate those engines step
 the lightstyle table at. Their `a`–`z` curve *is* the whole brightness story,
@@ -213,6 +228,17 @@ Tick the lights you want to run together in the **Groups** panel, give them a
 name, and they get one card whose controls drive all of them at once. Members
 keep their own cards too, so you can still tweak one light without leaving the
 group.
+
+**Or copy one from the bridge.** The Hue app already knows your lighting as
+*Rooms* (a light belongs to exactly one) and *Zones* (any set, overlapping
+allowed). **Use a room from the bridge** lists both and copies one over in a
+click, rather than making you pick the same bulbs again. LightHue's groups
+behave like zones, so either kind copies across fine.
+
+Luminaires and Entertainment areas aren't offered: the first describes the
+innards of a single fitting, the second belongs to Hue's streaming API. A room
+containing a bulb this console can't see is listed with that noted and no Add
+button, because driving a light id that isn't there just burns bridge budget.
 
 A group card shows `2/3 FLICKERING` when only some members are running, and
 offers **Start the rest** alongside **Stop** so you can bring stragglers into

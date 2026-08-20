@@ -174,8 +174,14 @@ class ClearPasswordRequest(BaseModel):
 
 
 class SettingsRequest(BaseModel):
-    max_commands_per_second: float = Field(..., ge=1.0, le=30.0)
-    restore_on_stop: bool = True
+    """Whatever is supplied is changed; anything left out is left alone.
+
+    A default here would mean a caller sending one setting silently resets the
+    other, which is a nasty way to lose a preference.
+    """
+
+    max_commands_per_second: float | None = Field(None, ge=1.0, le=30.0)
+    restore_on_stop: bool | None = None
 
 
 class StartRequest(BaseModel):
@@ -298,10 +304,9 @@ async def get_settings():
 
 @app.put("/api/settings")
 async def put_settings(req: SettingsRequest):
-    settings = config_store.update_settings(
-        max_commands_per_second=req.max_commands_per_second,
-        restore_on_stop=req.restore_on_stop,
-    )
+    changes = req.model_dump(exclude_none=True)
+    settings = config_store.update_settings(**changes) if changes \
+        else config_store.get_settings()
     engine.limiter.set_rate(settings["max_commands_per_second"])
     engine.restore_on_stop = settings["restore_on_stop"]
     return settings
@@ -489,6 +494,39 @@ def _resolve_sequence(pattern_id: str) -> str:
 
 # ---------- Groups ----------
 
+# What the Hue app calls a Room or a Zone. Luminaire and LightSource describe
+# the innards of a single fitting, and Entertainment areas belong to the
+# streaming API, so none of those are worth offering as flicker groups.
+IMPORTABLE_GROUP_TYPES = {"Room", "Zone", "LightGroup"}
+
+
+@app.get("/api/bridge/groups")
+async def list_bridge_groups():
+    """The rooms and zones already set up in the Hue app, ready to copy over."""
+    client = get_client()
+    if client is None:
+        raise HTTPException(400, "Bridge not configured yet")
+    try:
+        groups = await client.get_groups()
+    except Exception as e:
+        raise HTTPException(502, f"Could not reach bridge: {e}") from e
+
+    out = []
+    for gid, info in groups.items():
+        if info.get("type") not in IMPORTABLE_GROUP_TYPES:
+            continue
+        out.append({
+            "id": gid,
+            "name": info.get("name", f"Group {gid}"),
+            "type": info.get("type"),
+            # Rooms carry a class like "Kitchen"; zones generally don't.
+            "class": info.get("class"),
+            "light_ids": [str(x) for x in info.get("lights", [])],
+        })
+    out.sort(key=lambda g: (g["type"] != "Room", g["name"].casefold()))
+    return {"groups": out}
+
+
 @app.get("/api/groups")
 async def list_groups():
     cfg = config_store.load()
@@ -556,6 +594,10 @@ async def start_flicker(req: StartRequest):
             422, "min_bri must be less than or equal to max_bri "
                  f"(got {framing['min_bri']} against the pattern's {framing['max_bri']})",
         )
+    # Size the send budget before anything goes out, or the snapshot read below
+    # spends the only token and the group's first round is strung out behind
+    # it. The read counts against the budget too, hence the extra one.
+    engine.expect_batch(len(req.light_ids) + 1)
     # Snapshot first — one bulk GET for the whole group — so Stop has something
     # to put back. Lights already running keep their earlier snapshot.
     await engine.capture(req.light_ids)
@@ -582,6 +624,24 @@ async def update_flicker(req: UpdateRequest):
                 continue        # only ever changed when the caller asks
             if getattr(req, field) is None:
                 changes[field] = value
+    # A bound supplied on its own still has to make sense against the one the
+    # light is already running, or the brightness window inverts and the
+    # waveform quietly plays upside down.
+    status = engine.status()
+    for lid in req.light_ids:
+        state = status.get(lid)
+        if not state or not state.get("running"):
+            continue
+        low = changes.get("min_bri", state["min_bri"])
+        high = changes.get("max_bri", state["max_bri"])
+        if low > high:
+            raise HTTPException(
+                422,
+                "min_bri must be less than or equal to max_bri "
+                f"(light {lid} is running {state['min_bri']}-{state['max_bri']}, "
+                f"so this would leave it {low}-{high})",
+            )
+
     updated = [lid for lid in req.light_ids if engine.update(lid, **changes)]
     if not updated:
         raise HTTPException(409, "None of those lights are currently flickering")

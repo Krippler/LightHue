@@ -31,6 +31,7 @@
     Talks directly to your Hue Bridge over the local API - no Philips cloud account
     needed. Pick lights, pattern, speed, brightness range and colour, and change any
     of it while the lights are still running. Group bulbs so they flicker in step,
+    copying the rooms and zones you already set up in the Hue app if you like,
     write your own a-z lightstyle strings, and watch a live waveform of what each
     light is doing.&#13;
     &#13;
