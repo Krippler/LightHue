@@ -144,6 +144,20 @@ they leave whatever colour you set in the Hue app alone. Unticking **Set
 color** overrides a pattern that names one; the brightness framing still
 applies.
 
+Under each swatch is a box you can type a colour into, which is the way to get
+an exact one. It takes either form:
+
+| You type | You get |
+|---|---|
+| `6000,225` | exactly that — Hue's own hue and saturation |
+| `#ff991d` | the nearest hue/sat, `5993,225` |
+| `#f80` | shorthand hex, expanded |
+
+`hue,sat` is the exact form because it's what the bridge actually takes and
+what the pattern table stores; a trip through RGB has to round. The box shows
+the numbers being sent, so picking a preset tells you its exact colour. Typing
+something unparseable marks the box red and changes nothing.
+
 The engine-sourced styles are deliberately left unframed: full range, no
 smoothing, no colour, and all 10 Hz because that is the rate those engines step
 the lightstyle table at. Their `a`–`z` curve *is* the whole brightness story,

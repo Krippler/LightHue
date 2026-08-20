@@ -208,7 +208,7 @@ function currentColorOf(entity) {
   for (const id of entity.lightIds) {
     const light = LIGHTS.find(l => l.id === id);
     if (light && light.has_color && light.hue !== null && light.sat !== null) {
-      return hueSatToHex(light.hue, light.sat);
+      return { hue: light.hue, sat: light.sat };
     }
   }
   return null;
@@ -330,7 +330,7 @@ function buildCard(entity) {
   // hardcoded default, so "Set color" doesn't jump it somewhere unexpected.
   // applyPatternFraming below overrides this when the pattern names a colour.
   const seed = currentColorOf(entity);
-  if (seed) colorInput.value = seed;
+  if (seed) setCardColor(card, seed.hue, seed.sat);
 
   btnRevert.addEventListener('click', async () => {
     try {
@@ -382,7 +382,7 @@ function buildCard(entity) {
     // that doesn't leaves the bulb's own colour alone rather than forcing
     // white on it.
     if (framing.hue !== null && framing.sat !== null) {
-      colorInput.value = hueSatToHex(framing.hue, framing.sat);
+      setCardColor(card, framing.hue, framing.sat);
       colorEnable.checked = true;
     } else {
       colorEnable.checked = false;
@@ -397,10 +397,34 @@ function buildCard(entity) {
   // The swatch is always live: picking a color means you want it, so it ticks
   // the box for you rather than being greyed out until you find the box.
   colorInput.addEventListener('input', () => {
+    const hs = rgbToHueSat(hexToRgb(colorInput.value));
+    setCardColor(card, hs.hue, hs.sat);
     if (!colorEnable.checked) colorEnable.checked = true;
     pushLive(entity);
   });
   colorEnable.addEventListener('change', () => pushLive(entity));
+
+  const colorCode = node.querySelector('.color-code');
+  colorCode.addEventListener('input', () => {
+    const parsed = parseColorCode(colorCode.value);
+    if (!parsed) {
+      // Flag it rather than silently keeping the old colour, but leave what
+      // they typed alone so it can be corrected.
+      colorCode.classList.toggle('err', colorCode.value.trim() !== '');
+      return;
+    }
+    colorCode.classList.remove('err');
+    card.dataset.hue = parsed.hue;
+    card.dataset.sat = parsed.sat;
+    colorInput.value = hueSatToHex(parsed.hue, parsed.sat);
+    if (!colorEnable.checked) colorEnable.checked = true;
+    pushLive(entity);
+  });
+  // Tidy the typed form up to the canonical one once they're done.
+  colorCode.addEventListener('change', () => {
+    const parsed = parseColorCode(colorCode.value);
+    if (parsed) setCardColor(card, parsed.hue, parsed.sat);
+  });
 
   btnStart.addEventListener('click', async () => {
     try {
@@ -428,8 +452,7 @@ function cardSettings(card) {
   const colorEnable = card.querySelector('.color-enable');
   let hue = null, sat = null;
   if (colorEnable.checked) {
-    const hs = rgbToHueSat(hexToRgb(card.querySelector('.color-input').value));
-    hue = hs.hue; sat = hs.sat;
+    ({ hue, sat } = cardColor(card));
   }
   return {
     pattern_id: card.querySelector('.pattern-select').value,
@@ -623,9 +646,46 @@ function setCustomStatus(text, kind = '') {
   customStatus.className = `status-line ${kind}`.trim();
 }
 
+// The custom form's colour works the same way: one exact pair, two views.
 const customColor = $('#custom-color');
+const customColorCode = $('#custom-color-code');
+let customHue = null;
+let customSat = null;
+
+function setCustomColor(hue, sat) {
+  customHue = hue;
+  customSat = sat;
+  customColorCode.classList.remove('err');
+  if (hue === null) {
+    customColorCode.value = '';
+    return;
+  }
+  customColor.value = hueSatToHex(hue, sat);
+  customColorCode.value = `${hue},${sat}`;
+}
+
 customColor.addEventListener('input', () => {
+  const hs = rgbToHueSat(hexToRgb(customColor.value));
+  setCustomColor(hs.hue, hs.sat);
   $('#custom-color-enable').checked = true;
+});
+
+customColorCode.addEventListener('input', () => {
+  const parsed = parseColorCode(customColorCode.value);
+  if (!parsed) {
+    customColorCode.classList.toggle('err', customColorCode.value.trim() !== '');
+    return;
+  }
+  customColorCode.classList.remove('err');
+  customHue = parsed.hue;
+  customSat = parsed.sat;
+  customColor.value = hueSatToHex(parsed.hue, parsed.sat);
+  $('#custom-color-enable').checked = true;
+});
+
+customColorCode.addEventListener('change', () => {
+  const parsed = parseColorCode(customColorCode.value);
+  if (parsed) setCustomColor(parsed.hue, parsed.sat);
 });
 
 [['#custom-hz', '#custom-hz-value'],
@@ -655,14 +715,17 @@ $('#btn-save-pattern').addEventListener('click', async () => {
   const name = customName.value.trim();
   const sequence = normalizeSequence(customSeq.value);
   const wantsColor = $('#custom-color-enable').checked;
-  const customHs = wantsColor ? rgbToHueSat(hexToRgb($('#custom-color').value)) : null;
+  // Fall back to the swatch only if nothing exact has been set yet.
+  const exact = customHue !== null
+    ? { hue: customHue, sat: customSat }
+    : rgbToHueSat(hexToRgb(customColor.value));
   const framing = {
     hz: Number($('#custom-hz').value),
     min_bri: Number($('#custom-minbri').value),
     max_bri: Number($('#custom-maxbri').value),
     transition_ms: Number($('#custom-trans').value),
-    hue: customHs ? customHs.hue : null,
-    sat: customHs ? customHs.sat : null,
+    hue: wantsColor ? exact.hue : null,
+    sat: wantsColor ? exact.sat : null,
   };
   if (!name) return setCustomStatus('Give the pattern a name.', 'err');
   if (!sequence) return setCustomStatus('Write a sequence first.', 'err');
@@ -674,6 +737,8 @@ $('#btn-save-pattern').addEventListener('click', async () => {
     });
     customName.value = '';
     customSeq.value = '';
+    setCustomColor(null, null);
+    $('#custom-color-enable').checked = false;
     renderBars($('#custom-preview'), '');
     const seconds = (sequence.length / framing.hz).toFixed(1);
     setCustomStatus(`Saved "${name}" at ${framing.hz} Hz — a ${seconds}s cycle.`, 'ok');
@@ -893,7 +958,7 @@ function syncControls(card, key, st) {
   const colorEnable = card.querySelector('.color-enable');
   if (st.hue !== null && st.hue !== undefined && st.sat !== null && st.sat !== undefined) {
     colorEnable.checked = true;
-    card.querySelector('.color-input').value = hueSatToHex(st.hue, st.sat);
+    setCardColor(card, st.hue, st.sat);
   } else {
     colorEnable.checked = false;
   }
@@ -908,6 +973,57 @@ function hexToRgb(hex) {
     g: parseInt(v.substring(2, 4), 16),
     b: parseInt(v.substring(4, 6), 16),
   };
+}
+
+// Accepts a hex code or Hue's own numbers. hue,sat is the exact form: it is
+// what the bridge actually takes, and what the pattern table stores, so typing
+// it avoids the rounding a trip through RGB costs.
+function parseColorCode(text) {
+  const raw = String(text).trim();
+  if (!raw) return null;
+
+  let hex = /^#?([0-9a-fA-F]{6})$/.exec(raw);
+  if (hex) return rgbToHueSat(hexToRgb(hex[1]));
+
+  hex = /^#?([0-9a-fA-F]{3})$/.exec(raw);
+  if (hex) {
+    const [r, g, b] = hex[1];      // #f80 is shorthand for #ff8800
+    return rgbToHueSat(hexToRgb(`${r}${r}${g}${g}${b}${b}`));
+  }
+
+  const pair = /^(\d{1,5})\s*[,/ ]\s*(\d{1,3})$/.exec(raw);
+  if (pair) {
+    const hue = Number(pair[1]);
+    const sat = Number(pair[2]);
+    if (hue <= 65535 && sat <= 254) return { hue, sat };
+  }
+  return null;
+}
+
+// The swatch and the code box are two views of one exact pair held on the
+// card. Reading the colour back off the swatch would re-round it every time.
+function setCardColor(card, hue, sat) {
+  const code = card.querySelector('.color-code');
+  const swatch = card.querySelector('.color-input');
+  code.classList.remove('err');
+  if (hue === null || hue === undefined || sat === null || sat === undefined) {
+    delete card.dataset.hue;
+    delete card.dataset.sat;
+    code.value = '';
+    return;
+  }
+  card.dataset.hue = hue;
+  card.dataset.sat = sat;
+  swatch.value = hueSatToHex(hue, sat);
+  code.value = `${hue},${sat}`;
+}
+
+function cardColor(card) {
+  if (card.dataset.hue !== undefined) {
+    return { hue: Number(card.dataset.hue), sat: Number(card.dataset.sat) };
+  }
+  // Nothing exact recorded yet, so fall back to whatever the swatch shows.
+  return rgbToHueSat(hexToRgb(card.querySelector('.color-input').value));
 }
 
 function hueSatToHex(hue, sat) {
