@@ -600,6 +600,86 @@ function renderCustomList() {
   });
 }
 
+// ---------- Sharing patterns as a file ----------
+
+function setShareStatus(text, kind = '') {
+  const el = $('#share-status');
+  el.textContent = text;
+  el.className = `status-line ${kind}`.trim();
+}
+
+$('#btn-export-patterns').addEventListener('click', async () => {
+  try {
+    // Fetched rather than linked so a failure surfaces as a message here
+    // instead of dumping JSON into a browser tab.
+    const res = await fetch('/api/patterns/export');
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(errorText(data, res));
+    }
+    const blob = await res.blob();
+    const match = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') || '');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = match ? match[1] : 'patterns.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    const n = PATTERNS.custom.length;
+    setShareStatus(`Exported ${n} pattern${n === 1 ? '' : 's'}.`, 'ok');
+  } catch (e) {
+    setShareStatus(e.message, 'err');
+  }
+});
+
+$('#btn-import-patterns').addEventListener('click', () => $('#import-file').click());
+
+$('#import-file').addEventListener('change', async (evt) => {
+  const file = evt.target.files && evt.target.files[0];
+  evt.target.value = '';          // so picking the same file twice still fires
+  if (!file) return;
+  setShareStatus(`Reading ${file.name}\u2026`);
+  let payload;
+  try {
+    payload = JSON.parse(await file.text());
+  } catch {
+    setShareStatus(`${file.name} isn't valid JSON.`, 'err');
+    return;
+  }
+  try {
+    const result = await api('/api/patterns/import', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    await loadPatternsAndLights();
+    setShareStatus(describeImport(result, file.name), result.added.length ? 'ok' : '');
+  } catch (e) {
+    setShareStatus(e.message, 'err');
+  }
+});
+
+function describeImport(result, filename) {
+  const from = result.pack_name
+    ? `"${result.pack_name}"${result.author ? ` by ${result.author}` : ''}`
+    : filename;
+  const added = result.added.length;
+  const skipped = result.skipped.length;
+  if (!added && !skipped) return `${from} had nothing to add.`;
+  const parts = [];
+  parts.push(added
+    ? `Added ${added} pattern${added === 1 ? '' : 's'} from ${from}`
+    : `Nothing new in ${from}`);
+  if (skipped) {
+    // Name the first couple so "skipped 3" isn't a mystery.
+    const shown = result.skipped.slice(0, 2).map(s => `${s.name} (${s.reason})`).join('; ');
+    const more = skipped > 2 ? `, and ${skipped - 2} more` : '';
+    parts.push(`already had ${shown}${more}`);
+  }
+  return `${parts.join(' — ')}.`;
+}
+
 // ---------- Status sync (drives multi-user shared state) ----------
 
 // Controls are only pulled back into line with the server when the user isn't

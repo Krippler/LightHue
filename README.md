@@ -17,6 +17,8 @@ through a small web UI that multiple people on your network can use at once.
   open, they see the same running/stopped state and controls in real time.
 - Lets you write and save custom a–z lightstyle strings as reusable
   patterns, with a live waveform preview.
+- Exports your patterns to a small JSON file you can share, and imports
+  files other people send you.
 - Retunes running lights on the fly — pattern, speed, brightness and color
   all take effect mid-flicker, no stop-and-restart.
 - Groups any set of bulbs behind one set of controls, flickering in step.
@@ -106,6 +108,45 @@ engine data, and the API marks them `origin: "inspired"` so you can tell them
 apart. The picker says which is which on hover.
 
 Add your own in `app/patterns.py`, or write them in the UI (see below).
+
+## Sharing patterns
+
+Custom patterns can be moved between consoles as a file. **Export to file** in
+the Custom Lightstyles panel downloads everything you've written; **Import from
+file** loads one someone sent you.
+
+The format is deliberately small, so a pack can be written by hand in a text
+editor and sent to someone who then just imports it:
+
+```json
+{
+  "format": "game-hue-flicker/patterns",
+  "version": 1,
+  "name": "Doom 3 style flicker",
+  "author": "someone",
+  "patterns": [
+    { "name": "Sputtering Lamp", "sequence": "mmnnaamm" }
+  ]
+}
+```
+
+Only `patterns` is required — `{"patterns": [...]}` on its own imports fine.
+Sequences are normalised on the way in, so spacing and capitalisation don't
+matter. Unknown keys are ignored, which leaves room for packs to carry extra
+metadata without older consoles choking on it.
+
+Importing never overwrites anything you already have:
+
+- A pattern whose sequence you already have — under any name, custom or
+  built-in — is skipped and reported, because two names for one identical
+  effect is just clutter in the picker.
+- A pattern whose *name* collides but whose sequence differs is added as
+  "Torchlight (2)" rather than replacing yours.
+- If any entry in the file is malformed the whole import is refused and
+  nothing changes, with a message naming the entry at fault.
+
+Exported files contain only names and sequences — no bridge details, no
+credentials, nothing console-specific — so they're safe to pass around.
 
 ## Groups
 
@@ -199,6 +240,7 @@ app/
   hue_client.py      Hue Bridge HTTP client (discover/pair/lights/state)
   flicker_engine.py  Per-light async flicker loops + rate limiter
   patterns.py        Built-in flicker patterns, by game
+  packs.py           Shareable pattern-pack file format
   config_store.py    Persisted JSON config (bridge creds, patterns, settings)
 static/
   index.html, style.css, app.js   The control UI

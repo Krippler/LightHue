@@ -473,6 +473,9 @@ select {
 
 .pw-actions { display: flex; gap: 10px; }
 
+.share-row .settings-subhead { margin-top: 20px; }
+.share-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
 .settings-subhead {
   font-family: var(--font-display);
   font-size: 15px;

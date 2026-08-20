@@ -4,12 +4,20 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import (
+    Body,
+    FastAPI,
+    HTTPException,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
-from . import auth, config_store, hue_client
+from . import auth, config_store, hue_client, packs
 from .auth import ConsoleAuthMiddleware
 from .flicker_engine import FlickerEngine
 from .hue_client import HueClient
@@ -374,6 +382,60 @@ async def delete_pattern(pattern_id: str):
         raise HTTPException(404, f"Unknown pattern_id: {pattern_id}")
     config_store.save(cfg)
     return {"ok": True}
+
+
+@app.get("/api/patterns/export")
+async def export_patterns():
+    """Download your custom patterns as a pack file you can hand to someone."""
+    cfg = config_store.load()
+    custom = list(cfg.get("custom_patterns", {}).values())
+    if not custom:
+        raise HTTPException(404, "You haven't saved any custom patterns yet")
+    pack = packs.build(custom)
+    stamp = pack["exported_at"][:10]
+    return JSONResponse(
+        pack,
+        headers={
+            "Content-Disposition":
+                f'attachment; filename="game-hue-flicker-patterns-{stamp}.json"',
+        },
+    )
+
+
+@app.post("/api/patterns/import")
+async def import_patterns(payload: dict = Body(...)):
+    """Load a pack file. Reports what came in and what was left alone."""
+    try:
+        entries = packs.parse(payload)
+    except packs.PackError as e:
+        raise HTTPException(400, str(e)) from e
+
+    cfg = config_store.load()
+    existing = cfg["custom_patterns"]
+    # An identical sequence under a new name is just the same effect twice in
+    # the menu, so those are reported rather than added. Built-ins count too.
+    by_sequence = {p["sequence"]: p["name"] for p in BUILTIN_PATTERNS}
+    by_sequence.update({p["sequence"]: p["name"] for p in existing.values()})
+    names = {p["name"] for p in existing.values()}
+
+    added, skipped = [], []
+    for entry in entries:
+        clash = by_sequence.get(entry["sequence"])
+        if clash is not None:
+            skipped.append({"name": entry["name"],
+                            "reason": f"same sequence as \"{clash}\""})
+            continue
+        name = packs.unique_name(entry["name"], names)
+        pid = f"custom_{uuid.uuid4().hex[:8]}"
+        existing[pid] = {"id": pid, "name": name, "sequence": entry["sequence"]}
+        by_sequence[entry["sequence"]] = name
+        names.add(name)
+        added.append(existing[pid])
+
+    if added:
+        config_store.save(cfg)
+    return {"ok": True, "added": added, "skipped": skipped,
+            "pack_name": payload.get("name"), "author": payload.get("author")}
 
 
 def _resolve_sequence(pattern_id: str) -> str:

@@ -183,6 +183,18 @@
         <div id="custom-preview" class="waveform custom-preview" aria-hidden="true"></div>
         <div id="custom-status" class="status-line"></div>
         <div id="custom-list" class="custom-list"></div>
+
+        <div class="share-row">
+          <h3 class="settings-subhead">Share patterns</h3>
+          <p class="sub small">Export yours to a small JSON file you can send to someone, or load a
+          file they sent you. Anything you already have is left alone.</p>
+          <div class="share-actions">
+            <button id="btn-export-patterns" class="btn">Export to file</button>
+            <button id="btn-import-patterns" class="btn">Import from file&hellip;</button>
+            <input id="import-file" type="file" accept="application/json,.json" hidden />
+          </div>
+          <div id="share-status" class="status-line"></div>
+        </div>
       </section>
 
       <div id="lights-grid" class="lights-grid"></div>

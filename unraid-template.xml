@@ -22,6 +22,9 @@
     effects of DOOM, Duke Nukem 3D, Blood, Shadow Warrior and Unreal. Every preset
     is named after the game it comes from.&#13;
     &#13;
+    Write your own patterns too, and share them: export yours to a small JSON file
+    to send to someone, or import one they sent you.&#13;
+    &#13;
     Talks directly to your Hue Bridge over the local API - no Philips cloud account
     needed. Pick lights, pattern, speed, brightness range and colour, and change any
     of it while the lights are still running. Group bulbs so they flicker in step,
