@@ -6,6 +6,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 from fastapi import (
     Body,
     FastAPI,
@@ -17,12 +18,12 @@ from fastapi import (
 )
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from . import auth, config_store, hue_client, packs
 from .auth import ConsoleAuthMiddleware
 from .flicker_engine import FlickerEngine
-from .hue_client import HueClient
+from .hue_client import BridgeAddressError, HueClient, parse_bridge_address
 from .patterns import (
     BUILTIN_BY_ID,
     BUILTIN_PATTERNS,
@@ -116,6 +117,22 @@ def _broadcast_status_soon():
     task.add_done_callback(_background.discard)
 
 
+def bridge_error(exc: Exception, doing: str) -> str:
+    """A message that says what went wrong without quoting the response.
+
+    The old text interpolated the httpx exception, which carries the upstream
+    status line and full URL — enough to tell a live port from a dead one, and
+    a 401 from a 404, for whatever host the console had been pointed at. Detail
+    still goes to the log, where only the operator sees it.
+    """
+    logger.warning("Bridge request failed while trying to %s: %r", doing, exc)
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"The bridge refused the request to {doing} — check the API key."
+    if isinstance(exc, httpx.HTTPError):
+        return f"Could not reach the bridge to {doing}."
+    return f"The bridge sent something unexpected when asked to {doing}."
+
+
 def get_client() -> HueClient | None:
     cfg = config_store.load()
     if not cfg.get("bridge_ip") or not cfg.get("api_key"):
@@ -134,13 +151,27 @@ engine = FlickerEngine(get_client=get_client, on_change=_broadcast_status_soon,
 
 # ---------- Models ----------
 
-class BridgeSetRequest(BaseModel):
+class _BridgeAddress(BaseModel):
     bridge_ip: str
-    api_key: str
+
+    @field_validator("bridge_ip")
+    @classmethod
+    def _checked(cls, value: str) -> str:
+        # Rejected at the edge so the user gets a clear message; HueClient
+        # checks again, so nothing reaches the network unvalidated either way.
+        try:
+            parse_bridge_address(value)
+        except BridgeAddressError as e:
+            raise ValueError(str(e)) from None
+        return value.strip()
 
 
-class PairRequest(BaseModel):
-    bridge_ip: str
+class BridgeSetRequest(_BridgeAddress):
+    api_key: str = Field(..., min_length=1, max_length=128)
+
+
+class PairRequest(_BridgeAddress):
+    pass
 
 
 class CustomPatternRequest(BaseModel):
@@ -359,7 +390,7 @@ async def list_lights():
     try:
         lights = await client.get_lights()
     except Exception as e:
-        raise HTTPException(502, f"Could not reach bridge: {e}") from e
+        raise HTTPException(502, bridge_error(e, "read the lights")) from e
     out = []
     for lid, info in lights.items():
         state = info.get("state", {})
@@ -511,7 +542,7 @@ async def list_bridge_groups():
     try:
         groups = await client.get_groups()
     except Exception as e:
-        raise HTTPException(502, f"Could not reach bridge: {e}") from e
+        raise HTTPException(502, bridge_error(e, "read the rooms")) from e
 
     out = []
     seen: dict[str, int] = {}

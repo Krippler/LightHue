@@ -83,6 +83,14 @@ of building, swap the `build: .` line in `docker-compose.yml` for
 or enter its IP manually, then walk you through pairing (press the
 physical link button on the bridge, then hit Pair within ~30 seconds).
 
+It has to be an IP address, not a host name — `192.168.1.23`, or
+`192.168.1.23:8080` if you run something like diyHue on another port. That
+string decides which machine the console makes requests to, so it is checked
+before anything is sent: host names are refused (no name lookup means nothing
+can point one somewhere else later), as are loopback, link-local, multicast
+and reserved addresses, none of which a bridge is ever on. Any other address
+works, so a bridge across a VPN or a routed subnet is fine.
+
 ## Patterns
 
 Every built-in pattern is named after the game it comes from, and the picker

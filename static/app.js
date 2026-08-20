@@ -102,9 +102,23 @@ $('#btn-pair').addEventListener('click', async () => {
 $('#btn-manual-save').addEventListener('click', async () => {
   const ip = $('#manual-ip').value.trim();
   const key = $('#manual-key').value.trim();
-  if (!ip || !key) return;
-  await api('/api/bridge/set', { method: 'POST', body: JSON.stringify({ bridge_ip: ip, api_key: key }) });
-  await checkBridge();
+  const statusEl = $('#manual-status');
+  if (!ip || !key) {
+    statusEl.textContent = 'Enter both the bridge IP and its key.';
+    statusEl.className = 'status-line err';
+    return;
+  }
+  statusEl.textContent = '';
+  statusEl.className = 'status-line';
+  try {
+    await api('/api/bridge/set', { method: 'POST', body: JSON.stringify({ bridge_ip: ip, api_key: key }) });
+    await checkBridge();
+  } catch (e) {
+    // The address is checked server-side now, so a typo lands here rather
+    // than silently storing something the console can never reach.
+    statusEl.textContent = e.message;
+    statusEl.className = 'status-line err';
+  }
 });
 
 $('#btn-reconfigure').addEventListener('click', () => {
