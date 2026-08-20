@@ -24,7 +24,8 @@ web UI that multiple people on your network can use at once.
   files other people send you.
 - Retunes running lights on the fly — pattern, speed, brightness and color
   all take effect mid-flicker, no stop-and-restart.
-- Groups any set of bulbs behind one set of controls, flickering in step.
+- Groups any set of bulbs behind one set of controls, flickering in step,
+  and can copy the rooms and zones already set up in the Hue app.
 - Reads each bulb's colour and brightness before it starts, and puts it back
   when the flicker stops — even if the container was killed mid-run.
 - Optionally locks the console behind a password you set in the UI.
@@ -227,6 +228,17 @@ Tick the lights you want to run together in the **Groups** panel, give them a
 name, and they get one card whose controls drive all of them at once. Members
 keep their own cards too, so you can still tweak one light without leaving the
 group.
+
+**Or copy one from the bridge.** The Hue app already knows your lighting as
+*Rooms* (a light belongs to exactly one) and *Zones* (any set, overlapping
+allowed). **Use a room from the bridge** lists both and copies one over in a
+click, rather than making you pick the same bulbs again. LightHue's groups
+behave like zones, so either kind copies across fine.
+
+Luminaires and Entertainment areas aren't offered: the first describes the
+innards of a single fitting, the second belongs to Hue's streaming API. A room
+containing a bulb this console can't see is listed with that noted and no Add
+button, because driving a light id that isn't there just burns bridge budget.
 
 A group card shows `2/3 FLICKERING` when only some members are running, and
 offers **Start the rest** alongside **Stop** so you can bring stragglers into

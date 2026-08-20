@@ -52,7 +52,19 @@ def bridge(app_modules, monkeypatch):
         }},
     }, "puts": []}
 
+    # The bridge's own rooms and zones, as the Hue app would have set them up.
+    state["groups"] = {
+        "1": {"name": "Living room", "type": "Room", "class": "Living room",
+              "lights": ["1", "3"]},
+        "2": {"name": "Upstairs", "type": "Zone", "lights": ["2", "4"]},
+        "3": {"name": "Ceiling fitting", "type": "Luminaire", "lights": ["1"]},
+        "4": {"name": "TV area", "type": "Entertainment", "lights": ["1", "2"]},
+        "5": {"name": "Odds and ends", "type": "LightGroup", "lights": ["4"]},
+    }
+
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/groups"):
+            return httpx.Response(200, json=state["groups"])
         if request.url.path.endswith("/lights"):
             return httpx.Response(200, json=state["lights"])
         if request.url.path.endswith("/state"):

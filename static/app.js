@@ -515,6 +515,102 @@ $('#btn-clear-selection').addEventListener('click', () => {
   renderSelection();
 });
 
+// The bridge already knows the user's rooms and zones — the Hue app calls a
+// group a Room (a light lives in exactly one) or a Zone (any set, overlapping
+// allowed). Ours behave like zones, so both can be copied straight over rather
+// than rebuilt light by light.
+const bridgeGroupsBox = $('#bridge-groups');
+
+$('#btn-bridge-groups').addEventListener('click', async () => {
+  if (!bridgeGroupsBox.classList.contains('hidden')) {
+    bridgeGroupsBox.classList.add('hidden');
+    return;
+  }
+  bridgeGroupsBox.classList.remove('hidden');
+  bridgeGroupsBox.textContent = 'Asking the bridge…';
+  try {
+    const { groups } = await api('/api/bridge/groups');
+    renderBridgeGroups(groups);
+  } catch (e) {
+    bridgeGroupsBox.textContent = '';
+    setGroupStatus(e.message, 'err');
+    bridgeGroupsBox.classList.add('hidden');
+  }
+});
+
+function renderBridgeGroups(groups) {
+  bridgeGroupsBox.textContent = '';
+  if (!groups.length) {
+    bridgeGroupsBox.textContent = 'The bridge has no rooms or zones set up.';
+    bridgeGroupsBox.className = 'bridge-groups dim';
+    return;
+  }
+  bridgeGroupsBox.className = 'bridge-groups';
+
+  groups.forEach(g => {
+    // Only lights this console can actually see: a room may include a bulb
+    // that has since gone, and driving an id that isn't there just burns
+    // bridge budget until it gets written off.
+    const usable = g.light_ids.filter(id => LIGHTS.some(l => l.id === id));
+    const already = GROUPS.some(existing =>
+      existing.name === g.name
+      && [...existing.light_ids].sort().join() === [...usable].sort().join());
+
+    const row = document.createElement('div');
+    row.className = `bridge-group${already ? ' taken' : ''}`;
+
+    const type = document.createElement('span');
+    type.className = 'bg-type';
+    type.textContent = g.type === 'Room' ? 'room' : g.type === 'Zone' ? 'zone' : 'group';
+
+    const name = document.createElement('span');
+    name.className = 'bg-name';
+    name.textContent = g.name;
+
+    const meta = document.createElement('span');
+    meta.className = 'bg-meta';
+    const missing = g.light_ids.length - usable.length;
+    meta.textContent = `${usable.length} light${usable.length === 1 ? '' : 's'}`
+      + (missing ? ` · ${missing} not on this bridge` : '');
+
+    row.append(type, name, meta);
+
+    if (already) {
+      const done = document.createElement('span');
+      done.className = 'bg-meta';
+      done.textContent = 'already added';
+      row.appendChild(done);
+    } else if (!usable.length) {
+      const none = document.createElement('span');
+      none.className = 'bg-meta';
+      none.textContent = 'no usable lights';
+      row.appendChild(none);
+    } else {
+      const btn = document.createElement('button');
+      btn.className = 'btn';
+      btn.type = 'button';
+      btn.textContent = 'Add';
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          await api('/api/groups', {
+            method: 'POST',
+            body: JSON.stringify({ name: g.name, light_ids: usable }),
+          });
+          setGroupStatus(`Added "${g.name}" from the bridge.`, 'ok');
+          await loadPatternsAndLights();
+          renderBridgeGroups(groups);
+        } catch (e) {
+          btn.disabled = false;
+          setGroupStatus(e.message, 'err');
+        }
+      });
+      row.appendChild(btn);
+    }
+    bridgeGroupsBox.appendChild(row);
+  });
+}
+
 $('#btn-save-group').addEventListener('click', async () => {
   const name = $('#group-name').value.trim();
   if (!name) return setGroupStatus('Give the group a name.', 'err');

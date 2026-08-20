@@ -461,6 +461,32 @@ select {
 .settings-grid .field { margin-bottom: 12px; flex: 0 0 auto; }
 .settings-grid .btn { align-self: flex-start; }
 
+.bridge-groups { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+
+.bridge-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--void);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+.bridge-group .bg-name { color: var(--bone); }
+.bridge-group .bg-meta { color: var(--bone-dim); font-size: 11px; }
+.bridge-group .bg-type {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--brimstone);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 1px 5px;
+}
+.bridge-group .btn { padding: 4px 10px; font-size: 11px; }
+.bridge-group.taken { opacity: 0.55; }
+
 .pw-actions { display: flex; gap: 10px; }
 
 .share-row .settings-subhead { margin-top: 20px; }

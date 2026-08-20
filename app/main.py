@@ -494,6 +494,39 @@ def _resolve_sequence(pattern_id: str) -> str:
 
 # ---------- Groups ----------
 
+# What the Hue app calls a Room or a Zone. Luminaire and LightSource describe
+# the innards of a single fitting, and Entertainment areas belong to the
+# streaming API, so none of those are worth offering as flicker groups.
+IMPORTABLE_GROUP_TYPES = {"Room", "Zone", "LightGroup"}
+
+
+@app.get("/api/bridge/groups")
+async def list_bridge_groups():
+    """The rooms and zones already set up in the Hue app, ready to copy over."""
+    client = get_client()
+    if client is None:
+        raise HTTPException(400, "Bridge not configured yet")
+    try:
+        groups = await client.get_groups()
+    except Exception as e:
+        raise HTTPException(502, f"Could not reach bridge: {e}") from e
+
+    out = []
+    for gid, info in groups.items():
+        if info.get("type") not in IMPORTABLE_GROUP_TYPES:
+            continue
+        out.append({
+            "id": gid,
+            "name": info.get("name", f"Group {gid}"),
+            "type": info.get("type"),
+            # Rooms carry a class like "Kitchen"; zones generally don't.
+            "class": info.get("class"),
+            "light_ids": [str(x) for x in info.get("lights", [])],
+        })
+    out.sort(key=lambda g: (g["type"] != "Room", g["name"].casefold()))
+    return {"groups": out}
+
+
 @app.get("/api/groups")
 async def list_groups():
     cfg = config_store.load()

@@ -949,3 +949,66 @@ def test_starting_a_group_sizes_the_send_budget_for_it(client, bridge, app_modul
     assert app_modules.engine.limiter.burst == 2
     client.post("/api/flicker/stop", json={})
     assert app_modules.engine.limiter.burst == 1
+
+
+# ---------- importing the bridge's own rooms ----------
+
+def test_bridge_rooms_and_zones_are_offered(client, bridge):
+    configure(client)
+    groups = client.get("/api/bridge/groups").json()["groups"]
+    by_name = {g["name"]: g for g in groups}
+    assert set(by_name) == {"Living room", "Upstairs", "Odds and ends"}
+    assert by_name["Living room"]["type"] == "Room"
+    assert by_name["Living room"]["class"] == "Living room"
+    assert by_name["Living room"]["light_ids"] == ["1", "3"]
+    assert by_name["Upstairs"]["type"] == "Zone"
+
+
+def test_luminaires_and_entertainment_areas_are_not_offered(client, bridge):
+    # A Luminaire describes the innards of one fitting and an Entertainment
+    # area belongs to the streaming API; neither is a group you'd flicker.
+    configure(client)
+    names = [g["name"] for g in client.get("/api/bridge/groups").json()["groups"]]
+    assert "Ceiling fitting" not in names
+    assert "TV area" not in names
+
+
+def test_rooms_are_listed_before_zones(client, bridge):
+    configure(client)
+    types = [g["type"] for g in client.get("/api/bridge/groups").json()["groups"]]
+    assert types.index("Room") < types.index("Zone")
+
+
+def test_bridge_groups_need_a_bridge(client):
+    assert client.get("/api/bridge/groups").status_code == 400
+
+
+def test_bridge_groups_surface_a_failure(client, app_modules, monkeypatch):
+    configure(client)
+
+    async def boom(self):
+        raise RuntimeError("no route to host")
+
+    monkeypatch.setattr(app_modules.HueClient, "get_groups", boom)
+    assert client.get("/api/bridge/groups").status_code == 502
+
+
+def test_a_bridge_room_can_be_saved_as_a_group(client, bridge):
+    configure(client)
+    room = next(g for g in client.get("/api/bridge/groups").json()["groups"]
+                if g["name"] == "Living room")
+    made = client.post("/api/groups",
+                       json={"name": room["name"], "light_ids": room["light_ids"]}).json()
+    assert made["light_ids"] == ["1", "3"]
+    # and it drives its members like any other group
+    client.post("/api/flicker/start",
+                json={"light_ids": made["light_ids"], "pattern_id": "flicker_a"})
+    status = client.get("/api/status").json()["lights"]
+    assert status["1"]["running"] and status["3"]["running"]
+    client.post("/api/flicker/stop", json={})
+
+
+def test_importing_is_gated_by_the_console_password(client):
+    client.put("/api/auth/password", json={"new_password": "quaddamage"})
+    client.cookies.clear()
+    assert client.get("/api/bridge/groups").status_code == 401

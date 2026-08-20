@@ -144,7 +144,8 @@
         <div class="panel-head">
           <h2>Groups</h2>
           <p class="sub">Tick the lights you want to run together, name them, and they get one
-          set of controls that drives all of them at once.</p>
+          set of controls that drives all of them at once &mdash; or copy a room or zone you
+          already set up in the Hue app.</p>
         </div>
         <div class="group-form">
           <span id="selection-count" class="dim">No lights selected</span>
@@ -154,8 +155,10 @@
           </label>
           <button id="btn-save-group" class="btn btn-accent">Save as group</button>
           <button id="btn-clear-selection" class="btn btn-ghost">Clear selection</button>
+          <button id="btn-bridge-groups" class="btn btn-ghost">Use a room from the bridge</button>
         </div>
         <div id="group-status" class="status-line"></div>
+        <div id="bridge-groups" class="bridge-groups hidden"></div>
       </section>
 
       <section class="panel custom-panel">
