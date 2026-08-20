@@ -211,6 +211,12 @@ main#app {
 
 .btn-ghost { background: transparent; }
 
+/* a toggle that is currently on */
+.btn-active {
+  border-color: var(--ember);
+  color: var(--ember-bright);
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -461,7 +467,15 @@ select {
 .settings-grid .field { margin-bottom: 12px; flex: 0 0 auto; }
 .settings-grid .btn { align-self: flex-start; }
 
-.bridge-groups { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.bridge-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.bridge-groups.err { color: var(--danger-bright); }
 
 .bridge-group {
   display: flex;

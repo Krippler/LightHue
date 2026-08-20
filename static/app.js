@@ -521,28 +521,52 @@ $('#btn-clear-selection').addEventListener('click', () => {
 // than rebuilt light by light.
 const bridgeGroupsBox = $('#bridge-groups');
 
-$('#btn-bridge-groups').addEventListener('click', async () => {
+const bridgeGroupsBtn = $('#btn-bridge-groups');
+
+function showBridgeGroups(open) {
+  // The button is a toggle, so it has to look like one: without this it was
+  // possible to open the list, not notice it, click again and close it, and
+  // conclude the button did nothing at all.
+  bridgeGroupsBox.classList.toggle('hidden', !open);
+  bridgeGroupsBtn.classList.toggle('btn-active', open);
+  bridgeGroupsBtn.textContent = open ? 'Hide bridge rooms' : 'Use a room from the bridge';
+}
+
+function bridgeGroupsMessage(text, kind = 'dim') {
+  bridgeGroupsBox.className = `bridge-groups ${kind}`;
+  bridgeGroupsBox.textContent = text;
+}
+
+bridgeGroupsBtn.addEventListener('click', async () => {
   if (!bridgeGroupsBox.classList.contains('hidden')) {
-    bridgeGroupsBox.classList.add('hidden');
+    showBridgeGroups(false);
     return;
   }
-  bridgeGroupsBox.classList.remove('hidden');
-  bridgeGroupsBox.textContent = 'Asking the bridge…';
+  showBridgeGroups(true);
+  bridgeGroupsMessage('Asking the bridge…');
   try {
-    const { groups } = await api('/api/bridge/groups');
-    renderBridgeGroups(groups);
+    renderBridgeGroups(await api('/api/bridge/groups'));
   } catch (e) {
-    bridgeGroupsBox.textContent = '';
-    setGroupStatus(e.message, 'err');
-    bridgeGroupsBox.classList.add('hidden');
+    // Kept open with the reason in it. Hiding the panel on failure was
+    // indistinguishable from the button doing nothing.
+    bridgeGroupsMessage(`Couldn't read the bridge's rooms: ${e.message}`, 'err');
   }
 });
 
-function renderBridgeGroups(groups) {
+function renderBridgeGroups({ groups, seen = {}, total = 0 }) {
   bridgeGroupsBox.textContent = '';
   if (!groups.length) {
-    bridgeGroupsBox.textContent = 'The bridge has no rooms or zones set up.';
-    bridgeGroupsBox.className = 'bridge-groups dim';
+    // Say which of the two it is: a bridge with nothing set up and one whose
+    // groups are all luminaires are quite different problems.
+    const other = Object.entries(seen)
+      .map(([kind, n]) => `${n} ${kind}`)
+      .join(', ');
+    bridgeGroupsMessage(
+      total
+        ? `The bridge returned ${total} group${total === 1 ? '' : 's'} (${other}), `
+          + 'but no rooms or zones. Rooms are set up in the Hue app under Settings.'
+        : 'The bridge has no rooms or zones set up. They are created in the Hue app.',
+    );
     return;
   }
   bridgeGroupsBox.className = 'bridge-groups';
@@ -599,7 +623,7 @@ function renderBridgeGroups(groups) {
           });
           setGroupStatus(`Added "${g.name}" from the bridge.`, 'ok');
           await loadPatternsAndLights();
-          renderBridgeGroups(groups);
+          renderBridgeGroups({ groups, seen, total });
         } catch (e) {
           btn.disabled = false;
           setGroupStatus(e.message, 'err');
