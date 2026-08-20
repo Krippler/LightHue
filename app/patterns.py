@@ -2,141 +2,384 @@
 
 Each character is one frame of brightness, 'a' darkest through 'z' brightest.
 That encoding is Quake's, and it turns out to describe most engines' light
-effects perfectly well.
+effects perfectly well. (In the engines 'm' is normal and 'z' is overbright;
+a bulb has no headroom above full, so a-z is mapped straight onto the
+brightness range you pick per light.)
 
 Every pattern also carries the rate its sequence was written for, because the
 speed is as much part of an effect as its shape: a sputtering bulb and a slow
 gothic throb are not the same thing played faster or slower. Quake's engine
-steps lightstyles at 10 frames per second and GoldSrc inherited that, so the
-styles taken verbatim from those tables say 10 — that is the rate the strings
-mean, not a preference. DOOM's effects are timed in 35ths of a second, and
-those sequences were written to land on the real durations at the rate given.
-For the rest the rate is authored alongside the letters.
+steps lightstyles at 10 frames per second and everything descended from it
+inherited that, so the styles taken verbatim from those tables say 10 — that
+is the rate the strings mean, not a preference. DOOM's effects are timed in
+35ths of a second, and those sequences were written to land on the real
+durations at the rate given. For the rest the rate is authored alongside the
+letters.
 
 Two kinds of pattern live here, and the difference is worth keeping honest:
 
   origin="engine"
-      Copied verbatim from the game's own lightstyle table. Quake shipped
-      styles 0-11 as literal a-z strings in the engine, and GoldSrc (Half-Life)
-      inherited that table and added one of its own.
+      Copied verbatim from the game's own lightstyle table, checked against
+      the released source rather than memory. Quake shipped styles 0-11 and 63
+      as literal a-z strings; Quake II, Half-Life and Source all ship that same
+      table byte for byte, and GoldSrc/Source add style 12. Because they are
+      the same strings, they are listed once and shared into each game's menu
+      via shared_with rather than copied.
 
   origin="inspired"
-      Hand-authored here. DOOM, Build (Duke Nukem 3D) and Unreal don't store
-      light effects as strings at all — they run procedural sector/actor
-      effects in code. These sequences approximate the documented behaviour of
-      those effects at roughly their original timing; they are a tribute, not
-      a dump of engine data.
+      Hand-authored here. DOOM and its descendants, the Build games, the Dark
+      engine games, id Tech 4 and the rest don't store light effects as strings
+      at all — they run procedural sector/actor/material effects in code. These
+      sequences approximate the documented behaviour at roughly the original
+      timing; they are a tribute, not a dump of engine data.
+
+Verified against:
+  Quake      id-Software/Quake        QW/progs/world.qc
+  Quake II   id-Software/Quake-2      game/g_spawn.c
+  Half-Life  ValveSoftware/halflife   dlls/world.cpp
+  Source     ValveSoftware/source-sdk-2013  mp/src/game/server/world.cpp
+
+Quake III Arena ships no default lightstyle table in its game code, so it is
+deliberately absent.
 """
 
+# Every game whose engine ships Quake's lightstyle table verbatim.
+QUAKE_LINEAGE = ["Quake II", "Half-Life", "Half-Life 2 / Source"]
+# Unreal Engine 1 games share Unreal's LT_* light types.
+UE1_LINEAGE = ["Unreal Tournament", "Deus Ex"]
+
+
 BUILTIN_PATTERNS = [
-    # ---- Quake: id Software's lightstyle table, styles 0-11, verbatim ----
-    {"id": "steady", "hz": 10, "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 0 Steady",
-     "sequence": "m", "origin": "engine"},
-    {"id": "flicker_a", "hz": 10, "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 1 Flicker",
-     "sequence": "mmnmmommommnonmmonqnmmo", "origin": "engine"},
-    {"id": "slow_strong_pulse", "hz": 10, "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 2 Slow Strong Pulse",
-     "sequence": "abcdefghijklmnopqrstuvwxyzyxwvutsrqponmlkjihgfedcba", "origin": "engine"},
-    {"id": "candle_a", "hz": 10, "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 3 Candle",
-     "sequence": "mmmmmaaaaammmmmaaaaaabcdefgabcdefg", "origin": "engine"},
-    {"id": "fast_strobe", "hz": 10, "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 4 Fast Strobe",
-     "sequence": "mamamamamama", "origin": "engine"},
-    {"id": "gentle_pulse", "hz": 10, "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 5 Gentle Pulse",
-     "sequence": "jklmnopqrstuvwxyzyxwvutsrqponmlkj", "origin": "engine"},
-    {"id": "flicker_b", "hz": 10, "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 6 Flicker (alt)",
-     "sequence": "nmonqnmomnmomomno", "origin": "engine"},
-    {"id": "candle_b", "hz": 10, "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 7 Candle (alt)",
-     "sequence": "mmmaaaabcdefgmmmmaaaammmaamm", "origin": "engine"},
-    {"id": "candle_c", "hz": 10, "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 8 Candle (long)",
-     "sequence": "mmmaaammmaaammmabcdefaaaaammmmmabcdefmmmmaaaammmaamm", "origin": "engine"},
-    {"id": "hard_strobe", "hz": 10, "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 9 Slow Strobe",
-     "sequence": "aaaaaaaazzzzzzzz", "origin": "engine"},
-    {"id": "fluorescent", "hz": 10, "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 10 Fluorescent Flicker",
-     "sequence": "mmamammmmammamamaaamammma", "origin": "engine"},
-    {"id": "slow_pulse_nb", "hz": 10, "game": "Quake", "shared_with": ["Half-Life"], "name": "Quake — 11 Slow Pulse (no black)",
-     "sequence": "abcdefghijklmnopqrrqponmlkjihgfedcba", "origin": "engine"},
+    # ---- Quake: id Software's table, verbatim, and shared with every
+    # engine that inherited it unchanged ----
+    {"id": "steady", "game": "Quake", "shared_with": QUAKE_LINEAGE,
+     "name": "Quake — 0 Steady", "hz": 10,
+     "sequence": "m",
+     "origin": "engine"},
+    {"id": "flicker_a", "game": "Quake", "shared_with": QUAKE_LINEAGE,
+     "name": "Quake — 1 Flicker", "hz": 10,
+     "sequence": "mmnmmommommnonmmonqnmmo",
+     "origin": "engine"},
+    {"id": "slow_strong_pulse", "game": "Quake", "shared_with": QUAKE_LINEAGE,
+     "name": "Quake — 2 Slow Strong Pulse", "hz": 10,
+     "sequence": "abcdefghijklmnopqrstuvwxyzyxwvutsrqponmlkjihgfedcba",
+     "origin": "engine"},
+    {"id": "candle_a", "game": "Quake", "shared_with": QUAKE_LINEAGE,
+     "name": "Quake — 3 Candle", "hz": 10,
+     "sequence": "mmmmmaaaaammmmmaaaaaabcdefgabcdefg",
+     "origin": "engine"},
+    {"id": "fast_strobe", "game": "Quake", "shared_with": QUAKE_LINEAGE,
+     "name": "Quake — 4 Fast Strobe", "hz": 10,
+     "sequence": "mamamamamama",
+     "origin": "engine"},
+    {"id": "gentle_pulse", "game": "Quake", "shared_with": QUAKE_LINEAGE,
+     "name": "Quake — 5 Gentle Pulse", "hz": 10,
+     "sequence": "jklmnopqrstuvwxyzyxwvutsrqponmlkj",
+     "origin": "engine"},
+    {"id": "flicker_b", "game": "Quake", "shared_with": QUAKE_LINEAGE,
+     "name": "Quake — 6 Flicker (alt)", "hz": 10,
+     "sequence": "nmonqnmomnmomomno",
+     "origin": "engine"},
+    {"id": "candle_b", "game": "Quake", "shared_with": QUAKE_LINEAGE,
+     "name": "Quake — 7 Candle (alt)", "hz": 10,
+     "sequence": "mmmaaaabcdefgmmmmaaaammmaamm",
+     "origin": "engine"},
+    {"id": "candle_c", "game": "Quake", "shared_with": QUAKE_LINEAGE,
+     "name": "Quake — 8 Candle (long)", "hz": 10,
+     "sequence": "mmmaaammmaaammmabcdefaaaammmmabcdefmmmaaaa",
+     "origin": "engine"},
+    {"id": "hard_strobe", "game": "Quake", "shared_with": QUAKE_LINEAGE,
+     "name": "Quake — 9 Slow Strobe", "hz": 10,
+     "sequence": "aaaaaaaazzzzzzzz",
+     "origin": "engine"},
+    {"id": "fluorescent", "game": "Quake", "shared_with": QUAKE_LINEAGE,
+     "name": "Quake — 10 Fluorescent Flicker", "hz": 10,
+     "sequence": "mmamammmmammamamaaamammma",
+     "origin": "engine"},
+    {"id": "slow_pulse_nb", "game": "Quake", "shared_with": QUAKE_LINEAGE,
+     "name": "Quake — 11 Slow Pulse (no black)", "hz": 10,
+     "sequence": "abcdefghijklmnopqrrqponmlkjihgfedcba",
+     "origin": "engine"},
+    {"id": "quake_testing", "game": "Quake", "shared_with": QUAKE_LINEAGE,
+     "name": "Quake — 63 Testing (held dark)", "hz": 10,
+     "sequence": "a",
+     "origin": "engine"},
 
-    # ---- Half-Life: GoldSrc inherited Quake's styles 0-11 verbatim (marked
-    # shared_with above, so they appear under Half-Life too rather than being
-    # copied) and added style 12 of its own ----
-    {"id": "hl_underwater", "hz": 10, "game": "Half-Life", "name": "Half-Life — 12 Underwater Mutation",
-     "sequence": "mmnnmmnnnmmnn", "origin": "engine"},
+    # ---- Half-Life: GoldSrc added style 12, which Source carries too ----
+    {"id": "hl_underwater", "game": "Half-Life", "shared_with": ["Half-Life 2 / Source"],
+     "name": "Half-Life — 12 Underwater Mutation", "hz": 10,
+     "sequence": "mmnnmmnnnmmnn",
+     "origin": "engine"},
 
-    # ---- DOOM: sector light effects from p_lights.c, timed at 35 tics/sec ----
-    {"id": "doom_strobe_fast", "hz": 10, "game": "DOOM", "name": "DOOM — Strobe (fast)",
-     "sequence": "zaaaa", "origin": "inspired"},
-    {"id": "doom_strobe_slow", "hz": 10, "game": "DOOM", "name": "DOOM — Strobe (slow)",
-     "sequence": "zaaaaaaaaaa", "origin": "inspired"},
-    {"id": "doom_glow", "hz": 12, "game": "DOOM", "name": "DOOM — Glow",
-     "sequence": "acegikmoqsuwywusqomkigeca", "origin": "inspired"},
-    {"id": "doom_fire_flicker", "hz": 9, "game": "DOOM", "name": "DOOM — Fire Flicker",
-     "sequence": "wxwyxwvxywxwvwyxwvxwyxvw", "origin": "inspired"},
-    {"id": "doom_light_flash", "hz": 10, "game": "DOOM", "name": "DOOM — Light Flash (random)",
-     "sequence": "zzaaaaaaaaaaaaazzaaaaaaazzzaaaaaaaaaaaaaa", "origin": "inspired"},
+    # ---- DOOM ----
+    {"id": "doom_strobe_fast", "game": "DOOM",
+     "name": "DOOM — Strobe (fast)", "hz": 10,
+     "sequence": "zaaaa",
+     "origin": "inspired"},
+    {"id": "doom_strobe_slow", "game": "DOOM",
+     "name": "DOOM — Strobe (slow)", "hz": 10,
+     "sequence": "zaaaaaaaaaa",
+     "origin": "inspired"},
+    {"id": "doom_glow", "game": "DOOM",
+     "name": "DOOM — Glow", "hz": 12,
+     "sequence": "acegikmoqsuwywusqomkigeca",
+     "origin": "inspired"},
+    {"id": "doom_fire_flicker", "game": "DOOM",
+     "name": "DOOM — Fire Flicker", "hz": 9,
+     "sequence": "wxwyxwvxywxwvwyxwvxwyxvw",
+     "origin": "inspired"},
+    {"id": "doom_light_flash", "game": "DOOM",
+     "name": "DOOM — Light Flash (random)", "hz": 10,
+     "sequence": "zzaaaaaaaaaaaaazzaaaaaaazzzaaaaaaaaaaaaaa",
+     "origin": "inspired"},
 
-    # ---- Duke Nukem 3D: Build engine sector lighting effects ----
-    {"id": "duke_flicker", "hz": 12, "game": "Duke Nukem 3D", "name": "Duke Nukem 3D — Flickering Sector",
-     "sequence": "ttusttrtusstturtsuttrsut", "origin": "inspired"},
-    {"id": "duke_blink", "hz": 6, "game": "Duke Nukem 3D", "name": "Duke Nukem 3D — Blinking Sign",
-     "sequence": "zzzaaazzzaaaaaa", "origin": "inspired"},
-    {"id": "duke_pulse", "hz": 8, "game": "Duke Nukem 3D", "name": "Duke Nukem 3D — Pulsating Sector",
-     "sequence": "hjlnprtvxzxvtrpnljh", "origin": "inspired"},
-    {"id": "duke_broken_neon", "hz": 14, "game": "Duke Nukem 3D", "name": "Duke Nukem 3D — Broken Neon",
-     "sequence": "zazzaaazzazaaaaaazzzazaaa", "origin": "inspired"},
+    # ---- Marathon ----
+    {"id": "marathon_primary", "game": "Marathon",
+     "name": "Marathon — Primary/Secondary Phase", "hz": 7,
+     "sequence": "zzzzzzzaaaaaaa",
+     "origin": "inspired"},
+    {"id": "marathon_flicker", "game": "Marathon",
+     "name": "Marathon — Flicker State", "hz": 12,
+     "sequence": "yzxwyzvwyxzwyv",
+     "origin": "inspired"},
+    {"id": "marathon_pulse", "game": "Marathon",
+     "name": "Marathon — Smooth Phase", "hz": 6,
+     "sequence": "nprtvxzvtrpnlj",
+     "origin": "inspired"},
 
-    # ---- Blood: Build engine again, by way of Monolith's fork ----
-    {"id": "blood_torch", "hz": 10, "game": "Blood", "name": "Blood — Guttering Torch",
-     "sequence": "rstusrtsuvtsrqstuvutsrst", "origin": "inspired"},
-    {"id": "blood_candle", "hz": 8, "game": "Blood", "name": "Blood — Gothic Candle",
-     "sequence": "nmlmnonmlkjklmnonmlmnmlk", "origin": "inspired"},
-    {"id": "blood_lightning", "hz": 12, "game": "Blood", "name": "Blood — Lightning Flash",
-     "sequence": "aaaaaaaaaazzaazaaaaaaaaaaaaaaaazzzaaaaaa", "origin": "inspired"},
-    {"id": "blood_throb", "hz": 5, "game": "Blood", "name": "Blood — Slow Throb",
-     "sequence": "fhjlnprtvxvtrpnljhf", "origin": "inspired"},
-    {"id": "blood_dying_flame", "hz": 6, "game": "Blood", "name": "Blood — Dying Flame",
-     "sequence": "utsrqponmlkjihgfedcba", "origin": "inspired"},
+    # ---- Heretic ----
+    {"id": "heretic_wall_torch", "game": "Heretic",
+     "name": "Heretic — Wall Torch", "hz": 10,
+     "sequence": "stutsrstutsvutsrstutvuts",
+     "origin": "inspired"},
+    {"id": "heretic_brazier", "game": "Heretic",
+     "name": "Heretic — Sputtering Brazier", "hz": 9,
+     "sequence": "rqstrqpqrstusrqpqrstsrq",
+     "origin": "inspired"},
+    {"id": "heretic_enchanted", "game": "Heretic",
+     "name": "Heretic — Enchanted Glow", "hz": 6,
+     "sequence": "klmnopqrstuvwxyvutsrqponmlk",
+     "origin": "inspired"},
 
-    # ---- Shadow Warrior: Build engine, neon and paper lanterns ----
-    {"id": "sw_neon", "hz": 8, "game": "Shadow Warrior", "name": "Shadow Warrior — Neon Sign",
-     "sequence": "zzzzzzazzzzzzzazzzzaz", "origin": "inspired"},
-    {"id": "sw_fluorescent", "hz": 14, "game": "Shadow Warrior", "name": "Shadow Warrior — Failing Fluorescent",
-     "sequence": "zzazzzazazzzzzzazazzzzazzz", "origin": "inspired"},
-    {"id": "sw_lantern", "hz": 4, "game": "Shadow Warrior", "name": "Shadow Warrior — Paper Lantern",
-     "sequence": "qrstutsrqpopqrstutsrq", "origin": "inspired"},
-    {"id": "sw_sputter", "hz": 15, "game": "Shadow Warrior", "name": "Shadow Warrior — Sputtering Bulb",
-     "sequence": "wawwawwwawawwaawwwaw", "origin": "inspired"},
+    # ---- Descent ----
+    {"id": "descent_marker", "game": "Descent",
+     "name": "Descent — Blinking Mine Marker", "hz": 6,
+     "sequence": "zzzzaaaazzzzaaaa",
+     "origin": "inspired"},
+    {"id": "descent_reactor", "game": "Descent",
+     "name": "Descent — Reactor Warning", "hz": 10,
+     "sequence": "zaazaazaazzzaaa",
+     "origin": "inspired"},
+    {"id": "descent_panel", "game": "Descent",
+     "name": "Descent — Damaged Panel", "hz": 14,
+     "sequence": "wvzwuzvwxzuwvzxw",
+     "origin": "inspired"},
 
-    # ---- Unreal: LT_* light types from the actor's LightEffect ----
-    {"id": "unreal_pulse", "hz": 8, "game": "Unreal", "name": "Unreal — LT_Pulse",
-     "sequence": "moqsuwyzywusqomkigecaacegik", "origin": "inspired"},
-    {"id": "unreal_subtle_pulse", "hz": 6, "game": "Unreal", "name": "Unreal — LT_SubtlePulse",
-     "sequence": "pqrstuvwxyxwvutsrqp", "origin": "inspired"},
-    {"id": "unreal_blink", "hz": 10, "game": "Unreal", "name": "Unreal — LT_Blink",
-     "sequence": "zzzzaazzaaaazzzzzzaazzzaa", "origin": "inspired"},
-    {"id": "unreal_flicker", "hz": 16, "game": "Unreal", "name": "Unreal — LT_Flicker",
-     "sequence": "vzsxtywuzvxsytwvzuxs", "origin": "inspired"},
-    {"id": "unreal_strobe", "hz": 12, "game": "Unreal", "name": "Unreal — LT_Strobe",
-     "sequence": "zzaazzaa", "origin": "inspired"},
+    # ---- Hexen ----
+    {"id": "hexen_sconce", "game": "Hexen",
+     "name": "Hexen — Guttering Sconce", "hz": 9,
+     "sequence": "pqrsrqpnopqrqpoprqponmop",
+     "origin": "inspired"},
+    {"id": "hexen_mana_pulse", "game": "Hexen",
+     "name": "Hexen — Slow Mana Pulse", "hz": 5,
+     "sequence": "ikmoqsuwyzyxwusqomkigeca",
+     "origin": "inspired"},
+    {"id": "hexen_storm", "game": "Hexen",
+     "name": "Hexen — Storm Flash", "hz": 12,
+     "sequence": "aaaaaazzaaaaaaaaaazzzaaaaaaaa",
+     "origin": "inspired"},
+
+    # ---- Rise of the Triad ----
+    {"id": "rott_torch", "game": "Rise of the Triad",
+     "name": "Rise of the Triad — Flickering Torch", "hz": 10,
+     "sequence": "tuvutsrtuvwvutstuv",
+     "origin": "inspired"},
+    {"id": "rott_ambush", "game": "Rise of the Triad",
+     "name": "Rise of the Triad — Ambush Pulse", "hz": 7,
+     "sequence": "hjlnprtvxvtrpnljh",
+     "origin": "inspired"},
+    {"id": "rott_trap", "game": "Rise of the Triad",
+     "name": "Rise of the Triad — Strobe Trap", "hz": 11,
+     "sequence": "zzzaaaaazzzaaaaaaaa",
+     "origin": "inspired"},
+
+    # ---- Duke Nukem 3D ----
+    {"id": "duke_flicker", "game": "Duke Nukem 3D",
+     "name": "Duke Nukem 3D — Flickering Sector", "hz": 12,
+     "sequence": "ttusttrtusstturtsuttrsut",
+     "origin": "inspired"},
+    {"id": "duke_blink", "game": "Duke Nukem 3D",
+     "name": "Duke Nukem 3D — Blinking Sign", "hz": 6,
+     "sequence": "zzzaaazzzaaaaaa",
+     "origin": "inspired"},
+    {"id": "duke_pulse", "game": "Duke Nukem 3D",
+     "name": "Duke Nukem 3D — Pulsating Sector", "hz": 8,
+     "sequence": "hjlnprtvxzxvtrpnljh",
+     "origin": "inspired"},
+    {"id": "duke_broken_neon", "game": "Duke Nukem 3D",
+     "name": "Duke Nukem 3D — Broken Neon", "hz": 14,
+     "sequence": "zazzaaazzazaaaaaazzzazaaa",
+     "origin": "inspired"},
+
+    # ---- Blood ----
+    {"id": "blood_torch", "game": "Blood",
+     "name": "Blood — Guttering Torch", "hz": 10,
+     "sequence": "rstusrtsuvtsrqstuvutsrst",
+     "origin": "inspired"},
+    {"id": "blood_candle", "game": "Blood",
+     "name": "Blood — Gothic Candle", "hz": 8,
+     "sequence": "nmlmnonmlkjklmnonmlmnmlk",
+     "origin": "inspired"},
+    {"id": "blood_lightning", "game": "Blood",
+     "name": "Blood — Lightning Flash", "hz": 12,
+     "sequence": "aaaaaaaaaazzaazaaaaaaaaaaaaaaaazzzaaaaaa",
+     "origin": "inspired"},
+    {"id": "blood_throb", "game": "Blood",
+     "name": "Blood — Slow Throb", "hz": 5,
+     "sequence": "fhjlnprtvxvtrpnljhf",
+     "origin": "inspired"},
+    {"id": "blood_dying_flame", "game": "Blood",
+     "name": "Blood — Dying Flame", "hz": 6,
+     "sequence": "utsrqponmlkjihgfedcba",
+     "origin": "inspired"},
+
+    # ---- Shadow Warrior ----
+    {"id": "sw_neon", "game": "Shadow Warrior",
+     "name": "Shadow Warrior — Neon Sign", "hz": 8,
+     "sequence": "zzzzzzazzzzzzzazzzzaz",
+     "origin": "inspired"},
+    {"id": "sw_fluorescent", "game": "Shadow Warrior",
+     "name": "Shadow Warrior — Failing Fluorescent", "hz": 14,
+     "sequence": "zzazzzazazzzzzzazazzzzazzz",
+     "origin": "inspired"},
+    {"id": "sw_lantern", "game": "Shadow Warrior",
+     "name": "Shadow Warrior — Paper Lantern", "hz": 4,
+     "sequence": "qrstutsrqpopqrstutsrq",
+     "origin": "inspired"},
+    {"id": "sw_sputter", "game": "Shadow Warrior",
+     "name": "Shadow Warrior — Sputtering Bulb", "hz": 15,
+     "sequence": "wawwawwwawawwaawwwaw",
+     "origin": "inspired"},
+
+    # ---- Unreal ----
+    {"id": "unreal_pulse", "game": "Unreal", "shared_with": UE1_LINEAGE,
+     "name": "Unreal — LT_Pulse", "hz": 8,
+     "sequence": "moqsuwyzywusqomkigecaacegik",
+     "origin": "inspired"},
+    {"id": "unreal_subtle_pulse", "game": "Unreal", "shared_with": UE1_LINEAGE,
+     "name": "Unreal — LT_SubtlePulse", "hz": 6,
+     "sequence": "pqrstuvwxyxwvutsrqp",
+     "origin": "inspired"},
+    {"id": "unreal_blink", "game": "Unreal", "shared_with": UE1_LINEAGE,
+     "name": "Unreal — LT_Blink", "hz": 10,
+     "sequence": "zzzzaazzaaaazzzzzzaazzzaa",
+     "origin": "inspired"},
+    {"id": "unreal_flicker", "game": "Unreal", "shared_with": UE1_LINEAGE,
+     "name": "Unreal — LT_Flicker", "hz": 16,
+     "sequence": "vzsxtywuzvxsytwvzuxs",
+     "origin": "inspired"},
+    {"id": "unreal_strobe", "game": "Unreal", "shared_with": UE1_LINEAGE,
+     "name": "Unreal — LT_Strobe", "hz": 12,
+     "sequence": "zzaazzaa",
+     "origin": "inspired"},
+
+    # ---- Thief ----
+    {"id": "thief_torch", "game": "Thief",
+     "name": "Thief — Wall Torch", "hz": 9,
+     "sequence": "rstusrtusrqstursqtus",
+     "origin": "inspired"},
+    {"id": "thief_gaslight", "game": "Thief",
+     "name": "Thief — Gaslight", "hz": 7,
+     "sequence": "opqrqponoqrsrqpoqrs",
+     "origin": "inspired"},
+    {"id": "thief_electric", "game": "Thief",
+     "name": "Thief — Failing Electric Light", "hz": 13,
+     "sequence": "zazzzaazzzzazaazzzza",
+     "origin": "inspired"},
+
+    # ---- System Shock 2 ----
+    {"id": "ss2_deck", "game": "System Shock 2",
+     "name": "System Shock 2 — Failing Deck Light", "hz": 11,
+     "sequence": "yzyxzyxwzyxyzwyxz",
+     "origin": "inspired"},
+    {"id": "ss2_emergency", "game": "System Shock 2",
+     "name": "System Shock 2 — Emergency Strobe", "hz": 9,
+     "sequence": "zzzaaaaaaazzz",
+     "origin": "inspired"},
+    {"id": "ss2_medsci", "game": "System Shock 2",
+     "name": "System Shock 2 — Med-Sci Flicker", "hz": 15,
+     "sequence": "wyxzwvyxwzyvxw",
+     "origin": "inspired"},
+
+    # ---- Doom 3 ----
+    {"id": "doom3_ceiling", "game": "Doom 3",
+     "name": "Doom 3 — Failing Ceiling Light", "hz": 14,
+     "sequence": "zzzzaazzzaaaaaazzaazzzzzzaaazz",
+     "origin": "inspired"},
+    {"id": "doom3_strobe", "game": "Doom 3",
+     "name": "Doom 3 — Corridor Strobe", "hz": 12,
+     "sequence": "zzaaaaaazzaaaaaa",
+     "origin": "inspired"},
+    {"id": "doom3_panel", "game": "Doom 3",
+     "name": "Doom 3 — Dying Panel", "hz": 8,
+     "sequence": "zyxwvutsrqponmlkjihgfedcba",
+     "origin": "inspired"},
+
+    # ---- Quake 4 ----
+    {"id": "quake4_strogg", "game": "Quake 4",
+     "name": "Quake 4 — Strogg Machinery Pulse", "hz": 8,
+     "sequence": "nprtvxzxvtrpnlkjklmn",
+     "origin": "inspired"},
+    {"id": "quake4_conduit", "game": "Quake 4",
+     "name": "Quake 4 — Damaged Conduit", "hz": 12,
+     "sequence": "vxzxvutvxzyxvuvxzxv",
+     "origin": "inspired"},
+    {"id": "quake4_medlab", "game": "Quake 4",
+     "name": "Quake 4 — Med-Lab Throb", "hz": 6,
+     "sequence": "lnprtvxwvtrpnlkjlnp",
+     "origin": "inspired"},
 ]
 
 BUILTIN_BY_ID = {p["id"]: p for p in BUILTIN_PATTERNS}
 
 # Menu order for the pattern picker, roughly by release date.
-GAMES = ["DOOM", "Duke Nukem 3D", "Quake", "Blood", "Shadow Warrior",
-         "Half-Life", "Unreal"]
+GAMES = [
+    "DOOM",
+    "Marathon",
+    "Heretic",
+    "Descent",
+    "Hexen",
+    "Rise of the Triad",
+    "Duke Nukem 3D",
+    "Quake",
+    "Blood",
+    "Shadow Warrior",
+    "Quake II",
+    "Unreal",
+    "Half-Life",
+    "Thief",
+    "System Shock 2",
+    "Unreal Tournament",
+    "Deus Ex",
+    "Doom 3",
+    "Half-Life 2 / Source",
+    "Quake 4",
+]
+
+
+DEFAULT_HZ = 10.0
 
 
 def patterns_for(game: str) -> list:
     """Every pattern that game's picker should offer.
 
-    Includes patterns another game owns but shares with it — Half-Life runs
-    Quake's styles 0-11, so they are listed under both without the strings
-    being duplicated in the table.
+    Includes patterns another game owns but shares with it: Quake II, Half-Life
+    and Source all run Quake's table byte for byte, and the Unreal Engine 1
+    games run Unreal's light types, so those are listed under each without the
+    strings being duplicated in the table.
     """
     return [p for p in BUILTIN_PATTERNS
             if p["game"] == game or game in p.get("shared_with", ())]
-
-
-DEFAULT_HZ = 10.0
 
 
 def level_for_char(c: str) -> float:

@@ -17,11 +17,13 @@
     Drives Philips Hue lights with the flicker patterns of classic shooters, through
     a small web UI that several people on your network can use at once.&#13;
     &#13;
-    Ships Quake's full lightstyle table (styles 0-11, verbatim from id Software's
-    engine) and Half-Life's addition to it, plus hand-authored takes on the light
-    effects of DOOM, Duke Nukem 3D, Blood, Shadow Warrior and Unreal. Every preset
-    is named after the game it comes from and carries the speed it was written
-    for, so picking one brings its timing with it.&#13;
+    Twenty games' worth of presets. Quake's lightstyle table is here verbatim from
+    id Software's released source, shared with Quake II, Half-Life and Source which
+    ship it unchanged, plus hand-authored takes on the light effects of DOOM,
+    Heretic, Hexen, Descent, Marathon, Rise of the Triad, Duke Nukem 3D, Blood,
+    Shadow Warrior, Thief, System Shock 2, Doom 3, Quake 4 and Unreal. Every preset
+    is named after the game it comes from and carries the speed it was written for,
+    so picking one brings its timing with it.&#13;
     &#13;
     Write your own patterns too, and share them: export yours to a small JSON file
     to send to someone, or import one they sent you.&#13;
