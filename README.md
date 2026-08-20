@@ -235,6 +235,9 @@ allowed). **Use a room from the bridge** lists both and copies one over in a
 click, rather than making you pick the same bulbs again. LightHue's groups
 behave like zones, so either kind copies across fine.
 
+The button is a toggle — it reads *Hide bridge rooms* and highlights while the
+list is open, and the list appears directly beneath it.
+
 Luminaires and Entertainment areas aren't offered: the first describes the
 innards of a single fitting, the second belongs to Hue's streaming API. A room
 containing a bulb this console can't see is listed with that noted and no Add
@@ -332,6 +335,15 @@ static/
 tests/                            pytest suite
 unraid-template.xml               Unraid Community Applications template
 ```
+
+## If the UI looks stale
+
+The footer shows the build of the interface the page is running, and
+`GET /api/version` reports the same string. Asset URLs carry that version and
+the page itself is served `no-store`, so a rebuild always reaches the browser
+rather than sitting behind a cached `app.js`. If the footer doesn't change
+after an update, the container is still serving the old files — rebuild and
+pull rather than hunting for a UI bug.
 
 ## Development
 

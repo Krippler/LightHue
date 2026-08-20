@@ -1,8 +1,10 @@
 import asyncio
+import hashlib
 import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import (
     Body,
@@ -13,7 +15,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
@@ -694,7 +696,45 @@ async def ws_endpoint(ws: WebSocket):
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+STATIC_DIR = Path("static")
+INDEX_FILE = STATIC_DIR / "index.html"
+VERSIONED_ASSETS = ("app.js", "style.css")
+
+
+def asset_version() -> str:
+    """A short hash of the UI files, used to bust caches on every change.
+
+    Without it a browser or a reverse proxy can hold on to an old app.js
+    indefinitely, so an updated console keeps running the previous build and
+    nothing you change appears to take effect.
+    """
+    digest = hashlib.sha256()
+    for name in VERSIONED_ASSETS:
+        path = STATIC_DIR / name
+        if path.exists():
+            digest.update(path.read_bytes())
+    return digest.hexdigest()[:8]
+
+
+def render_index() -> str:
+    html = INDEX_FILE.read_text()
+    version = asset_version()
+    for name in VERSIONED_ASSETS:
+        html = html.replace(f"/static/{name}", f"/static/{name}?v={version}")
+    return html.replace("__BUILD__", version)
+
+
+@app.get("/api/version")
+async def get_version():
+    """Which build is actually being served, for when the UI looks stale."""
+    return {"assets": asset_version()}
+
 
 @app.get("/")
 async def index():
-    return FileResponse("static/index.html")
+    # The HTML itself must never be cached, or the versioned asset URLs inside
+    # it never reach the browser and the whole scheme is pointless.
+    return HTMLResponse(
+        render_index(),
+        headers={"Cache-Control": "no-store, must-revalidate"},
+    )

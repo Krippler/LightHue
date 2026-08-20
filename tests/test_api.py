@@ -1048,3 +1048,47 @@ def test_a_group_of_an_unknown_type_is_counted_not_dropped(client, bridge, app_m
     assert body["total"] == 1
     assert body["seen"] == {"unknown": 1}
     assert body["groups"] == []
+
+
+# ---------- keeping the browser off a stale build ----------
+
+def test_asset_urls_carry_a_version(client, app_modules):
+    # An unversioned /static/app.js can sit in a browser or proxy cache for
+    # ever, so an updated console keeps running the previous build and nothing
+    # you change appears to take effect.
+    html = client.get("/").text
+    version = app_modules.asset_version()
+    assert f'/static/app.js?v={version}' in html
+    assert f'/static/style.css?v={version}' in html
+    assert "__BUILD__" not in html
+
+
+def test_the_index_itself_is_never_cached(client):
+    # If the HTML is cached the versioned URLs inside it never arrive.
+    cache = client.get("/").headers["cache-control"]
+    assert "no-store" in cache
+
+
+def test_the_running_build_is_visible_and_reported(client, app_modules):
+    version = app_modules.asset_version()
+    assert client.get("/api/version").json() == {"assets": version}
+    assert f"build {version}" in client.get("/").text
+
+
+def test_the_version_changes_when_the_ui_does(client, app_modules, tmp_path, monkeypatch):
+    before = app_modules.asset_version()
+    original = app_modules.STATIC_DIR / "app.js"
+    text = original.read_text()
+    try:
+        original.write_text(text + "\n// a change\n")
+        assert app_modules.asset_version() != before
+    finally:
+        original.write_text(text)
+    assert app_modules.asset_version() == before
+
+
+def test_the_versioned_asset_is_actually_served(client, app_modules):
+    version = app_modules.asset_version()
+    r = client.get(f"/static/app.js?v={version}")
+    assert r.status_code == 200
+    assert "bridgeGroupsBtn" in r.text
