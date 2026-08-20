@@ -4,8 +4,8 @@ from app import packs
 
 
 def test_round_trip_through_build_and_parse():
-    original = [{"name": "Torchlight", "sequence": "mmnmmo"},
-                {"name": "Sputter", "sequence": "azaz"}]
+    original = [{"name": "Torchlight", "sequence": "mmnmmo", "hz": 10.0},
+                {"name": "Sputter", "sequence": "azaz", "hz": 15.0}]
     pack = packs.build(original, name="My pack", author="someone")
     assert pack["format"] == packs.FORMAT
     assert pack["name"] == "My pack" and pack["author"] == "someone"
@@ -20,13 +20,13 @@ def test_build_omits_optional_fields_when_absent():
 
 def test_parse_normalises_names_and_sequences():
     got = packs.parse({"patterns": [{"name": "  Torch   light ", "sequence": " MM Az\n"}]})
-    assert got == [{"name": "Torch light", "sequence": "mmaz"}]
+    assert got == [{"name": "Torch light", "sequence": "mmaz", "hz": 10.0}]
 
 
 def test_parse_accepts_a_hand_written_pack_without_boilerplate():
     # Someone should be able to write one in a text editor.
     assert packs.parse({"patterns": [{"name": "Hand made", "sequence": "abc"}]}) == [
-        {"name": "Hand made", "sequence": "abc"}
+        {"name": "Hand made", "sequence": "abc", "hz": 10.0}
     ]
 
 
@@ -35,7 +35,7 @@ def test_parse_ignores_unknown_keys():
         "format": packs.FORMAT, "version": 1, "notes": "hello",
         "patterns": [{"name": "x", "sequence": "az", "colour": "red"}],
     })
-    assert got == [{"name": "x", "sequence": "az"}]
+    assert got == [{"name": "x", "sequence": "az", "hz": 10.0}]
 
 
 @pytest.mark.parametrize("payload, message", [
@@ -91,3 +91,25 @@ def test_unique_name_suffixes_until_free():
     assert packs.unique_name("Torch", set()) == "Torch"
     assert packs.unique_name("Torch", {"Torch"}) == "Torch (2)"
     assert packs.unique_name("Torch", {"Torch", "Torch (2)", "Torch (3)"}) == "Torch (4)"
+
+
+def test_hz_defaults_to_quakes_rate_when_a_pack_omits_it():
+    got = packs.parse({"patterns": [{"name": "x", "sequence": "az"}]})
+    assert got[0]["hz"] == packs.DEFAULT_HZ == 10.0
+
+
+def test_hz_survives_a_round_trip():
+    pack = packs.build([{"name": "Sputter", "sequence": "azaz", "hz": 15}])
+    assert pack["patterns"][0]["hz"] == 15
+    assert packs.parse(pack)[0]["hz"] == 15.0
+
+
+@pytest.mark.parametrize("hz", [0, -1, 0.1, 21, 1000, "fast", True, [12]])
+def test_bad_hz_is_rejected(hz):
+    with pytest.raises(packs.PackError, match="hz"):
+        packs.parse({"patterns": [{"name": "x", "sequence": "az", "hz": hz}]})
+
+
+@pytest.mark.parametrize("hz", [0.5, 1, 10, 12.5, 20])
+def test_sensible_hz_is_accepted(hz):
+    assert packs.parse({"patterns": [{"name": "x", "sequence": "az", "hz": hz}]})[0]["hz"] == hz

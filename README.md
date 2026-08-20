@@ -16,7 +16,7 @@ through a small web UI that multiple people on your network can use at once.
 - Broadcasts live state over a WebSocket, so if two people have the page
   open, they see the same running/stopped state and controls in real time.
 - Lets you write and save custom a–z lightstyle strings as reusable
-  patterns, with a live waveform preview.
+  patterns, with a live waveform preview and their own speed.
 - Exports your patterns to a small JSON file you can share, and imports
   files other people send you.
 - Retunes running lights on the fly — pattern, speed, brightness and color
@@ -107,6 +107,14 @@ Warrior's neon and failing fluorescents; Unreal's `LT_Pulse`, `LT_Blink`,
 engine data, and the API marks them `origin: "inspired"` so you can tell them
 apart. The picker says which is which on hover.
 
+**Every pattern carries its own speed.** A sputtering bulb and a slow gothic
+throb aren't the same shape played faster or slower, so the rate is stored with
+the sequence and picking a pattern brings its timing along — Shadow Warrior's
+paper lantern comes up at 4 Hz, Unreal's `LT_Flicker` at 16. Quake's and
+Half-Life's engine styles are all 10 Hz because that is the rate their engines
+step the lightstyle table at; that one isn't a taste call. You can still drag
+the speed slider afterwards and it will stick.
+
 Add your own in `app/patterns.py`, or write them in the UI (see below).
 
 ## Sharing patterns
@@ -125,12 +133,13 @@ editor and sent to someone who then just imports it:
   "name": "Doom 3 style flicker",
   "author": "someone",
   "patterns": [
-    { "name": "Sputtering Lamp", "sequence": "mmnnaamm" }
+    { "name": "Sputtering Lamp", "sequence": "mmnnaamm", "hz": 12 }
   ]
 }
 ```
 
-Only `patterns` is required — `{"patterns": [...]}` on its own imports fine.
+Only `patterns` is required — `{"patterns": [...]}` on its own imports fine,
+and a pattern's `hz` defaults to 10 the way Quake's own lightstyles run.
 Sequences are normalised on the way in, so spacing and capitalisation don't
 matter. Unknown keys are ignored, which leaves room for packs to carry extra
 metadata without older consoles choking on it.

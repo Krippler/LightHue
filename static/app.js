@@ -122,18 +122,28 @@ $('#btn-stop-all').addEventListener('click', async () => {
 // ---------- Lights, groups + patterns ----------
 
 async function loadPatternsAndLights() {
-  const [patterns, lightsRes, statusRes, groupsRes] = await Promise.all([
+  const [patterns, statusRes, groupsRes] = await Promise.all([
     api('/api/patterns'),
-    api('/api/lights'),
     api('/api/status'),
     api('/api/groups'),
   ]);
   PATTERNS = patterns;
-  LIGHTS = lightsRes.lights;
   STATUS = statusRes.lights;
   SNAPSHOTS = statusRes.snapshots || {};
   GROUPS = groupsRes.groups;
-  $('#light-count-label').textContent = `${LIGHTS.length} light${LIGHTS.length === 1 ? '' : 's'}`;
+
+  // Only the light list actually needs the bridge. If it's unreachable, say so
+  // and keep the rest of the console usable rather than failing everything.
+  let lightsError = null;
+  try {
+    LIGHTS = (await api('/api/lights')).lights;
+  } catch (e) {
+    lightsError = e.message;
+  }
+  $('#light-count-label').textContent = lightsError
+    ? lightsError
+    : `${LIGHTS.length} light${LIGHTS.length === 1 ? '' : 's'}`;
+  $('#light-count-label').classList.toggle('err', !!lightsError);
   // Drop selections for lights the bridge no longer reports.
   const known = new Set(LIGHTS.map(l => l.id));
   selected = new Set([...selected].filter(id => known.has(id)));
@@ -148,6 +158,13 @@ function allPatternOptions() {
 function sequenceFor(patternId) {
   const p = allPatternOptions().find(p => p.id === patternId);
   return p ? p.sequence : 'm';
+}
+
+// Speed is part of a pattern, not a separate preference: a sputtering bulb and
+// a slow gothic throb aren't the same shape played faster or slower.
+function hzFor(patternId) {
+  const p = allPatternOptions().find(p => p.id === patternId);
+  return p && p.hz ? p.hz : 10;
 }
 
 // A card drives one light or a whole group; everything below treats them the
@@ -342,8 +359,14 @@ function buildCard(entity) {
     }
     pushLive(entity);
   });
+  const applyPatternRate = () => {
+    hzInput.value = hzFor(select.value);
+    hzValue.textContent = hzInput.value;
+  };
   select.addEventListener('change', () => {
+    applyPatternRate();
     drawWaveform(entity.key, sequenceFor(select.value));
+    restartWaveform(entity.key);
     pushLive(entity);
   });
 
@@ -370,6 +393,7 @@ function buildCard(entity) {
     await api('/api/flicker/stop', { method: 'POST', body: JSON.stringify({ light_ids: entity.lightIds }) });
   });
 
+  applyPatternRate();
   cardEls[entity.key] = card;
   cardEntities[entity.key] = entity;
   drawWaveform(entity.key, sequenceFor(select.value));
@@ -536,6 +560,9 @@ function setCustomStatus(text, kind = '') {
   customStatus.className = `status-line ${kind}`.trim();
 }
 
+const customHz = $('#custom-hz');
+customHz.addEventListener('input', () => { $('#custom-hz-value').textContent = customHz.value; });
+
 customSeq.addEventListener('input', () => {
   const seq = normalizeSequence(customSeq.value);
   renderBars($('#custom-preview'), /^[a-z]*$/.test(seq) ? seq : '');
@@ -544,15 +571,17 @@ customSeq.addEventListener('input', () => {
 $('#btn-save-pattern').addEventListener('click', async () => {
   const name = customName.value.trim();
   const sequence = normalizeSequence(customSeq.value);
+  const hz = Number($('#custom-hz').value);
   if (!name) return setCustomStatus('Give the pattern a name.', 'err');
   if (!sequence) return setCustomStatus('Write a sequence first.', 'err');
   if (!/^[a-z]+$/.test(sequence)) return setCustomStatus('Sequence must only contain letters a-z.', 'err');
   try {
-    await api('/api/patterns', { method: 'POST', body: JSON.stringify({ name, sequence }) });
+    await api('/api/patterns', { method: 'POST', body: JSON.stringify({ name, sequence, hz }) });
     customName.value = '';
     customSeq.value = '';
     renderBars($('#custom-preview'), '');
-    setCustomStatus(`Saved "${name}".`, 'ok');
+    const seconds = (sequence.length / hz).toFixed(1);
+    setCustomStatus(`Saved "${name}" at ${hz} Hz — a ${seconds}s cycle.`, 'ok');
     await loadPatternsAndLights();
   } catch (e) {
     setCustomStatus(e.message, 'err');
@@ -578,7 +607,7 @@ function renderCustomList() {
 
     const seqEl = document.createElement('span');
     seqEl.className = 'chip-seq';
-    seqEl.textContent = p.sequence;
+    seqEl.textContent = `${p.sequence} · ${p.hz || 10} Hz`;
 
     const del = document.createElement('button');
     del.className = 'chip-del';
@@ -617,7 +646,9 @@ $('#btn-export-patterns').addEventListener('click', async () => {
       const data = await res.json().catch(() => ({}));
       throw new Error(errorText(data, res));
     }
-    const blob = await res.blob();
+    const text = await res.text();
+    const exported = JSON.parse(text).patterns.length;
+    const blob = new Blob([text], { type: 'application/json' });
     const match = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') || '');
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -627,8 +658,7 @@ $('#btn-export-patterns').addEventListener('click', async () => {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-    const n = PATTERNS.custom.length;
-    setShareStatus(`Exported ${n} pattern${n === 1 ? '' : 's'}.`, 'ok');
+    setShareStatus(`Exported ${exported} pattern${exported === 1 ? '' : 's'}.`, 'ok');
   } catch (e) {
     setShareStatus(e.message, 'err');
   }
@@ -653,8 +683,8 @@ $('#import-file').addEventListener('change', async (evt) => {
       method: 'POST',
       body: JSON.stringify(payload),
     });
-    await loadPatternsAndLights();
     setShareStatus(describeImport(result, file.name), result.added.length ? 'ok' : '');
+    await loadPatternsAndLights();
   } catch (e) {
     setShareStatus(e.message, 'err');
   }

@@ -162,7 +162,8 @@
         <div class="panel-head">
           <h2>Custom Lightstyles</h2>
           <p class="sub">One letter per frame, <em>a</em> darkest through <em>z</em> brightest &mdash; the same
-          encoding Quake used, and every built-in pattern here is written in it. Saved
+          encoding Quake used, and every built-in pattern here is written in it. The speed
+          is saved with the pattern, so picking it later brings its timing along. Saved
           patterns show up in every light&rsquo;s pattern list.</p>
         </div>
 
@@ -175,6 +176,10 @@
             <span>Sequence</span>
             <input id="custom-seq" type="text" placeholder="mmnmmommommnonmmonqnmmo"
                    spellcheck="false" autocomplete="off" />
+          </label>
+          <label class="field custom-hz-field">
+            <span>Speed <em id="custom-hz-value">10</em> Hz</span>
+            <input id="custom-hz" type="range" min="1" max="20" step="1" value="10" />
           </label>
           <button id="btn-save-pattern" class="btn btn-accent">Save pattern</button>
         </div>

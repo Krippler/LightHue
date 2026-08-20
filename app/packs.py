@@ -15,7 +15,9 @@ being involved at all.
       ]
     }
 
-Everything except `patterns` is optional. Parsing is deliberately forgiving
+Everything except `patterns` is optional, including each pattern's `hz` —
+the speed it was written for, which defaults to 10 the way Quake's own
+lightstyles run. Parsing is deliberately forgiving
 about what it accepts and strict about what it produces: unknown keys are
 ignored, whitespace and case in sequences are normalised, and anything that
 would not be a valid pattern is rejected by name so the caller can say which
@@ -28,6 +30,9 @@ FORMAT = "game-hue-flicker/patterns"
 VERSION = 1
 
 MAX_PATTERNS = 200
+MIN_HZ = 0.5
+MAX_HZ = 20.0
+DEFAULT_HZ = 10.0
 MAX_SEQUENCE = 1000
 MAX_NAME = 60
 ALPHABET = set("abcdefghijklmnopqrstuvwxyz")
@@ -60,13 +65,28 @@ def normalise_name(raw) -> str:
     return name[:MAX_NAME]
 
 
+def normalise_hz(raw, default: float = DEFAULT_HZ) -> float:
+    if raw is None:
+        return default
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        raise PackError("hz must be a number")
+    hz = float(raw)
+    if not (MIN_HZ <= hz <= MAX_HZ):
+        raise PackError(f"hz must be between {MIN_HZ} and {MAX_HZ}")
+    return round(hz, 2)
+
+
 def build(patterns, name: str | None = None, author: str | None = None) -> dict:
     """Assemble a pack for export."""
     pack = {
         "format": FORMAT,
         "version": VERSION,
         "exported_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
-        "patterns": [{"name": p["name"], "sequence": p["sequence"]} for p in patterns],
+        "patterns": [
+            {"name": p["name"], "sequence": p["sequence"],
+             "hz": p.get("hz", DEFAULT_HZ)}
+            for p in patterns
+        ],
     }
     if name:
         pack["name"] = name
@@ -107,11 +127,12 @@ def parse(payload) -> list[dict]:
         try:
             name = normalise_name(entry.get("name"))
             sequence = normalise_sequence(entry.get("sequence"))
+            hz = normalise_hz(entry.get("hz"))
         except PackError as e:
             raw_name = entry.get("name")
             label = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else f"pattern {i}"
             raise PackError(f"{label}: {e}") from e
-        out.append({"name": name, "sequence": sequence})
+        out.append({"name": name, "sequence": sequence, "hz": hz})
     return out
 
 

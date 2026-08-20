@@ -172,6 +172,7 @@ main#app {
 }
 
 .dim { color: var(--bone-dim); font-size: 12px; }
+.dim.err { color: var(--danger-bright); }
 
 .toolbar-actions { display: flex; gap: 10px; }
 
@@ -494,6 +495,7 @@ select {
 }
 .custom-form .field { min-width: 150px; }
 .custom-seq-field { flex: 2 1 260px; }
+.custom-hz-field { flex: 0 1 150px; }
 .custom-form .btn { white-space: nowrap; }
 
 .custom-preview { margin-top: 14px; }
