@@ -314,6 +314,7 @@ class FlickerEngine:
         applied_color = None
         failures = 0
         last_frame = None
+        last_interval = None
 
         try:
             while True:
@@ -324,6 +325,18 @@ class FlickerEngine:
                 hz = min(state["hz"], self._share())
                 interval = 1.0 / max(0.5, hz)
                 epoch = state["epoch"]
+
+                # A frame number only means anything alongside the interval it
+                # was counted in. Both change under us — the speed slider moves,
+                # or another light starts and the share is recut — and after
+                # that the previous number is in the wrong units: at 10 Hz for
+                # 30s it is 300, and the same instant at 2 Hz is frame 60. Left
+                # alone, the guard below would read that as "not due yet" and
+                # wait for frame 301 at the new interval, which is two minutes
+                # away. So forget it and let the new interval start counting.
+                if interval != last_interval:
+                    last_frame = None
+                    last_interval = interval
 
                 # Which frame the pattern is on right now. Counting ticks
                 # instead would let a throttled light fall behind, which is
@@ -336,7 +349,9 @@ class FlickerEngine:
                     # frame that is actually due. Checked before taking a
                     # token so the wasted send doesn't cost one either.
                     due = epoch + (last_frame + 1) * interval
-                    await asyncio.sleep(max(0.001, due - time.monotonic()))
+                    # Never wait longer than a frame: whatever the arithmetic
+                    # says, the next one is at most one interval away.
+                    await asyncio.sleep(min(interval, max(0.001, due - time.monotonic())))
                     continue
 
                 # Take a slot, then re-read the clock: the value that goes out
