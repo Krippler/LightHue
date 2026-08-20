@@ -1092,3 +1092,30 @@ def test_the_versioned_asset_is_actually_served(client, app_modules):
     r = client.get(f"/static/app.js?v={version}")
     assert r.status_code == 200
     assert "bridgeGroupsBtn" in r.text
+
+
+def test_raising_the_send_rate_reaches_the_running_lights(client, bridge, app_modules, monkeypatch):
+    """A new ceiling has to be pushed, not just stored.
+
+    Each card reports the share its light is actually getting, and nothing
+    pushes a status between ticks — so a rate change that isn't broadcast looks
+    like it did nothing until something else starts or stops. Asserted through
+    a recorded call rather than a socket read: waiting on a push that never
+    comes hangs the suite instead of failing it.
+    """
+    configure(client)
+    client.post("/api/flicker/start", json={
+        "light_ids": ["1", "2", "3", "4"], "pattern_id": "flicker_a", "hz": 10})
+
+    def shares():
+        lights = client.get("/api/status").json()["lights"]
+        return {v["effective_hz"] for v in lights.values() if v.get("running")}
+
+    assert shares() == {2.0}                      # 10 * 0.8 / 4
+
+    pushes = []
+    monkeypatch.setattr(app_modules, "_broadcast_status_soon", lambda: pushes.append(1))
+    client.put("/api/settings", json={"max_commands_per_second": 20})
+
+    assert shares() == {4.0}                      # 20 * 0.8 / 4
+    assert pushes, "raising the rate has to push a status, or the cards stay stale"
