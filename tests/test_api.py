@@ -442,8 +442,8 @@ def test_effective_rate_is_absent_once_stopped(client, bridge):
 
 def test_patterns_endpoint_lists_games_in_order(client):
     body = client.get("/api/patterns").json()
-    assert body["games"][0] == "DOOM"          # oldest engine first
-    assert body["games"][-1] == "Quake 4"
+    assert body["games"] == sorted(body["games"], key=str.casefold)
+    assert body["games"][0] == "Blood" and body["games"][-1] == "Unreal Tournament"
     # Every game in the menu order can be filled from the pattern list, either
     # by owning patterns or by having them shared into it.
     for game in body["games"]:

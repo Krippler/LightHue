@@ -215,3 +215,17 @@ def test_quake_three_is_deliberately_absent():
     # is nothing verbatim to claim and nothing distinctive to author.
     assert "Quake III" not in GAMES
     assert not any("Quake III" in p["game"] for p in BUILTIN_PATTERNS)
+
+
+def test_the_menu_is_sorted_by_game_name():
+    assert GAMES == sorted(GAMES, key=str.casefold)
+    # casefold, so the all-caps name sits with its sequel rather than ahead of
+    # everything lowercase.
+    assert GAMES.index("Descent") < GAMES.index("DOOM") < GAMES.index("Doom 3")
+
+
+def test_the_menu_is_derived_from_the_table():
+    # Adding a game below should not also require editing a separate list.
+    owned = {p["game"] for p in BUILTIN_PATTERNS}
+    shared = {g for p in BUILTIN_PATTERNS for g in p.get("shared_with", ())}
+    assert set(GAMES) == owned | shared

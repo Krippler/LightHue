@@ -1,10 +1,10 @@
 # Game Hue Flicker Console
 
 Drives Philips Hue lights with the flicker patterns of twenty classic games —
-DOOM, Marathon, Heretic, Descent, Hexen, Rise of the Triad, Duke Nukem 3D,
-Quake, Blood, Shadow Warrior, Quake II, Unreal, Half-Life, Thief, System
-Shock 2, Unreal Tournament, Deus Ex, Doom 3, Half-Life 2 and Quake 4 —
-through a small web UI that multiple people on your network can use at once.
+Blood, Descent, Deus Ex, DOOM, Doom 3, Duke Nukem 3D, Half-Life, Half-Life 2,
+Heretic, Hexen, Marathon, Quake, Quake II, Quake 4, Rise of the Triad, Shadow
+Warrior, System Shock 2, Thief, Unreal and Unreal Tournament — through a small
+web UI that multiple people on your network can use at once.
 
 <img src="static/icon.png" width="96" alt="">
 
@@ -84,7 +84,7 @@ physical link button on the bridge, then hit Pair within ~30 seconds).
 ## Patterns
 
 Every built-in pattern is named after the game it comes from, and the picker
-groups them by game. There are two kinds, and the difference is worth knowing:
+groups them by game, listed alphabetically. There are two kinds, and the difference is worth knowing:
 
 **Straight from the engine.** Quake stored its light effects as literal `a`–`z`
 strings — styles 0–11 plus 63 — and they're here transcribed from id's released

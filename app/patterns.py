@@ -342,29 +342,21 @@ BUILTIN_PATTERNS = [
 
 BUILTIN_BY_ID = {p["id"]: p for p in BUILTIN_PATTERNS}
 
-# Menu order for the pattern picker, roughly by release date.
-GAMES = [
-    "DOOM",
-    "Marathon",
-    "Heretic",
-    "Descent",
-    "Hexen",
-    "Rise of the Triad",
-    "Duke Nukem 3D",
-    "Quake",
-    "Blood",
-    "Shadow Warrior",
-    "Quake II",
-    "Unreal",
-    "Half-Life",
-    "Thief",
-    "System Shock 2",
-    "Unreal Tournament",
-    "Deus Ex",
-    "Doom 3",
-    "Half-Life 2 / Source",
-    "Quake 4",
-]
+def _menu_games() -> list:
+    """Every game with something to offer, sorted by name.
+
+    Derived from the table rather than kept as a second list beside it, so a
+    game added below turns up in the menu without anything else to remember.
+    casefold keeps DOOM next to Doom 3 rather than sorting all-caps names first.
+    """
+    games = set()
+    for pattern in BUILTIN_PATTERNS:
+        games.add(pattern["game"])
+        games.update(pattern.get("shared_with", ()))
+    return sorted(games, key=str.casefold)
+
+
+GAMES = _menu_games()
 
 
 DEFAULT_HZ = 10.0
