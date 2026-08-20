@@ -21,7 +21,7 @@ from . import auth, config_store, hue_client, packs
 from .auth import ConsoleAuthMiddleware
 from .flicker_engine import FlickerEngine
 from .hue_client import HueClient
-from .patterns import BUILTIN_BY_ID, BUILTIN_PATTERNS, GAMES
+from .patterns import BUILTIN_BY_ID, BUILTIN_PATTERNS, DEFAULT_HZ, GAMES
 
 
 @asynccontextmanager
@@ -129,6 +129,7 @@ class PairRequest(BaseModel):
 class CustomPatternRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=60)
     sequence: str
+    hz: float = Field(DEFAULT_HZ, gt=0, le=20)
 
 
 class LoginRequest(BaseModel):
@@ -152,7 +153,9 @@ class SettingsRequest(BaseModel):
 class StartRequest(BaseModel):
     light_ids: list[str] = Field(..., min_length=1)
     pattern_id: str
-    hz: float = Field(10.0, gt=0, le=20, description="Hue can't usefully go faster")
+    # None means "whatever this pattern was written for" — speed is part of the
+    # pattern, so a caller that doesn't care shouldn't have to guess a number.
+    hz: float | None = Field(None, gt=0, le=20, description="Hue can't usefully go faster")
     min_bri: int = Field(1, ge=1, le=254)
     max_bri: int = Field(254, ge=1, le=254)
     hue: int | None = Field(None, ge=0, le=65535)
@@ -359,7 +362,9 @@ async def create_pattern(req: CustomPatternRequest):
         raise HTTPException(400, "Sequence must only contain letters a-z")
     pid = f"custom_{uuid.uuid4().hex[:8]}"
     cfg = config_store.load()
-    cfg["custom_patterns"][pid] = {"id": pid, "name": req.name.strip(), "sequence": seq}
+    cfg["custom_patterns"][pid] = {
+        "id": pid, "name": req.name.strip(), "sequence": seq, "hz": req.hz,
+    }
     config_store.save(cfg)
     return cfg["custom_patterns"][pid]
 
@@ -427,7 +432,8 @@ async def import_patterns(payload: dict = Body(...)):
             continue
         name = packs.unique_name(entry["name"], names)
         pid = f"custom_{uuid.uuid4().hex[:8]}"
-        existing[pid] = {"id": pid, "name": name, "sequence": entry["sequence"]}
+        existing[pid] = {"id": pid, "name": name, "sequence": entry["sequence"],
+                         "hz": entry["hz"]}
         by_sequence[entry["sequence"]] = name
         names.add(name)
         added.append(existing[pid])
@@ -438,14 +444,17 @@ async def import_patterns(payload: dict = Body(...)):
             "pack_name": payload.get("name"), "author": payload.get("author")}
 
 
-def _resolve_sequence(pattern_id: str) -> str:
+def _resolve_pattern(pattern_id: str) -> dict:
     if pattern_id in BUILTIN_BY_ID:
-        return BUILTIN_BY_ID[pattern_id]["sequence"]
-    cfg = config_store.load()
-    custom = cfg.get("custom_patterns", {})
+        return BUILTIN_BY_ID[pattern_id]
+    custom = config_store.load().get("custom_patterns", {})
     if pattern_id in custom:
-        return custom[pattern_id]["sequence"]
+        return custom[pattern_id]
     raise HTTPException(404, f"Unknown pattern_id: {pattern_id}")
+
+
+def _resolve_sequence(pattern_id: str) -> str:
+    return _resolve_pattern(pattern_id)["sequence"]
 
 
 # ---------- Groups ----------
@@ -495,7 +504,9 @@ async def get_status():
 async def start_flicker(req: StartRequest):
     if get_client() is None:
         raise HTTPException(400, "Bridge not configured yet")
-    sequence = _resolve_sequence(req.pattern_id)
+    pattern = _resolve_pattern(req.pattern_id)
+    sequence = pattern["sequence"]
+    hz = req.hz if req.hz is not None else pattern.get("hz", DEFAULT_HZ)
     # Snapshot first — one bulk GET for the whole group — so Stop has something
     # to put back. Lights already running keep their earlier snapshot.
     await engine.capture(req.light_ids)
@@ -504,7 +515,7 @@ async def start_flicker(req: StartRequest):
     epoch = time.monotonic()
     for lid in req.light_ids:
         await engine.start(
-            lid, sequence, req.pattern_id, req.hz, req.min_bri, req.max_bri,
+            lid, sequence, req.pattern_id, hz, req.min_bri, req.max_bri,
             req.hue, req.sat, req.transition_ms, epoch=epoch,
         )
     return {"ok": True, **status_payload()}
@@ -514,7 +525,10 @@ async def start_flicker(req: StartRequest):
 async def update_flicker(req: UpdateRequest):
     changes = req.model_dump(exclude={"light_ids"}, exclude_none=True)
     if req.pattern_id is not None:
-        changes["sequence"] = _resolve_sequence(req.pattern_id)
+        pattern = _resolve_pattern(req.pattern_id)
+        changes["sequence"] = pattern["sequence"]
+        if req.hz is None:
+            changes["hz"] = pattern.get("hz", DEFAULT_HZ)
     updated = [lid for lid in req.light_ids if engine.update(lid, **changes)]
     if not updated:
         raise HTTPException(409, "None of those lights are currently flickering")

@@ -477,7 +477,7 @@ def test_export_returns_a_downloadable_pack(client):
     assert pack["format"] == "game-hue-flicker/patterns"
     assert sorted(p["name"] for p in pack["patterns"]) == ["Sputter", "Torchlight"]
     # ids are console-local bookkeeping and have no business in a shared file
-    assert all(set(p) == {"name", "sequence"} for p in pack["patterns"])
+    assert all(set(p) == {"name", "sequence", "hz"} for p in pack["patterns"])
 
 
 def test_export_with_nothing_to_share_is_404(client):
@@ -584,3 +584,80 @@ def test_sharing_endpoints_are_behind_the_console_password(client):
     client.cookies.clear()
     assert client.get("/api/patterns/export").status_code == 401
     assert client.post("/api/patterns/import", json={"patterns": []}).status_code == 401
+
+
+# ---------- a pattern's own speed ----------
+
+def test_starting_without_a_speed_uses_the_patterns_own(client, bridge):
+    configure(client)
+    # Shadow Warrior's paper lantern is written for 4Hz, not the old blanket 10.
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "sw_lantern"})
+    assert client.get("/api/status").json()["lights"]["1"]["hz"] == 4
+    client.post("/api/flicker/stop", json={})
+
+
+def test_an_explicit_speed_still_wins(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start",
+                json={"light_ids": ["1"], "pattern_id": "sw_lantern", "hz": 18})
+    assert client.get("/api/status").json()["lights"]["1"]["hz"] == 18
+    client.post("/api/flicker/stop", json={})
+
+
+def test_quake_styles_keep_their_engine_rate(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "fast_strobe"})
+    assert client.get("/api/status").json()["lights"]["1"]["hz"] == 10
+    client.post("/api/flicker/stop", json={})
+
+
+def test_switching_pattern_live_adopts_the_new_rate(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "sw_lantern"})
+    assert client.get("/api/status").json()["lights"]["1"]["hz"] == 4
+    client.post("/api/flicker/update",
+                json={"light_ids": ["1"], "pattern_id": "unreal_flicker"})
+    status = client.get("/api/status").json()["lights"]["1"]
+    assert (status["pattern_id"], status["hz"]) == ("unreal_flicker", 16)
+    client.post("/api/flicker/stop", json={})
+
+
+def test_switching_pattern_live_with_an_explicit_speed_keeps_it(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "steady"})
+    client.post("/api/flicker/update",
+                json={"light_ids": ["1"], "pattern_id": "unreal_flicker", "hz": 7})
+    assert client.get("/api/status").json()["lights"]["1"]["hz"] == 7
+    client.post("/api/flicker/stop", json={})
+
+
+def test_custom_patterns_carry_a_speed(client, bridge):
+    configure(client)
+    made = client.post("/api/patterns",
+                       json={"name": "Fast One", "sequence": "azaz", "hz": 17}).json()
+    assert made["hz"] == 17
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": made["id"]})
+    assert client.get("/api/status").json()["lights"]["1"]["hz"] == 17
+    client.post("/api/flicker/stop", json={})
+
+
+def test_custom_patterns_default_to_ten(client):
+    made = client.post("/api/patterns", json={"name": "Plain", "sequence": "azaz"}).json()
+    assert made["hz"] == 10.0
+
+
+def test_a_shared_pattern_keeps_its_speed(client):
+    client.post("/api/patterns", json={"name": "Fast One", "sequence": "azaz", "hz": 17})
+    pack = client.get("/api/patterns/export").json()
+    assert pack["patterns"][0]["hz"] == 17
+    r = client.post("/api/patterns/import", json={
+        "patterns": [{"name": "From A Friend", "sequence": "zzaa", "hz": 6}],
+    })
+    assert r.json()["added"][0]["hz"] == 6
+
+
+def test_patterns_endpoint_reports_every_rate(client):
+    body = client.get("/api/patterns").json()
+    assert all("hz" in p for p in body["builtin"])
+    rates = {p["id"]: p["hz"] for p in body["builtin"]}
+    assert rates["sw_lantern"] == 4 and rates["unreal_flicker"] == 16

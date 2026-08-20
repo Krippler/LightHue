@@ -20,7 +20,8 @@
     Ships Quake's full lightstyle table (styles 0-11, verbatim from id Software's
     engine) and Half-Life's addition to it, plus hand-authored takes on the light
     effects of DOOM, Duke Nukem 3D, Blood, Shadow Warrior and Unreal. Every preset
-    is named after the game it comes from.&#13;
+    is named after the game it comes from and carries the speed it was written
+    for, so picking one brings its timing with it.&#13;
     &#13;
     Write your own patterns too, and share them: export yours to a small JSON file
     to send to someone, or import one they sent you.&#13;

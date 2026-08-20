@@ -100,3 +100,32 @@ def test_every_game_in_the_menu_order_has_options():
 
     for game in GAMES:
         assert patterns_for(game), game
+
+
+def test_every_pattern_declares_the_rate_it_was_written_for():
+    from app.patterns import DEFAULT_HZ
+
+    assert DEFAULT_HZ == 10.0
+    for pattern in BUILTIN_PATTERNS:
+        assert "hz" in pattern, pattern["id"]
+        assert 0.5 <= pattern["hz"] <= 20, pattern["id"]
+
+
+def test_engine_lightstyles_run_at_quakes_ten_frames_per_second():
+    # Quake steps its lightstyle table at 10fps and GoldSrc inherited that, so
+    # the verbatim styles are not free to be re-timed.
+    for pattern in BUILTIN_PATTERNS:
+        if pattern["origin"] == "engine":
+            assert pattern["hz"] == 10, pattern["id"]
+
+
+def test_authored_patterns_actually_use_the_freedom():
+    # If every authored pattern were also 10Hz the field would be decoration.
+    authored = {p["hz"] for p in BUILTIN_PATTERNS if p["origin"] == "inspired"}
+    assert len(authored) > 3
+
+
+def test_no_pattern_takes_absurdly_long_to_cycle():
+    for pattern in BUILTIN_PATTERNS:
+        seconds = len(pattern["sequence"]) / pattern["hz"]
+        assert seconds <= 8, (pattern["id"], seconds)
