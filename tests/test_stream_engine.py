@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from app.hue_stream import DTLS_CIPHERS, MAGIC
+from app.hue_stream import DTLS_CIPHERS, MAGIC, StreamError
 from app.stream_engine import FRAME_RATE_HZ, StreamEngine, level_at, rgb_for
 
 IDENTITY = "stream-user"
@@ -247,7 +247,7 @@ def test_a_failed_handshake_leaves_no_area_behind(stub_bridge):
     original = hue_stream.STREAM_PORT
     hue_stream.STREAM_PORT = 1     # nothing is listening there
     try:
-        with pytest.raises(Exception):
+        with pytest.raises(StreamError):
             engine.start(stub_bridge["host"], IDENTITY, KEY_HEX, "6", ["1"], "mz", "p",
                          10.0, 1, 254, None, None)
     finally:
