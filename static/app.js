@@ -221,16 +221,30 @@ function hasSnapshot(entity) {
 }
 
 function renderGrid() {
-  const grid = $('#lights-grid');
-  grid.innerHTML = '';
+  const groupGrid = $('#groups-grid');
+  const lightGrid = $('#lights-grid');
+  groupGrid.innerHTML = '';
+  lightGrid.innerHTML = '';
   cardEls = {};
   cardEntities = {};
 
-  GROUPS.map(groupEntity).forEach(e => grid.appendChild(buildCard(e)));
-  LIGHTS.map(lightEntity).forEach(e => grid.appendChild(buildCard(e)));
+  GROUPS.map(groupEntity).forEach(e => groupGrid.appendChild(buildCard(e)));
+  LIGHTS.map(lightEntity).forEach(e => lightGrid.appendChild(buildCard(e)));
+
+  // An empty grid would otherwise be an unexplained gap in its panel.
+  if (!LIGHTS.length) {
+    lightGrid.appendChild(emptyState('No lights or plugs reported by this bridge.'));
+  }
 
   renderSelection();
   applyStatus();
+}
+
+function emptyState(text) {
+  const el = document.createElement('div');
+  el.className = 'empty-state';
+  el.textContent = text;
+  return el;
 }
 
 function buildCard(entity) {
@@ -1375,7 +1389,7 @@ function initCollapsibles() {
     panel.querySelector('.panel-head').addEventListener('click', (ev) => {
       // A click on a button or input in the header is for that control, not
       // for folding the panel (e.g. Export / Import).
-      if (ev.target.closest('button, input, select, label, a')) return;
+      if (ev.target.closest('button, input, select, label, a, .drag-handle')) return;
       const collapsed = !panel.classList.contains('is-collapsed');
       panel.classList.toggle('is-collapsed', collapsed);
       const next = readSectionState();
@@ -1387,7 +1401,106 @@ function initCollapsibles() {
 
 initCollapsibles();
 
+// ---------- Panel order ----------
+
+// Panels can be dragged into whatever order suits you, remembered per-browser.
+// Driven with pointer events and a floating clone rather than native HTML5
+// drag-and-drop: the real panel is moved as you go, so what you see mid-drag is
+// exactly where it lands.
+const LAYOUT_KEY = 'ghf.layout';
+let dragState = null;
+
+function savedOrder() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LAYOUT_KEY));
+    return Array.isArray(raw) ? raw : null;
+  } catch { return null; }
+}
+
+function applySavedOrder() {
+  const dash = $('#dash');
+  const order = savedOrder();
+  $('#layout-tools').classList.toggle('show', !!order);
+  if (!order) return;
+  // Anything the saved order doesn't mention (a panel added by an update) keeps
+  // its markup position by being left where it already is.
+  order.forEach(name => {
+    const panel = dash.querySelector(`.dash-card[data-section="${name}"]`);
+    if (panel) dash.appendChild(panel);
+  });
+}
+
+function persistOrder() {
+  const order = $$('#dash > .dash-card').map(p => p.dataset.section);
+  try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(order)); } catch { /* private mode */ }
+  $('#layout-tools').classList.add('show');
+}
+
+function panelAfterPoint(y) {
+  return $$('#dash > .dash-card:not(.is-dragging)')
+    .find(p => { const r = p.getBoundingClientRect(); return y < r.top + r.height / 2; }) || null;
+}
+
+function onDragMove(ev) {
+  if (!dragState) return;
+  const { panel, clone, dx, dy } = dragState;
+  clone.style.transform = `translate(${ev.clientX - dx}px, ${ev.clientY - dy}px)`;
+  const after = panelAfterPoint(ev.clientY);
+  const dash = $('#dash');
+  if (after === null) { if (dash.lastElementChild !== panel) dash.appendChild(panel); }
+  else if (after !== panel) dash.insertBefore(panel, after);
+}
+
+function endDrag() {
+  if (!dragState) return;
+  window.removeEventListener('pointermove', onDragMove);
+  dragState.clone.remove();
+  dragState.panel.classList.remove('is-dragging');
+  $('#dash').classList.remove('dnd-active');
+  dragState = null;
+  persistOrder();
+}
+
+function startDrag(ev, panel) {
+  if (ev.pointerType === 'mouse' && ev.button !== 0) return;   // left button only
+  ev.preventDefault();
+  ev.stopPropagation();
+  const r = panel.getBoundingClientRect();
+  const clone = panel.cloneNode(true);
+  clone.classList.add('drag-clone');
+  clone.classList.remove('is-dragging');
+  clone.style.width = `${r.width}px`;
+  clone.style.transform = `translate(${r.left}px, ${r.top}px)`;
+  document.body.appendChild(clone);
+  panel.classList.add('is-dragging');
+  $('#dash').classList.add('dnd-active');
+  dragState = { panel, clone, dx: ev.clientX - r.left, dy: ev.clientY - r.top };
+  window.addEventListener('pointermove', onDragMove);
+  window.addEventListener('pointerup', endDrag, { once: true });
+  window.addEventListener('pointercancel', endDrag, { once: true });
+}
+
+function initLayout() {
+  applySavedOrder();
+  $$('#dash > .dash-card').forEach(panel => {
+    const grip = document.createElement('span');
+    grip.className = 'drag-handle';
+    grip.title = 'Drag to reorder';
+    grip.textContent = '\u2833';                 // braille grip
+    const head = panel.querySelector('.panel-head');
+    head.insertBefore(grip, head.firstChild);
+    grip.addEventListener('pointerdown', ev => startDrag(ev, panel));
+  });
+  $('#btn-reset-layout').addEventListener('click', () => {
+    try { localStorage.removeItem(LAYOUT_KEY); } catch { /* private mode */ }
+    location.reload();
+  });
+}
+
+initLayout();
+
 // ---------- Init ----------
+
 
 
 async function bootstrap() {

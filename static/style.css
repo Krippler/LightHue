@@ -24,8 +24,8 @@
   --dim: #4c3f31;
 
   --radius: 6px;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  --font-display: 'Syne', var(--font-mono);
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: 'Big Shoulders Display', sans-serif;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -79,8 +79,8 @@ header {
   color: var(--app);
 }
 .logo h1 {
-  font-family: var(--font-display); font-size: 20px; font-weight: 800;
-  color: #fff; line-height: 1; letter-spacing: .03em;
+  font-family: var(--font-display); font-size: 26px; font-weight: 800;
+  color: #fff; line-height: 1; letter-spacing: .04em;
 }
 .logo p {
   font-size: 10px; color: var(--muted);
@@ -311,6 +311,13 @@ input[type="color"] {
 
 /* ---------- Groups ---------- */
 
+/* With no groups yet the grid is an unexplained gap, so it collapses away and
+   the tools below it lose their divider. */
+#groups-grid:empty { display: none; }
+#groups-grid:not(:empty) + .group-tools {
+  margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);
+}
+
 .group-form { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
 .group-form .field { flex: 0 1 320px; }
 .group-form .btn { white-space: nowrap; }
@@ -377,14 +384,47 @@ input[type="color"] {
 }
 .custom-chip .chip-del:hover { border-color: var(--err); color: var(--err); }
 
+/* ---------- Panel order ---------- */
+
+.dash-card > .panel-head { position: relative; padding-left: 32px; }
+.drag-handle {
+  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  cursor: grab; user-select: none; touch-action: none;
+  font-size: 14px; line-height: 1; color: var(--muted);
+  opacity: 0; transition: opacity .15s, color .15s;
+}
+.dash-card:hover .drag-handle, .dash.dnd-active .drag-handle { opacity: .5; }
+.drag-handle:hover { opacity: 1; color: var(--app); }
+.drag-handle:active { cursor: grabbing; }
+
+.dash-card.is-dragging { opacity: .28; }
+/* The clone that follows the pointer; the real panel moves underneath it, so
+   the gap you see mid-drag is where the panel lands. */
+.drag-clone {
+  position: fixed; left: 0; top: 0; margin: 0; z-index: 9999;
+  pointer-events: none; opacity: .92; border-radius: var(--radius);
+  box-shadow: 0 14px 44px rgba(0, 0, 0, .6);
+}
+
+#layout-tools {
+  display: flex; justify-content: flex-end; align-items: center; gap: 10px;
+  margin: 2px 0 8px;
+}
+.layout-hint { font-size: 10px; color: var(--muted); margin-right: auto; opacity: .8; }
+#btn-reset-layout { display: none; }
+#layout-tools.show #btn-reset-layout { display: inline-flex; }
+
 /* ---------- Light cards ---------- */
 
 .lights-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px;
 }
 
+.empty-state { grid-column: 1 / -1; text-align: center; padding: 20px; color: var(--muted); font-size: 12px; }
+
 .light-card {
   padding: 16px; margin-bottom: 0;
+  background: rgba(255, 255, 255, .018);
   display: flex; flex-direction: column; gap: 14px;
 }
 
@@ -400,8 +440,8 @@ input[type="color"] {
 .light-card-head .head-right { display: flex; align-items: center; gap: 8px; }
 
 .light-name {
-  font-family: var(--font-display); font-weight: 800; font-size: 17px;
-  color: #fff; letter-spacing: .02em; line-height: 1.2;
+  font-family: var(--font-display); font-weight: 700; font-size: 21px;
+  color: #fff; letter-spacing: .03em; line-height: 1.15;
 }
 .light-meta { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
 .reachable-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); display: inline-block; flex: 0 0 auto; }
@@ -470,5 +510,7 @@ input[type="color"] {
   .custom-color-row { flex: 0 0 auto; }
   .custom-color-row .color-code,
   .controls .color-row .color-code { flex: 1 1 130px; }
-  .logo h1 { font-size: 17px; }
+  .logo h1 { font-size: 22px; }
+  .drag-handle, .layout-hint { display: none; }
+  .dash-card > .panel-head { padding-left: 16px; }
 }

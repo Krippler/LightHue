@@ -296,7 +296,7 @@ each card grows a **Revert** button you can hit whenever you want it back.
 
 ## Settings
 
-Open **Settings** in the bar above the light cards.
+Open **Settings** in the bar above the panels.
 
 **Bridge send rate.** A global ceiling on commands per second across every
 flickering light. Philips advises against sustained bursts past ~10/second,
@@ -318,6 +318,10 @@ curl -H 'X-Console-Password: yourpassword' http://server:26000/api/lights
 ```
 
 Even with a password set, this is a LAN tool — don't port-forward it.
+
+Panels can be dragged into whatever order you like — grab the grip at the left
+of a panel's title bar — and clicking a title bar folds that panel away. Both
+are remembered per-browser; **Reset layout** puts the order back.
 
 ## Project layout
 
