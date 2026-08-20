@@ -342,6 +342,11 @@ async def put_settings(req: SettingsRequest):
         else config_store.get_settings()
     engine.limiter.set_rate(settings["max_commands_per_second"])
     engine.restore_on_stop = settings["restore_on_stop"]
+    # The new ceiling changes what every running light is actually getting, and
+    # each card reports that. Nothing else pushes a status between ticks, so
+    # without this the notes sit at the old figure until something starts or
+    # stops — making a rate change look like it did nothing.
+    _broadcast_status_soon()
     return settings
 
 
