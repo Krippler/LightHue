@@ -389,12 +389,19 @@ same claim, seconds apart. If the hand-rolled one gets through where the library
 does not, the bridge is willing and the client is the problem — which nothing
 else here can establish.
 
+It ships in the image, so it runs where the bridge is:
+
 ```bash
-python3 scripts/probe_stream.py 192.168.1.23 <api-key> <client-key>
+docker exec -it lighthue python3 /srv/scripts/probe_stream.py --config /data/config.json
 ```
 
-Run it on the host and inside the container. Working on the host and failing in
-the container is container networking — switch to Host networking.
+`--config` reads the bridge address and both keys from the console's own config,
+which beats copying a 40-character key onto a command line and into shell
+history. Passing them explicitly still works.
+
+Only the library handshake needs `python-mbedtls`; the hand-rolled one is
+standard library alone, so the script still says something useful when it is
+run somewhere the dependency is missing.
 
 Streaming has no transition setting: every frame is sent, so there is nothing
 to interpolate between.

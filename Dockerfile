@@ -7,6 +7,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY static ./static
+# Diagnostics belong in the image: streaming problems have to be investigated
+# on the machine that has the bridge, which is rarely the one with a checkout.
+COPY scripts ./scripts
 
 # Config/presets persist here — mount a volume to this path
 RUN mkdir -p /data
