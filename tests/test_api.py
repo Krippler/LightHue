@@ -1214,6 +1214,44 @@ def stream_body(**kw):
     return {"area_id": "6", "pattern_id": "flicker_a", **kw}
 
 
+def test_arming_clears_a_hold_the_bridge_is_already_reporting(client, bridge,
+                                                              app_modules, monkeypatch):
+    """A configuration the bridge already calls active takes a "start" as a no-op.
+
+    That is what a session killed mid-stream leaves behind, and it is invisible
+    from the REST side: the call succeeds, and the port stays bound to something
+    that will never answer a handshake. So arming stops it first, every time.
+    """
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    bridge["v2"]["configurations"][0]["status"] = "active"
+
+    monkeypatch.setattr(app_modules.stream_engine, "start",
+                        lambda *a, **kw: (_ for _ in ()).throw(
+                            app_modules.StreamError("no route to the bridge")))
+    client.post("/api/stream/start", json=stream_body())
+    assert bridge["v2"]["armed"][:2] == ["stop", "start"]
+
+
+def test_the_arm_step_records_what_the_bridge_said_not_what_we_asked(
+        client, bridge, app_modules, monkeypatch):
+    """A 200 on the start call is not evidence the stream came up.
+
+    Reading the configuration back is the only thing that distinguishes an area
+    that armed from one where the bridge accepted the word and did nothing —
+    and those two look identical from the socket.
+    """
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    monkeypatch.setattr(app_modules.stream_engine, "start",
+                        lambda *a, **kw: (_ for _ in ()).throw(
+                            app_modules.StreamError("no route to the bridge")))
+    client.post("/api/stream/start", json=stream_body())
+
+    steps = client.get("/api/stream/diagnostics").json()["last_attempt"]["steps"]
+    armed = next(s for s in steps if s["step"] == "armed")
+    assert armed["over"] == "v2"
+    assert armed["bridge_says"]["status"] == "active"
+
+
 def test_streaming_needs_a_console_paired_for_it(client, bridge):
     configure(client)                               # api key only, no client key
     r = client.post("/api/stream/start", json=stream_body())
@@ -1247,8 +1285,10 @@ def test_a_failed_stream_hands_the_area_back(client, bridge, app_modules, monkey
     r = client.post("/api/stream/start", json=stream_body())
     assert r.status_code == 502
     # This bridge knows the area in v2, so arming goes there and the v1 flag is
-    # only touched on the way out.
-    assert bridge["v2"]["armed"][0] == "start"
+    # only touched on the way out. Arming clears any hold before taking one:
+    # a bridge that already thinks the area is streaming treats a bare "start"
+    # as nothing to do, and leaves the port bound to the dead session.
+    assert bridge["v2"]["armed"][:2] == ["stop", "start"]
     assert bridge["v2"]["armed"][-1] == "stop"
     assert bridge["groups"]["6"]["stream"]["active"] is False
     assert bridge["groups"]["6"]["stream"]["active"] is False

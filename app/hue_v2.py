@@ -69,6 +69,16 @@ class HueV2Client:
         r.raise_for_status()
         return r.json().get("data", [])
 
+    async def configuration(self, area_id: str) -> dict | None:
+        """One configuration, for reading back what the bridge did with it."""
+        r = await _http().get(
+            self._url(f"/entertainment_configuration/{area_id}"),
+            headers=self._headers,
+        )
+        r.raise_for_status()
+        data = r.json().get("data", [])
+        return data[0] if data else None
+
     async def set_streaming(self, area_id: str, active: bool) -> dict:
         """Arm or disarm the stream. This is the call v1 cannot make."""
         r = await _http().put(
@@ -95,3 +105,19 @@ def channel_ids(configuration: dict) -> list[int]:
     """
     return [int(c["channel_id"]) for c in configuration.get("channels", [])
             if "channel_id" in c]
+
+
+def streaming_state(configuration: dict | None) -> dict:
+    """What the bridge reports about a configuration's stream, in v2 terms.
+
+    `status` is the field that decides whether anything is listening on 2100;
+    `active_streamer` names who holds it. A configuration that reads inactive
+    right after being told to start was not armed, whatever the PUT returned.
+    """
+    if configuration is None:
+        return {"status": None, "active_streamer": None}
+    streamer = configuration.get("active_streamer") or {}
+    return {
+        "status": configuration.get("status"),
+        "active_streamer": streamer.get("rid") if isinstance(streamer, dict) else streamer,
+    }
