@@ -113,20 +113,36 @@ def rest(bridge, key, path, method="GET", body=None):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("bridge", help="bridge IP, e.g. 192.168.1.23")
-    ap.add_argument("api_key")
-    ap.add_argument("client_key", help="32 hex characters, from pairing")
+    # All three live in the console's config, so reading them from there beats
+    # copying credentials onto a command line where they end up in shell
+    # history — and beats mistyping a 40-character key.
+    ap.add_argument("bridge", nargs="?", help="bridge IP, e.g. 192.168.1.23")
+    ap.add_argument("api_key", nargs="?")
+    ap.add_argument("client_key", nargs="?", help="32 hex characters, from pairing")
+    ap.add_argument("--config", default=None,
+                    help="read all three from a config.json instead (e.g. /data/config.json)")
     ap.add_argument("--area", help="entertainment area id; default is the first found")
     ap.add_argument("--timeout", type=float, default=8.0)
     args = ap.parse_args()
+
+    if args.config:
+        with open(args.config) as f:
+            cfg = json.load(f)
+        args.bridge = args.bridge or cfg.get("bridge_ip")
+        args.api_key = args.api_key or cfg.get("api_key")
+        args.client_key = args.client_key or cfg.get("client_key")
+    missing = [n for n in ("bridge", "api_key", "client_key") if not getattr(args, n)]
+    if missing:
+        ap.error(f"missing {', '.join(missing)} — pass them, or use --config /data/config.json")
 
     print(f"\nProbing {args.bridge} as {args.api_key[:6]}...\n")
 
     try:
         from mbedtls import tls
     except ImportError:
-        say(False, "python-mbedtls is not installed here (pip install python-mbedtls)")
-        return 2
+        tls = None
+        say(False, "python-mbedtls is not installed here — the library handshake "
+                   "will be skipped, the hand-rolled one still runs")
 
     # 1. REST reachable at all?
     try:
@@ -183,10 +199,12 @@ def main() -> int:
     from app.hue_stream import probe_handshake_stage
 
     try:
-        config = tls.DTLSConfiguration(
+        config = None if tls is None else tls.DTLSConfiguration(
             pre_shared_key=(args.api_key, bytes.fromhex(args.client_key)),
             ciphers=CIPHERS, validate_certificates=False)
         try:
+            if config is None:
+                raise RuntimeError("python-mbedtls is not installed here")
             raw = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             raw.settimeout(args.timeout)
             sock = tls.ClientContext(config).wrap_socket(raw, server_hostname=None)
