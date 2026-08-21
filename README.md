@@ -345,6 +345,13 @@ releases it — the same snapshot the normal path uses, and in that order,
 because a bridge that is streaming to an area ignores anything else sent to
 those lights.
 
+Stopping sends the bridge a DTLS close_notify before dropping the socket. That
+is not a nicety: the bridge allows one entertainment session and keeps it on
+its books until it is told the last one ended, so a stream that closes quietly
+leaves a ghost session that blocks the next handshake until the bridge times it
+out on its own. Streaming once and then never again, with no other symptom, is
+what that looks like.
+
 **If a stream is left claimed** — a killed container, a dropped network — the
 bridge keeps holding the area, and from the outside that looks like it simply
 ignoring the streaming port: the area is accepted and then the handshake times

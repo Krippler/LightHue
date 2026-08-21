@@ -27,9 +27,12 @@ Wire format, confirmed against two independent implementations
     v2 body: the area's 36-char ASCII UUID, then 7 bytes per channel
              -- channel id (1), R (2), G (2), B (2)
 """
+import logging
 import socket
 
 from .hue_client import parse_bridge_address
+
+logger = logging.getLogger("game_hue_flicker.stream")
 
 MAGIC = b"HueStream"
 COLOUR_SPACE_RGB = 0x00
@@ -331,11 +334,31 @@ class DtlsStream:
         self._sock.send(frame)
 
     def close(self):
-        if self._sock is not None:
-            try:
-                self._sock.close()
-            finally:
-                self._sock = None
+        """End the session and tell the bridge so.
+
+        The telling is the part that matters. mbedtls's close() builds a
+        close_notify into its outgoing buffer and then shuts the socket without
+        ever sending it; shutdown() is the call that puts it on the wire. A
+        bridge that never hears one keeps the session on its books, and since it
+        allows only one at a time it then ignores the next handshake — which is
+        exactly the shape of streaming working once and never again until the
+        bridge times the ghost session out by itself.
+        """
+        if self._sock is None:
+            return
+        try:
+            self._sock.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            # Already gone, or the bridge stopped listening first. Closing is
+            # still worth doing, and a failure to say goodbye is not an error
+            # worth surfacing.
+            logger.debug("Could not send close_notify to the bridge", exc_info=True)
+        try:
+            self._sock.close()
+        except Exception:
+            logger.debug("Could not close the stream socket", exc_info=True)
+        finally:
+            self._sock = None
 
     def __enter__(self):
         self.connect()

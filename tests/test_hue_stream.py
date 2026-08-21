@@ -297,3 +297,39 @@ def test_a_hello_verify_request_that_is_not_one_is_rejected():
     assert _parse_hello_verify(b"") is None
     assert _parse_hello_verify(b"\x17" + bytes(40)) is None       # not a handshake
     assert _parse_hello_verify(b"\x16" + bytes(12) + b"\x02" + bytes(30)) is None  # ServerHello
+
+
+def test_closing_sends_the_bridge_a_close_notify(stub_bridge, monkeypatch):
+    """The bridge allows one entertainment session and keeps it on its books
+    until told otherwise. mbedtls's close() builds the close_notify and then
+    drops it — only shutdown() puts it on the wire — so a stream closed the
+    obvious way left a ghost session that blocked the next handshake."""
+    stream = DtlsStream(stub_bridge["host"], stub_bridge["identity"], stub_bridge["key"],
+                        port=stub_bridge["port"])
+    stream.connect()
+    calls = []
+    real_shutdown = type(stream._sock).shutdown
+    monkeypatch.setattr(type(stream._sock), "shutdown",
+                        lambda self, how: (calls.append(how), real_shutdown(self, how))[0])
+    stream.close()
+    assert calls, "closed without telling the bridge the session had ended"
+    assert calls[0] == socket.SHUT_RDWR
+    assert stream._sock is None
+
+
+def test_closing_still_closes_when_the_goodbye_cannot_be_sent(stub_bridge, monkeypatch):
+    """A bridge that stopped listening first must not turn tidying up into an
+    error — the socket still has to go."""
+    stream = DtlsStream(stub_bridge["host"], stub_bridge["identity"], stub_bridge["key"],
+                        port=stub_bridge["port"])
+    stream.connect()
+    monkeypatch.setattr(type(stream._sock), "shutdown",
+                        lambda self, how: (_ for _ in ()).throw(OSError("gone")))
+    stream.close()
+    assert stream._sock is None
+
+
+def test_closing_twice_is_harmless():
+    stream = DtlsStream("10.0.0.5", "u", "00" * 16)
+    stream.close()
+    stream.close()

@@ -1054,10 +1054,20 @@ async def start_stream(req: StreamStartRequest):
             # which is what this used to do — measures a port that has already
             # closed and calls a healthy network broken.
             host, _ = parse_bridge_address(cfg["bridge_ip"])
-            # Carried as far as the credentials, while the area is still
-            # claimed. Stopping at the first reply could not tell a bridge that
-            # rejects our key from one that rejects our ClientHello — the
-            # identity is not sent until the fifth message of the flight.
+            # Claim it again first. The bridge stops listening about ten seconds
+            # after a claim nobody connects to, and by the time the attempts
+            # above have run out that window is gone — probing then measures a
+            # closed port and reports "silent" for a bridge that was answering
+            # perfectly well a moment earlier.
+            try:
+                await client.set_stream(req.area_id, True)
+            except Exception:
+                logger.debug("Could not re-claim %s before probing", req.area_id,
+                             exc_info=True)
+            # Carried as far as the credentials. Stopping at the first reply
+            # could not tell a bridge that rejects our key from one that rejects
+            # our ClientHello — the identity is not sent until the fifth
+            # message of the flight.
             stage, how = await asyncio.to_thread(probe_handshake_stage, host, STREAM_PORT)
             _note("handshake-stage-while-claimed", stage=stage, detail=how)
             if stage == "server-hello":
