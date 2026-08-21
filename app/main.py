@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from . import auth, config_store, hue_client, packs
+from . import auth, config_store, hue_client, hue_v2, packs
 from .auth import ConsoleAuthMiddleware
 from .flicker_engine import FlickerEngine
 from .hue_client import BridgeAddressError, HueClient, parse_bridge_address
@@ -35,6 +35,7 @@ from .hue_stream import (
     probe_stream_port,
     same_subnet_as_bridge,
 )
+from .hue_v2 import HueV2Client, channel_ids, v1_group_id
 from .patterns import (
     BUILTIN_BY_ID,
     BUILTIN_PATTERNS,
@@ -108,6 +109,7 @@ async def lifespan(_app: FastAPI):
     # otherwise in-flight ticks fail against a closed client on the way out.
     await engine.stop_all()
     await hue_client.aclose()
+    await hue_v2.aclose()
 
 
 app = FastAPI(title="Game Hue Flicker", lifespan=lifespan)
@@ -798,7 +800,7 @@ async def _area_or_400(area_id: str) -> dict:
 
 
 async def _release_area(area_id: str):
-    """Hand the area back, whatever else went wrong.
+    """Hand the area back, whatever else went wrong, by whichever route armed it.
 
     While the bridge has an area in streaming mode nothing else can drive those
     lights — not this console, not the Hue app — so failing to release one
@@ -807,6 +809,9 @@ async def _release_area(area_id: str):
     client = get_client()
     if client is None:
         return
+    configuration = await _v2_configuration(area_id)
+    if configuration is not None:
+        await _arm_v2(configuration, False)
     try:
         await client.set_stream(area_id, False)
     except Exception:
@@ -874,6 +879,55 @@ async def _await_stream_flag(client, area_id: str, wanted: bool,
         if time.monotonic() >= deadline:
             return False
         await asyncio.sleep(0.25)
+
+
+async def _v2_configuration(area_id: str) -> dict | None:
+    """The v2 entertainment configuration behind a v1 group id, if there is one.
+
+    An area made by the current Hue app lives in v2; the v1 group is a
+    compatibility view of it. Setting stream.active through that view binds the
+    port without arming the service, so the v2 record is what actually matters.
+    Absent on older firmware, where the v1 flag is the real thing.
+    """
+    cfg = config_store.load()
+    if not cfg.get("bridge_ip") or not cfg.get("api_key"):
+        return None
+    try:
+        v2 = HueV2Client(cfg["bridge_ip"], cfg["api_key"])
+        for configuration in await v2.entertainment_configurations():
+            if v1_group_id(configuration) == str(area_id):
+                return configuration
+    except Exception:
+        logger.debug("No v2 entertainment configuration for area %s", area_id,
+                     exc_info=True)
+    return None
+
+
+async def _arm_v2(configuration: dict, active: bool) -> bool:
+    cfg = config_store.load()
+    try:
+        v2 = HueV2Client(cfg["bridge_ip"], cfg["api_key"])
+        await v2.set_streaming(configuration["id"], active)
+        return True
+    except Exception as e:
+        logger.warning("Could not %s the v2 entertainment configuration: %s",
+                       "start" if active else "stop", e)
+        return False
+
+
+async def _arm_area(client, area_id: str, configuration: dict | None):
+    """Arm the stream by whichever route this bridge actually listens to.
+
+    One place, so a retry cannot re-claim over v1 an area that was armed over
+    v2 — which would flip the compatibility flag while leaving the real switch
+    untouched, and look for all the world like the claim had worked.
+    """
+    if configuration is not None:
+        if await _arm_v2(configuration, True):
+            return
+        logger.warning("v2 arming failed for area %s; falling back to the v1 flag",
+                       area_id)
+    await _claim_area(client, area_id)
 
 
 async def _claim_area(client, area_id: str):
@@ -1071,10 +1125,15 @@ async def start_stream(req: StreamStartRequest):
                        exc_info=True)
 
     client = get_client()
+    configuration = await _v2_configuration(req.area_id)
     _note("before-claim", bridge_says=(info.get("stream") or {}),
-          has_locations=bool(info.get("locations")))
+          has_locations=bool(info.get("locations")),
+          v2_configuration=bool(configuration))
     try:
-        await _claim_area(client, req.area_id)
+        # The v1 flag binds the port; on a bridge that knows the area in v2,
+        # only the v2 call arms what is behind it.
+        await _arm_area(client, req.area_id, configuration)
+        _note("armed", over="v2" if configuration else "v1")
     except HTTPException as e:
         _note("claim-failed", detail=e.detail)
         raise
@@ -1091,8 +1150,9 @@ async def start_stream(req: StreamStartRequest):
     for attempt in range(attempts):
         if attempt:
             try:
-                await client.set_stream(req.area_id, True)
-                _note("re-claimed", attempt=attempt + 1)
+                await _arm_area(client, req.area_id, configuration)
+                _note("re-armed", attempt=attempt + 1,
+                      over="v2" if configuration else "v1")
             except Exception as e:
                 _note("re-claim-failed", detail=str(e))
                 break
@@ -1103,6 +1163,8 @@ async def start_stream(req: StreamStartRequest):
                 min(framing["hz"], MAX_STREAM_HZ),
                 framing["min_bri"], framing["max_bri"], framing["hue"], framing["sat"],
                 connect_timeout=6.0,
+                area_uuid=(configuration or {}).get("id"),
+                channels=channel_ids(configuration) if configuration else None,
             )
             last_error = None
             break
@@ -1126,9 +1188,9 @@ async def start_stream(req: StreamStartRequest):
             # closed port and reports "silent" for a bridge that was answering
             # perfectly well a moment earlier.
             try:
-                await client.set_stream(req.area_id, True)
+                await _arm_area(client, req.area_id, configuration)
             except Exception:
-                logger.debug("Could not re-claim %s before probing", req.area_id,
+                logger.debug("Could not re-arm %s before probing", req.area_id,
                              exc_info=True)
             # Carried as far as the credentials. Stopping at the first reply
             # could not tell a bridge that rejects our key from one that rejects

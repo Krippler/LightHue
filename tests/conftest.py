@@ -67,7 +67,26 @@ def bridge(app_modules, monkeypatch):
               "stream": {"active": False, "owner": None}},
     }
 
+    # The v2 view of the same entertainment area, which is what the current Hue
+    # app creates and what the bridge actually arms.
+    state["v2"] = {"armed": [], "configurations": [{
+        "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "id_v1": "/groups/6",
+        "name": "Game room",
+        "channels": [{"channel_id": 0}, {"channel_id": 1}, {"channel_id": 2}],
+    }]}
+
     def handler(request: httpx.Request) -> httpx.Response:
+        if "/clip/v2/resource/entertainment_configuration" in request.url.path:
+            if request.headers.get("hue-application-key") is None:
+                return httpx.Response(401, json={"errors": [{"description": "no key"}]})
+            if request.method == "PUT":
+                import json
+                body = json.loads(request.content)
+                state["v2"]["armed"].append(body.get("action"))
+                return httpx.Response(200, json={"data": [], "errors": []})
+            return httpx.Response(200, json={"data": state["v2"]["configurations"],
+                                             "errors": []})
         if request.url.path.endswith("/groups"):
             return httpx.Response(200, json=state["groups"])
         if request.url.path.endswith("/lights"):
@@ -94,6 +113,8 @@ def bridge(app_modules, monkeypatch):
         return httpx.Response(404, json={})
 
     import app.hue_client as hue_client
+    import app.hue_v2 as hue_v2
     stub = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     monkeypatch.setattr(hue_client, "_http", lambda: stub)
+    monkeypatch.setattr(hue_v2, "_http", lambda: stub)
     return state
