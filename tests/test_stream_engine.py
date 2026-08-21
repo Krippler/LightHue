@@ -280,3 +280,42 @@ def test_a_colour_can_be_set_and_then_cleared_on_the_running_state():
     # Everything else still treats None as "leave it alone".
     assert engine.update(hz=None) is True
     assert engine.status()["settings"]["hz"] == 10.0
+
+
+def test_a_v2_area_sends_channel_frames_not_light_frames(stub_bridge):
+    """v1 addresses light ids in nine-byte blocks; v2 addresses channels in
+    seven, behind the area's 36-character UUID. A bridge sent the wrong one
+    gets a well-formed frame it has no reason to act on."""
+    engine = StreamEngine()
+    uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    import app.hue_stream as hue_stream
+    original = hue_stream.STREAM_PORT
+    hue_stream.STREAM_PORT = stub_bridge["port"]
+    try:
+        engine.start(stub_bridge["host"], IDENTITY, KEY_HEX, "200",
+                     ["1", "2", "3"], "mz", "p", 10.0, 1, 254, None, None,
+                     area_uuid=uuid, channels=[0, 1, 2])
+        time.sleep(0.8)
+        assert engine.status()["protocol"] == 2
+    finally:
+        hue_stream.STREAM_PORT = original
+        engine.stop()
+
+    frames = [f for _, f in stub_bridge["frames"]]
+    assert frames, "nothing reached the bridge"
+    for frame in frames:
+        assert frame[9] == 2                          # protocol version 2
+        assert frame[16:52] == uuid.encode("ascii")
+        assert len(frame) == 16 + 36 + 7 * 3
+    # Channel ids, one byte each, not two-byte light ids.
+    assert [frames[0][52 + 7 * i] for i in range(3)] == [0, 1, 2]
+
+
+def test_an_area_with_no_v2_identity_still_sends_v1_frames(stub_bridge):
+    engine = StreamEngine()
+    run_area(engine, stub_bridge, ["4", "5"], seconds=0.6)
+    assert engine.status()["protocol"] == 1
+    engine.stop()
+    frames = [f for _, f in stub_bridge["frames"]]
+    assert frames and frames[0][9] == 1
+    assert len(frames[0]) == 16 + 9 * 2

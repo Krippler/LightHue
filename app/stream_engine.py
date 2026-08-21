@@ -22,6 +22,7 @@ from .hue_stream import (
     DtlsStream,
     StreamError,
     build_frame_v1,
+    build_frame_v2,
     hue_sat_bri_to_rgb16,
 )
 from .patterns import level_for_char
@@ -97,6 +98,9 @@ class StreamEngine:
             # Which DTLS client got through: "minimal" is ours, "mbedtls" the
             # library's fuller ClientHello.
             "transport": getattr(self, "_transport", None),
+            # Which HueStream framing is going out: v2 addresses channels
+            # within an entertainment configuration, v1 addresses light ids.
+            "protocol": 2 if (state and state.get("area_uuid")) else (1 if state else None),
             "error": self._error,
             # Unlike the REST path there is nothing to divide: every light in
             # the area is in the same frame.
@@ -126,7 +130,8 @@ class StreamEngine:
     def start(self, bridge_ip: str, username: str, client_key: str,
               area_id: str, light_ids: list[str], sequence: str, pattern_id: str,
               hz: float, min_bri: int, max_bri: int,
-              hue: int | None, sat: int | None, connect_timeout: float = 6.0):
+              hue: int | None, sat: int | None, connect_timeout: float = 6.0,
+              area_uuid: str | None = None, channels: list[int] | None = None):
         """Open the stream and start sending. The caller activates the area
         over REST first — the bridge ignores port 2100 until it has."""
         self.stop()
@@ -149,6 +154,11 @@ class StreamEngine:
                 "hue": hue,
                 "sat": sat,
                 "epoch": time.monotonic(),
+                # Set when the area is a v2 entertainment configuration. Its
+                # frames address channels within the area rather than light ids,
+                # and carry the area's UUID in the header.
+                "area_uuid": area_uuid,
+                "channels": list(channels) if channels else None,
             }
         self._transport = stream.transport
         self._stop.clear()
@@ -191,8 +201,13 @@ class StreamEngine:
                 rgb = rgb_for(state, now)
                 # Every light in the area carries the same value: this is one
                 # effect across a room, not ten independent ones.
-                frame = build_frame_v1(
-                    sequence_id, [(int(lid), rgb) for lid in state["light_ids"]])
+                if state.get("area_uuid") and state.get("channels"):
+                    frame = build_frame_v2(
+                        sequence_id, state["area_uuid"],
+                        [(channel, rgb) for channel in state["channels"]])
+                else:
+                    frame = build_frame_v1(
+                        sequence_id, [(int(lid), rgb) for lid in state["light_ids"]])
                 sequence_id = (sequence_id + 1) & 0xFF
 
                 try:

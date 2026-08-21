@@ -1246,10 +1246,11 @@ def test_a_failed_stream_hands_the_area_back(client, bridge, app_modules, monkey
     monkeypatch.setattr(app_modules.stream_engine, "start", refuse)
     r = client.post("/api/stream/start", json=stream_body())
     assert r.status_code == 502
-    # Cleared, claimed, re-claimed for each further attempt, then handed back.
-    assert bridge["stream_calls"][0] == ("6", False)
-    assert bridge["stream_calls"][1] == ("6", True)
-    assert bridge["stream_calls"][-1] == ("6", False)
+    # This bridge knows the area in v2, so arming goes there and the v1 flag is
+    # only touched on the way out.
+    assert bridge["v2"]["armed"][0] == "start"
+    assert bridge["v2"]["armed"][-1] == "stop"
+    assert bridge["groups"]["6"]["stream"]["active"] is False
     assert bridge["groups"]["6"]["stream"]["active"] is False
 
 
@@ -1296,9 +1297,8 @@ def app_stream_max():
 
 def test_an_area_this_console_left_claimed_is_taken_back(client, bridge, app_modules,
                                                          monkeypatch):
-    """A session that died without letting go leaves the claim behind. From the
-    outside that looks like the bridge ignoring the streaming port, so the claim
-    is cleared and remade rather than reported as a conflict."""
+    """A session that died without letting go leaves the claim behind. It is
+    taken back rather than reported as a conflict, since it is ours."""
     client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
     # As if a previous run of this console had claimed it and never returned.
     bridge["groups"]["6"]["stream"] = {"active": True, "owner": "stub-key"}
@@ -1306,8 +1306,9 @@ def test_an_area_this_console_left_claimed_is_taken_back(client, bridge, app_mod
 
     r = client.post("/api/stream/start", json=stream_body())
     assert r.status_code == 200
-    # Cleared first, then claimed — that order is what unsticks the bridge.
-    assert bridge["stream_calls"][-2:] == [("6", False), ("6", True)]
+    # Armed over v2, which is the route this bridge listens to; the stale v1
+    # flag is not what was blocking it.
+    assert "start" in bridge["v2"]["armed"]
 
 
 def test_an_area_someone_else_claimed_is_still_a_conflict(client, bridge):
@@ -1472,3 +1473,60 @@ def test_an_address_with_no_key_at_all_is_still_refused(client):
     r = client.post("/api/bridge/set", json={"bridge_ip": "10.0.0.9"})
     assert r.status_code == 400
     assert "API key" in r.json()["detail"]
+
+
+# ---------- the v2 entertainment path ----------
+
+def test_an_area_that_exists_in_v2_is_armed_over_v2(client, bridge, app_modules,
+                                                    monkeypatch):
+    """An area made by the current Hue app is a v2 entertainment configuration,
+    and the v1 group is a compatibility view. Setting stream.active through that
+    view binds UDP 2100 without arming the service behind it, so the bridge then
+    answers no handshake at all — which looks exactly like a dead network."""
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    monkeypatch.setattr(app_modules.stream_engine, "start", lambda *a, **kw: None)
+
+    r = client.post("/api/stream/start", json=stream_body())
+    assert r.status_code == 200
+    assert "start" in bridge["v2"]["armed"], "never armed over v2"
+
+
+def test_the_v2_area_identity_reaches_the_engine(client, bridge, app_modules,
+                                                 monkeypatch):
+    """A v2 frame addresses channels within the area and carries the area's
+    UUID; a v1 frame addresses light ids. Getting that wrong sends a
+    well-formed frame the bridge has no reason to act on."""
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    captured = {}
+    monkeypatch.setattr(app_modules.stream_engine, "start",
+                        lambda *a, **kw: captured.update(kw))
+
+    client.post("/api/stream/start", json=stream_body())
+    assert captured["area_uuid"] == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    assert captured["channels"] == [0, 1, 2]
+
+
+def test_stopping_disarms_over_v2_as_well(client, bridge, app_modules, monkeypatch):
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    monkeypatch.setattr(app_modules.stream_engine, "start", lambda *a, **kw: None)
+    monkeypatch.setattr(app_modules.stream_engine, "area_id", lambda: "6")
+    monkeypatch.setattr(app_modules.stream_engine, "light_ids", lambda: ["1"])
+    client.post("/api/stream/start", json=stream_body())
+    bridge["v2"]["armed"].clear()
+
+    client.post("/api/stream/stop")
+    assert "stop" in bridge["v2"]["armed"], "left the v2 configuration armed"
+
+
+def test_a_bridge_with_no_v2_view_still_uses_the_v1_flag(client, bridge, app_modules,
+                                                        monkeypatch):
+    """Older firmware has no v2 record, and there the v1 flag is the real thing
+    rather than a shim over one."""
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    bridge["v2"]["configurations"] = []
+    monkeypatch.setattr(app_modules.stream_engine, "start", lambda *a, **kw: None)
+
+    r = client.post("/api/stream/start", json=stream_body())
+    assert r.status_code == 200
+    assert bridge["v2"]["armed"] == []
+    assert ("6", True) in bridge["stream_calls"]
