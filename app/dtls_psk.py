@@ -86,7 +86,7 @@ class DtlsPskClient:
 
     def _record(self, content_type: int, payload: bytes) -> bytes:
         header = struct.pack(">BH", content_type, int.from_bytes(DTLS_1_2, "big"))
-        header += struct.pack(">HxxxxH" if False else ">H", self._epoch)
+        header += struct.pack(">H", self._epoch)
         header += self._send_seq.to_bytes(6, "big")
         header += struct.pack(">H", len(payload))
         self._send_seq += 1
@@ -270,3 +270,20 @@ class DtlsPskClient:
 
     def __exit__(self, *exc):
         self.close()
+
+
+def first_flight(identity: str = "lighthue") -> bytes:
+    """The opening datagram connect() puts on the wire, built in isolation.
+
+    For comparing against a packet capture. When tcpdump shows a datagram
+    leaving and nothing coming back, the next question is whether what left was
+    well-formed, and that is answerable only against the actual bytes. The
+    cookie is empty because this is the first ClientHello of a handshake — the
+    bridge answers it with a HelloVerifyRequest carrying one.
+    """
+    client = DtlsPskClient("0.0.0.0", 0, identity, b"\x00" * 16)
+    client.client_random = struct.pack(">I", int(time.time())) + os.urandom(28)
+    return client._record(
+        HANDSHAKE,
+        client._handshake_message(CLIENT_HELLO, client._client_hello_body(b"")),
+    )

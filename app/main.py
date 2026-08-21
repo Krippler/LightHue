@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from . import auth, config_store, hue_client, hue_v2, packs
 from .auth import ConsoleAuthMiddleware
+from .dtls_psk import first_flight
 from .flicker_engine import FlickerEngine
 from .hue_client import BridgeAddressError, HueClient, parse_bridge_address
 from .hue_stream import (
@@ -869,6 +870,15 @@ def _note_local_address(cfg) -> str | None:
     return _last_local_address
 
 
+def _client_hello_shape() -> dict:
+    try:
+        flight = first_flight(config_store.load().get("api_key") or "lighthue")
+    except Exception:
+        logger.debug("Could not build a sample ClientHello", exc_info=True)
+        return {}
+    return {"bytes": len(flight), "hex": flight.hex()}
+
+
 def _pairing_provenance(cfg: dict) -> str:
     """Whether the two streaming credentials are known to belong together.
 
@@ -1101,6 +1111,11 @@ async def stream_diagnostics():
         "engine": stream_engine.status(),
         "last_attempt": _last_attempt or None,
         "stream_port": STREAM_PORT,
+        # What the opening datagram looks like, for reading a packet capture
+        # against. A capture that shows this leaving and nothing coming back
+        # narrows the question to whether these bytes are acceptable, and that
+        # is only answerable against the bytes themselves.
+        "client_hello": _client_hello_shape(),
         # Where a reply would have to come back to. On a host with more than one
         # interface this is the first thing worth checking when nothing does.
         "local_address": _last_local_address,
