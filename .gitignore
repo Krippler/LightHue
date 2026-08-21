@@ -22,3 +22,10 @@ venv/
 # Test/lint caches
 .pytest_cache/
 .ruff_cache/
+
+# Agent skills installed by "npx skills add". Third-party, nothing to do with
+# this app, and the installer drops them in the working tree — so they are
+# kept out rather than vendored in.
+.agents/
+.claude/
+skills-lock.json
