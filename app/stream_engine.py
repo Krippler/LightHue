@@ -94,6 +94,9 @@ class StreamEngine:
             "light_ids": list(state["light_ids"]) if state else [],
             "settings": state,
             "frames_sent": self._frames_sent,
+            # Which DTLS client got through: "minimal" is ours, "mbedtls" the
+            # library's fuller ClientHello.
+            "transport": getattr(self, "_transport", None),
             "error": self._error,
             # Unlike the REST path there is nothing to divide: every light in
             # the area is in the same frame.
@@ -147,6 +150,7 @@ class StreamEngine:
                 "sat": sat,
                 "epoch": time.monotonic(),
             }
+        self._transport = stream.transport
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._run, args=(stream,), name="hue-stream", daemon=True)

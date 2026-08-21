@@ -192,6 +192,10 @@ def test_frames_reach_the_bridge_over_a_real_handshake(stub_bridge):
 
 
 def test_the_wrong_key_does_not_get_a_stream(stub_bridge):
+    """Both clients have to fail this. The minimal one especially: it does not
+    read anything back once streaming starts, so without waiting for the
+    server's confirmation a rejected key would look exactly like success and
+    the first sign of trouble would be lights that never change."""
     stream = DtlsStream(stub_bridge["host"], stub_bridge["identity"],
                         "ffffffffffffffffffffffffffffffff", port=stub_bridge["port"])
     with pytest.raises(StreamError, match="Could not open"):
@@ -299,22 +303,28 @@ def test_a_hello_verify_request_that_is_not_one_is_rejected():
     assert _parse_hello_verify(b"\x16" + bytes(12) + b"\x02" + bytes(30)) is None  # ServerHello
 
 
-def test_closing_sends_the_bridge_a_close_notify(stub_bridge, monkeypatch):
-    """The bridge allows one entertainment session and keeps it on its books
-    until told otherwise. mbedtls's close() builds the close_notify and then
-    drops it — only shutdown() puts it on the wire — so a stream closed the
-    obvious way left a ghost session that blocked the next handshake."""
+def test_closing_says_goodbye_whichever_client_got_through(stub_bridge):
+    """The bridge allows one session and holds it until told otherwise. Both
+    transports have to say so — the minimal client sends its own close_notify,
+    mbedtls needs shutdown() because its close() builds one and drops it."""
     stream = DtlsStream(stub_bridge["host"], stub_bridge["identity"], stub_bridge["key"],
                         port=stub_bridge["port"])
     stream.connect()
-    calls = []
-    real_shutdown = type(stream._sock).shutdown
-    monkeypatch.setattr(type(stream._sock), "shutdown",
-                        lambda self, how: (calls.append(how), real_shutdown(self, how))[0])
+    assert stream.transport in ("minimal", "mbedtls")
     stream.close()
-    assert calls, "closed without telling the bridge the session had ended"
-    assert calls[0] == socket.SHUT_RDWR
     assert stream._sock is None
+
+
+def test_the_minimal_client_is_preferred(stub_bridge):
+    """It offers one cipher suite and no extensions, which is the whole reason
+    it exists: mbedtls cannot be told to send anything that small."""
+    stream = DtlsStream(stub_bridge["host"], stub_bridge["identity"], stub_bridge["key"],
+                        port=stub_bridge["port"])
+    stream.connect()
+    try:
+        assert stream.transport == "minimal"
+    finally:
+        stream.close()
 
 
 def test_closing_still_closes_when_the_goodbye_cannot_be_sent(stub_bridge, monkeypatch):
@@ -323,8 +333,8 @@ def test_closing_still_closes_when_the_goodbye_cannot_be_sent(stub_bridge, monke
     stream = DtlsStream(stub_bridge["host"], stub_bridge["identity"], stub_bridge["key"],
                         port=stub_bridge["port"])
     stream.connect()
-    monkeypatch.setattr(type(stream._sock), "shutdown",
-                        lambda self, how: (_ for _ in ()).throw(OSError("gone")))
+    monkeypatch.setattr(type(stream._sock), "close",
+                        lambda self: (_ for _ in ()).throw(OSError("gone")))
     stream.close()
     assert stream._sock is None
 

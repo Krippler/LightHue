@@ -330,6 +330,15 @@ across subnets happily. A console on `192.168.10.x` talking to a bridge on
 handshake timeout rather than anything to do with routing. Diagnostics reports
 whether the two are on the same network.
 
+**The DTLS client.** Streaming opens a DTLS 1.2 connection secured with a
+pre-shared key, and the console carries its own minimal client for it. That is
+not invented-here: python-mbedtls offers, in its ClientHello, an SCSV
+pseudo-suite beside the real one plus signature_algorithms, encrypt_then_mac,
+extended_master_secret and session_ticket, and exposes no way to turn any of it
+off. Bridges have been seen answering a bare ClientHello and ignoring that one.
+So the console offers a single cipher suite and no extensions, and falls back to
+mbedtls if that fails. Diagnostics reports which one got through.
+
 Three other things it needs:
 
 1. **An entertainment area**, set up in the Hue app under *Entertainment
