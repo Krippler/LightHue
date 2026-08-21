@@ -29,8 +29,10 @@ from .hue_stream import (
     MAX_AREA_LIGHTS,
     MAX_STREAM_HZ,
     STREAM_PORT,
+    local_address_for,
     probe_handshake_stage,
     probe_stream_port,
+    same_subnet_as_bridge,
 )
 from .patterns import (
     BUILTIN_BY_ID,
@@ -907,6 +909,16 @@ async def stream_diagnostics():
     try:
         host, _ = parse_bridge_address(cfg["bridge_ip"])
         state, how = await asyncio.to_thread(probe_stream_port, host, STREAM_PORT)
+        local = local_address_for(host)
+        out["network"] = {
+            "bridge": host,
+            "we_appear_as": local,
+            "same_subnet": same_subnet_as_bridge(local, host) if local else None,
+            "note": (
+                "streaming wants the client on the bridge's own network; REST does "
+                "not, which is why everything else works across a routed hop"
+            ),
+        }
         out["udp_to_stream_port"] = {
             "state": state, "detail": how,
             # Read this with the claim in mind: the bridge only binds the port
@@ -1095,12 +1107,26 @@ async def start_stream(req: StreamStartRequest):
                     "the bridge took the v1 claim without arming the stream behind it."
                 )
             else:
+                local = local_address_for(host)
                 detail += (
-                    f" — and nothing comes back on UDP {STREAM_PORT} at all ({how}), while "
-                    "HTTP to the same bridge works. That is the network path: try Host "
-                    "networking, and compare scripts/probe_stream.py on the host against "
-                    "the container."
+                    f" — and nothing comes back on UDP {STREAM_PORT} at all ({how}), "
+                    "while HTTP to the same bridge works."
                 )
+                if local and not same_subnet_as_bridge(local, host):
+                    detail += (
+                        f" This machine reaches the bridge as {local}, which is not on "
+                        f"the bridge's own network ({host}). Streaming is the one part of "
+                        "the Hue API that wants the client on the same network as the "
+                        "bridge — REST routes anywhere, which is why pairing, rooms and "
+                        "the per-light flicker all work across the hop and only the "
+                        "stream does not. Run the console on the bridge's subnet, or "
+                        "move the bridge."
+                    )
+                else:
+                    detail += (
+                        " That is the network path: try Host networking, and compare "
+                        "scripts/probe_stream.py on the host against the container."
+                    )
         # Never leave the area held by a stream that isn't running.
         await _release_area(req.area_id)
         raise HTTPException(502, detail) from e

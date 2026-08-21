@@ -27,6 +27,7 @@ Wire format, confirmed against two independent implementations
     v2 body: the area's 36-char ASCII UUID, then 7 bytes per channel
              -- channel id (1), R (2), G (2), B (2)
 """
+import ipaddress
 import logging
 import socket
 
@@ -225,6 +226,35 @@ def probe_handshake_stage(host: str, port: int = STREAM_PORT,
         return "error", f"could not send: {e}"
     finally:
         sock.close()
+
+
+def same_subnet_as_bridge(local_ip: str, bridge_ip: str, prefix: int = 24) -> bool:
+    """Are we on the bridge's own network?
+
+    Philips documents entertainment streaming as needing the client on the same
+    network as the bridge, and it is the only part of the API with that
+    constraint — REST routes anywhere, which is why a split like this can look
+    like a working setup right up until the stream. A /24 is an assumption, but
+    a routed hop between two /24s is exactly the case worth naming.
+    """
+    try:
+        local = ipaddress.ip_network(f"{local_ip}/{prefix}", strict=False)
+        bridge = ipaddress.ip_network(f"{bridge_ip}/{prefix}", strict=False)
+    except ValueError:
+        return True         # unparseable: say nothing rather than mislead
+    return local == bridge
+
+
+def local_address_for(host: str, port: int = STREAM_PORT) -> str | None:
+    """Which local address a datagram to the bridge would leave from."""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect((host, port))
+        return probe.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        probe.close()
 
 
 def probe_stream_port(host: str, port: int = STREAM_PORT,

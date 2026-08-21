@@ -322,7 +322,15 @@ frame holding every light in the area, so a frame costs the same whether it
 holds one bulb or ten, and the speed stops being divided — up to 25 Hz across
 the whole area at once, every light changing on the same frame.
 
-Three things it needs:
+**The client has to be on the bridge's own network.** This is the one part of
+the Hue API with that constraint, and it is easy to miss because nothing else
+has it: discovery, pairing, rooms and the ordinary per-light flicker all route
+across subnets happily. A console on `192.168.10.x` talking to a bridge on
+`192.168.50.x` will do everything except stream, and the failure looks like a
+handshake timeout rather than anything to do with routing. Diagnostics reports
+whether the two are on the same network.
+
+Three other things it needs:
 
 1. **An entertainment area**, set up in the Hue app under *Entertainment
    areas*. The bridge will only stream to one it already knows about, it holds

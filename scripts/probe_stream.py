@@ -44,10 +44,14 @@ VERDICT = {
   library's ClientHello. Not the path, not the area, not the key.
 """,
     "nothing": """
-  Neither handshake got anywhere ({how}). HTTP works and the claim was
-  accepted, so either the bridge never arms the stream behind a v1 claim, or
-  UDP {port} is not making the round trip from {local}. Running this on the
-  host as well separates those.
+  Neither handshake got anywhere ({how}). HTTP works and the claim was accepted,
+  so either the bridge never arms the stream behind a v1 claim, or UDP {port} is
+  not making the round trip from {local}.
+
+  If the line above says this machine is not on the bridge's own network, start
+  there. Streaming is the one part of the Hue API that wants the client on the
+  same network as the bridge; REST routes anywhere, which is why everything
+  except the stream has worked.
 """,
 }
 
@@ -182,11 +186,16 @@ def main() -> int:
 
     # 3. Where would a reply come back to?
     host = split_host(args.bridge)
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     probe.connect((host, STREAM_PORT))
     local = probe.getsockname()
     probe.close()
     say(True, f"UDP would leave from {local[0]} — the bridge replies to this")
+    from app.hue_stream import same_subnet_as_bridge
+    on_net = same_subnet_as_bridge(local[0], host)
+    say(on_net, f"on the bridge's own network: {on_net}"
+                + ("" if on_net else f"  ({local[0]} vs {host})"))
 
     # 4. The real handshake first, then a hand-rolled one only if it failed.
     #
@@ -195,7 +204,6 @@ def main() -> int:
     # follow-up question — "would this bridge have talked to anyone?" — and
     # asking it first would spend the claim on a connection we then abandon.
     ok = False
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from app.hue_stream import probe_handshake_stage
 
     try:

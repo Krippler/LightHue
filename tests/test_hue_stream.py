@@ -333,3 +333,25 @@ def test_closing_twice_is_harmless():
     stream = DtlsStream("10.0.0.5", "u", "00" * 16)
     stream.close()
     stream.close()
+
+
+def test_a_routed_hop_to_the_bridge_is_noticed():
+    """Streaming is the one part of the Hue API that wants the client on the
+    bridge's own network. REST routes anywhere, so a split like this looks like
+    a working setup right up until the stream — worth naming rather than
+    leaving to be deduced."""
+    from app.hue_stream import same_subnet_as_bridge
+    assert same_subnet_as_bridge("192.168.50.5", "192.168.50.31") is True
+    assert same_subnet_as_bridge("192.168.10.37", "192.168.50.31") is False
+    assert same_subnet_as_bridge("172.17.0.44", "192.168.50.31") is False
+
+
+def test_an_unparseable_address_says_nothing_rather_than_crying_wolf():
+    from app.hue_stream import same_subnet_as_bridge
+    assert same_subnet_as_bridge("", "192.168.50.31") is True
+    assert same_subnet_as_bridge("not-an-ip", "192.168.50.31") is True
+
+
+def test_the_local_address_is_reported_without_sending_anything(stub_bridge):
+    from app.hue_stream import local_address_for
+    assert local_address_for(stub_bridge["host"]) is not None
