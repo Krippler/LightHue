@@ -26,10 +26,30 @@ import socket
 import sys
 import time
 import urllib.request
+from contextlib import suppress
 from pathlib import Path
 
 STREAM_PORT = 2100
 CIPHERS = ("TLS-PSK-WITH-AES-128-GCM-SHA256",)
+
+
+VERDICT = {
+    "works": """
+  The handshake works. Streaming is fine from here.
+""",
+    "library": """
+  The library's handshake failed where a hand-rolled one, offering a single
+  cipher suite and no extensions, reached ServerHello against the same claim.
+  So the bridge is listening and willing — what it will not answer is the
+  library's ClientHello. Not the path, not the area, not the key.
+""",
+    "nothing": """
+  Neither handshake got anywhere ({how}). HTTP works and the claim was
+  accepted, so either the bridge never arms the stream behind a v1 claim, or
+  UDP {port} is not making the round trip from {local}. Running this on the
+  host as well separates those.
+""",
+}
 
 
 EXPLAIN = {
@@ -152,42 +172,53 @@ def main() -> int:
     probe.close()
     say(True, f"UDP would leave from {local[0]} — the bridge replies to this")
 
-    # 4. The handshake, which is the whole question.
+    # 4. The real handshake first, then a hand-rolled one only if it failed.
+    #
+    # Order matters. The library's handshake is the one that has to work, so it
+    # gets the first and cleanest shot at the claim. The hand-rolled one is a
+    # follow-up question — "would this bridge have talked to anyone?" — and
+    # asking it first would spend the claim on a connection we then abandon.
     ok = False
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from app.hue_stream import probe_handshake_stage
+
     try:
         config = tls.DTLSConfiguration(
             pre_shared_key=(args.api_key, bytes.fromhex(args.client_key)),
             ciphers=CIPHERS, validate_certificates=False)
-        raw = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        raw.settimeout(args.timeout)
-        sock = tls.ClientContext(config).wrap_socket(raw, server_hostname=None)
-        started = time.monotonic()
-        sock.connect((host, STREAM_PORT))
-        sock.do_handshake()
-        ok = say(True, f"DTLS handshake in {time.monotonic() - started:.1f}s "
-                       f"({sock.negotiated_tls_version()}, {sock.cipher()})")
-        sock.send(b"HueStream" + bytes([0x01, 0x00, 0x00, 0, 0, 0x00, 0x00]))
-        say(True, "a frame was accepted")
-        sock.close()
-    except Exception as e:
-        kind = type(e).__name__
-        say(False, f"DTLS handshake failed after {args.timeout:.0f}s: {kind}: {e}")
-        if "timed out" in str(e) or kind in ("timeout", "TimeoutError"):
-            # A wrong key, a bridge that dislikes our offer, and a blocked path
-            # all end as this same timeout. Carrying a bare handshake as far as
-            # ServerHello splits them: the identity is not sent until the fifth
-            # message, so everything up to there is identical whatever the key.
-            sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-            from app.hue_stream import probe_handshake_stage
-            stage, how = probe_handshake_stage(host, STREAM_PORT)
-            say(stage == "server-hello", f"bare handshake to UDP {STREAM_PORT}: {how}")
-            print(EXPLAIN.get(stage, EXPLAIN["silent"]).format(
-                port=STREAM_PORT, local=local[0], how=how))
+        try:
+            raw = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            raw.settimeout(args.timeout)
+            sock = tls.ClientContext(config).wrap_socket(raw, server_hostname=None)
+            started = time.monotonic()
+            sock.connect((host, STREAM_PORT))
+            sock.do_handshake()
+            ok = say(True, f"mbedtls handshake in {time.monotonic() - started:.1f}s "
+                           f"({sock.negotiated_tls_version()}, {sock.cipher()})")
+            sock.send(b"HueStream" + bytes([0x01, 0x00, 0x00, 0, 0, 0x00, 0x00]))
+            say(True, "a frame was accepted")
+            try:
+                sock.shutdown(socket.SHUT_RDWR)   # the goodbye the bridge needs
+            except OSError:
+                pass
+            sock.close()
+        except Exception as e:
+            say(False, f"mbedtls handshake failed after {args.timeout:.0f}s: "
+                       f"{type(e).__name__}: {e}")
+
+        if ok:
+            print(VERDICT["works"].format(port=STREAM_PORT, local=local[0], how=""))
         else:
-            print("""
-  The bridge answered and refused. That is the credentials: the client key has
-  to be the one issued alongside this exact api key. Pair again.
-""")
+            # Re-claim: the attempt above may have used up the bridge's short
+            # listening window, and probing a lapsed claim proves nothing.
+            with suppress(Exception):
+                rest(args.bridge, args.api_key, f"/groups/{area_id}", "PUT",
+                     {"stream": {"active": True}})
+            stage, how = probe_handshake_stage(host, STREAM_PORT, timeout=args.timeout)
+            reached = stage == "server-hello"
+            say(reached, f"hand-rolled handshake: {stage} — {how}")
+            print(VERDICT["library" if reached else "nothing"].format(
+                port=STREAM_PORT, local=local[0], how=how))
     finally:
         try:
             rest(args.bridge, args.api_key, f"/groups/{area_id}", "PUT",

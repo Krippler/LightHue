@@ -382,8 +382,12 @@ of blockage. It also means the probe has to run while the area is claimed — th
 bridge only binds the port while it holds one, so probing after the release
 measures a closed port and calls a healthy network broken.
 
-`scripts/probe_stream.py` does the same check standalone, claiming an area and
-opening a socket with nothing else in the way:
+`scripts/probe_stream.py` does the same standalone, and goes one better: it
+claims an area, tries the real handshake, and if that fails re-claims and tries
+a hand-rolled one offering a single cipher suite and no extensions. Same bridge,
+same claim, seconds apart. If the hand-rolled one gets through where the library
+does not, the bridge is willing and the client is the problem — which nothing
+else here can establish.
 
 ```bash
 python3 scripts/probe_stream.py 192.168.1.23 <api-key> <client-key>
