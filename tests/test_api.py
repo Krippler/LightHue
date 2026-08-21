@@ -1169,13 +1169,40 @@ def test_a_new_api_key_drops_the_client_key_that_did_not_come_with_it(client):
     assert client.get("/api/bridge").json()["can_stream"] is True
 
 
-def test_pairing_is_the_only_thing_that_marks_the_keys_as_matched(client, bridge):
-    """Hand-entered keys cannot be vouched for; a pairing issues both at once."""
+def provenance(client):
+    return client.get("/api/stream/diagnostics").json()["keys_from_same_pairing"]
+
+
+def test_key_provenance_separates_not_knowing_from_knowing_it_is_wrong(client, bridge):
+    """Three answers, because there are three situations.
+
+    Reporting hand-entered keys as "no" would make every console configured
+    before this was tracked look like it had a fault to chase — which is the
+    opposite of what a diagnostic is for.
+    """
+    # Nothing configured, and nothing was ever watched being issued.
+    assert provenance(client) == "unknown"
+
+    # Typed in by hand: possibly a matched set from elsewhere, possibly not.
     client.post("/api/bridge/set", json={
         "bridge_ip": "10.0.0.5", "api_key": "k", "client_key": "00" * 16})
-    assert client.get("/api/stream/diagnostics").json()["keys_from_same_pairing"] is False
+    assert provenance(client) == "unknown"
+
+    # A pairing issues both at once, which is the only way to actually know.
     client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
-    assert client.get("/api/stream/diagnostics").json()["keys_from_same_pairing"] is True
+    assert provenance(client) == "yes"
+
+    # Replacing one alone splits them, and that much we can state outright.
+    client.post("/api/bridge/set", json={"bridge_ip": "10.0.0.7", "api_key": "other"})
+    assert provenance(client) == "no"
+
+
+def test_pairing_on_firmware_that_issues_no_streaming_key_is_not_a_match(client, bridge):
+    """Nothing to pair the api key with means nothing to vouch for."""
+    bridge["omit_client_key"] = True
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    assert client.get("/api/stream/diagnostics").json()["can_stream"] is False
+    assert provenance(client) == "no"
 
 
 # ---------- entertainment areas ----------
