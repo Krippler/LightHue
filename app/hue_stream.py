@@ -316,6 +316,11 @@ def probe_stream_port(host: str, port: int = STREAM_PORT,
         sock.close()
 
 
+# Tried in this order when no single transport is named. mbedtls leads because
+# it is the better-tested of the two and the one this bridge has answered.
+TRANSPORTS = ("mbedtls", "minimal")
+
+
 class DtlsStream:
     """A DTLS-PSK datagram socket to the bridge's entertainment endpoint.
 
@@ -347,38 +352,43 @@ class DtlsStream:
         self.transport = None
         self._sock = None
 
-    def connect(self, timeout: float = 6.0):
-        """Open the stream, preferring the smallest possible ClientHello.
+    def connect(self, timeout: float = 6.0, transport: str | None = None):
+        """Open the stream with one client, or with each in turn.
 
-        Two clients, tried in order. The hand-rolled one offers a single cipher
-        suite and no extensions; mbedtls adds an SCSV pseudo-suite plus
+        Two clients are available. `mbedtls` is the reference implementation
+        Philips' own examples use, and the one that has actually carried a
+        stream here. `minimal` is hand-rolled: a single cipher suite and no
+        extensions, where mbedtls adds an SCSV pseudo-suite plus
         signature_algorithms, encrypt_then_mac, extended_master_secret and
-        session_ticket, and python-mbedtls exposes no way to turn any of that
-        off. Bridges have been seen answering the bare offer and ignoring the
-        fuller one, so the bare one goes first — and mbedtls stays as a fallback
-        rather than being dropped, since it is the better-tested of the two
-        wherever it does work.
-        """
-        errors = []
-        try:
-            client = DtlsPskClient(self.bridge_ip, self.port, self.username,
-                                   self.psk, timeout=timeout)
-            client.connect()
-        except Exception as e:
-            errors.append(f"minimal: {e}")
-        else:
-            self._sock = client
-            self.transport = "minimal"
-            return
+        session_ticket, none of which python-mbedtls can be told to drop.
 
-        try:
-            self._sock = self._connect_mbedtls(timeout)
-        except StreamError as e:
-            errors.append(f"mbedtls: {e}")
-            raise StreamError(
-                "Could not open the entertainment stream: " + "; ".join(errors)
-            ) from e
-        self.transport = "mbedtls"
+        Naming one is the point of the parameter. Running both against a single
+        claim was a mistake worth spelling out: the bridge stops listening about
+        ten seconds after arming an area nobody connects to, so a first client
+        that sits there timing out for six seconds spends most of that window
+        before the second one says a word. Whichever client would have worked
+        gets to try inside the last few seconds of a window it did not use up —
+        or after it has already closed. Each client wants a claim of its own.
+        """
+        order = TRANSPORTS if transport is None else (transport,)
+        errors = []
+        for name in order:
+            try:
+                self._sock = _CONNECTORS[name](self, timeout)
+            except Exception as e:
+                errors.append(f"{name}: {e}")
+                continue
+            self.transport = name
+            return
+        raise StreamError(
+            "Could not open the entertainment stream: " + "; ".join(errors)
+        )
+
+    def _connect_minimal(self, timeout: float):
+        client = DtlsPskClient(self.bridge_ip, self.port, self.username,
+                               self.psk, timeout=timeout)
+        client.connect()
+        return client
 
     def _connect_mbedtls(self, timeout: float):
         try:
@@ -447,3 +457,9 @@ class DtlsStream:
 
     def __exit__(self, *exc):
         self.close()
+
+
+_CONNECTORS = {
+    "mbedtls": DtlsStream._connect_mbedtls,
+    "minimal": DtlsStream._connect_minimal,
+}

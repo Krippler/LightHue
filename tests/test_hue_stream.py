@@ -315,16 +315,49 @@ def test_closing_says_goodbye_whichever_client_got_through(stub_bridge):
     assert stream._sock is None
 
 
-def test_the_minimal_client_is_preferred(stub_bridge):
-    """It offers one cipher suite and no extensions, which is the whole reason
-    it exists: mbedtls cannot be told to send anything that small."""
+def test_the_better_tested_client_leads(stub_bridge):
+    """mbedtls is the reference implementation and the one bridges answer; the
+    hand-rolled client is the fallback for a bridge that wants a smaller offer."""
     stream = DtlsStream(stub_bridge["host"], stub_bridge["identity"], stub_bridge["key"],
                         port=stub_bridge["port"])
     stream.connect()
     try:
+        assert stream.transport == "mbedtls"
+    finally:
+        stream.close()
+
+
+def test_naming_a_transport_uses_only_that_one(stub_bridge):
+    """Each client needs a claim of its own.
+
+    The bridge stops listening about ten seconds after arming an area nobody
+    connects to. A connect that falls through from one client to the next spends
+    most of that window on the first, so the caller drives them one per claim
+    instead — which only works if naming one means the other never runs.
+    """
+    stream = DtlsStream(stub_bridge["host"], stub_bridge["identity"], stub_bridge["key"],
+                        port=stub_bridge["port"])
+    stream.connect(transport="minimal")
+    try:
         assert stream.transport == "minimal"
     finally:
         stream.close()
+
+
+def test_a_named_transport_that_fails_does_not_fall_through(stub_bridge, monkeypatch):
+    """Falling back inside one connect is what ate the bridge's window."""
+    import app.hue_stream as hue_stream
+
+    def refuse(self, timeout):
+        raise OSError("nope")
+
+    monkeypatch.setitem(hue_stream._CONNECTORS, "minimal", refuse)
+    stream = DtlsStream(stub_bridge["host"], stub_bridge["identity"], stub_bridge["key"],
+                        port=stub_bridge["port"])
+    with pytest.raises(StreamError) as caught:
+        stream.connect(transport="minimal")
+    assert "minimal: nope" in str(caught.value)
+    assert stream.transport is None
 
 
 def test_closing_still_closes_when_the_goodbye_cannot_be_sent(stub_bridge, monkeypatch):

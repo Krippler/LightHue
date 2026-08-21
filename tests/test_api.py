@@ -1252,6 +1252,33 @@ def test_the_arm_step_records_what_the_bridge_said_not_what_we_asked(
     assert armed["bridge_says"]["status"] == "active"
 
 
+def test_each_client_gets_a_freshly_armed_area(client, bridge, app_modules,
+                                               monkeypatch):
+    """The bridge stops listening ~10s after arming an area nobody connects to.
+
+    Two clients behind one claim means the second speaks into a window the first
+    already spent timing out — so each attempt names one client and re-arms
+    first. This is the regression that broke streaming: the clients used to fall
+    through to each other inside a single six-second-each connect.
+    """
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    tried = []
+
+    def refuse(*a, transport=None, **kw):
+        tried.append(transport)
+        raise app_modules.StreamError("timed out")
+
+    monkeypatch.setattr(app_modules.stream_engine, "start", refuse)
+    client.post("/api/stream/start", json=stream_body())
+
+    assert tried == list(app_modules.STREAM_TRANSPORTS)
+    assert None not in tried, "an unnamed transport would fall through internally"
+    # One arm before the first client, one before each of the rest.
+    steps = client.get("/api/stream/diagnostics").json()["last_attempt"]["steps"]
+    arms = [s for s in steps if s["step"] in ("armed", "re-armed")]
+    assert len(arms) == len(tried)
+
+
 def test_streaming_needs_a_console_paired_for_it(client, bridge):
     configure(client)                               # api key only, no client key
     r = client.post("/api/stream/start", json=stream_body())
