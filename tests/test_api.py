@@ -1339,9 +1339,10 @@ def test_a_timeout_says_what_to_try(client, bridge, app_modules, monkeypatch):
     # A timeout means "no answer", which is equally what a blocked UDP path and
     # a key the bridge won't accept look like. The message has to name whichever
     # one the probe actually found rather than listing both.
-    # Whichever of the three the probe found — never a list of maybes.
+    # Whichever one the probe found — never a list of maybes.
     assert ("streaming key is the problem" in detail
             or "never opening the port" in detail
+            or "not on the bridge's own network" in detail
             or "that is the network path" in detail.lower()), detail
     # And the area is not left held by a stream that never opened.
     assert bridge["groups"]["6"]["stream"]["active"] is False
