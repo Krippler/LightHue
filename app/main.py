@@ -35,6 +35,9 @@ from .hue_stream import (
     probe_stream_port,
     same_subnet_as_bridge,
 )
+from .hue_stream import (
+    TRANSPORTS as STREAM_TRANSPORTS,
+)
 from .hue_v2 import HueV2Client, channel_ids, streaming_state, v1_group_id
 from .patterns import (
     BUILTIN_BY_ID,
@@ -1208,12 +1211,13 @@ async def start_stream(req: StreamStartRequest):
         raise HTTPException(502, bridge_error(e, "hand the area to the stream")) from e
     _note("claimed")
 
-    # Each attempt claims the area again before dialling. The bridge stops
-    # listening about ten seconds after a claim that nobody connects to, so a
-    # retry against the same claim is guaranteed to fail — the claim is the part
-    # that has to be repeated, not just the handshake.
-    attempts, last_error = 3, None
-    for attempt in range(attempts):
+    # One client per attempt, each against a claim of its own. The bridge stops
+    # listening about ten seconds after arming an area nobody connects to, so
+    # both the claim and the client have to be fresh: two clients sharing one
+    # claim means the second speaks into a window the first has already spent,
+    # and a retry against a stale claim is guaranteed to fail whatever it says.
+    last_error = None
+    for attempt, transport in enumerate(STREAM_TRANSPORTS):
         if attempt:
             try:
                 _note("re-armed", attempt=attempt + 1,
@@ -1230,13 +1234,14 @@ async def start_stream(req: StreamStartRequest):
                 connect_timeout=6.0,
                 area_uuid=(configuration or {}).get("id"),
                 channels=channel_ids(configuration) if configuration else None,
+                transport=transport,
             )
             last_error = None
             break
         except StreamError as e:
             last_error = e
             _note("handshake-attempt-failed", attempt=attempt + 1, detail=str(e),
-                  from_address=_note_local_address(cfg))
+                  transport=transport, from_address=_note_local_address(cfg))
     if last_error is not None:
         e = last_error
         _note("handshake-failed", detail=str(e))
