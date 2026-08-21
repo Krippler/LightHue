@@ -4,7 +4,7 @@ import logging
 import socket
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 import httpx
@@ -35,7 +35,7 @@ from .hue_stream import (
     probe_stream_port,
     same_subnet_as_bridge,
 )
-from .hue_v2 import HueV2Client, channel_ids, v1_group_id
+from .hue_v2 import HueV2Client, channel_ids, streaming_state, v1_group_id
 from .patterns import (
     BUILTIN_BY_ID,
     BUILTIN_PATTERNS,
@@ -847,6 +847,20 @@ def _note_local_address(cfg) -> str | None:
     return _last_local_address
 
 
+def _arm_looked_real() -> bool:
+    """Did the last arm end with the bridge itself reporting the area as up?
+
+    Not "did the call succeed" — that only says the bridge took the word. An
+    area that reads inactive right afterwards was never armed, and saying so is
+    worth more than another sentence about the network.
+    """
+    for step in reversed(_last_attempt.get("steps", [])):
+        if step["step"] in ("armed", "re-armed"):
+            says = step.get("bridge_says") or {}
+            return says.get("status") == "active" or bool(says.get("active"))
+    return False
+
+
 def _note(step: str, **detail):
     _last_attempt.setdefault("steps", []).append(
         {"step": step, "at": round(time.monotonic() - _last_attempt.get("t0", 0), 2), **detail})
@@ -903,31 +917,84 @@ async def _v2_configuration(area_id: str) -> dict | None:
     return None
 
 
-async def _arm_v2(configuration: dict, active: bool) -> bool:
+async def _await_v2_status(v2, area_uuid: str, wanted: str,
+                           tries: int = 10, delay: float = 0.3) -> dict:
+    """Poll a v2 configuration until it reports the status we asked for.
+
+    The PUT returning 200 only says the bridge accepted the word "start". It
+    does not say the stream came up, and a configuration that still reads
+    inactive afterwards was never armed — which looks, from the socket, exactly
+    like a bridge that will not answer a handshake.
+    """
+    state = {"status": None, "active_streamer": None}
+    for _ in range(tries):
+        try:
+            state = streaming_state(await v2.configuration(area_uuid))
+        except Exception:
+            logger.debug("Could not read back v2 configuration %s", area_uuid,
+                         exc_info=True)
+            return state
+        if state["status"] == wanted:
+            return state
+        await asyncio.sleep(delay)
+    return state
+
+
+async def _arm_v2(configuration: dict, active: bool) -> dict | None:
+    """Start or stop a v2 entertainment configuration, and check that it took.
+
+    Starting clears any existing hold first. A configuration the bridge already
+    considers active — because a previous session died without stopping it —
+    treats a second "start" as nothing to do, and the port stays bound to a
+    session that no longer exists. That is the shape of "works once, then times
+    out forever": the socket is open, and the thing behind it is a ghost.
+
+    Returns what the bridge reports afterwards, or None if the call failed.
+    """
     cfg = config_store.load()
+    area_uuid = configuration["id"]
     try:
         v2 = HueV2Client(cfg["bridge_ip"], cfg["api_key"])
-        await v2.set_streaming(configuration["id"], active)
-        return True
+        if active:
+            with suppress(Exception):
+                await v2.set_streaming(area_uuid, False)
+                await _await_v2_status(v2, area_uuid, "inactive")
+        await v2.set_streaming(area_uuid, active)
+        return await _await_v2_status(v2, area_uuid,
+                                      "active" if active else "inactive")
     except Exception as e:
         logger.warning("Could not %s the v2 entertainment configuration: %s",
                        "start" if active else "stop", e)
-        return False
+        return None
 
 
-async def _arm_area(client, area_id: str, configuration: dict | None):
+async def _arm_area(client, area_id: str, configuration: dict | None) -> dict:
     """Arm the stream by whichever route this bridge actually listens to.
 
     One place, so a retry cannot re-claim over v1 an area that was armed over
     v2 — which would flip the compatibility flag while leaving the real switch
     untouched, and look for all the world like the claim had worked.
+
+    Returns what to record about the arm: which route was used, and what the
+    bridge said about the area once it was done.
     """
     if configuration is not None:
-        if await _arm_v2(configuration, True):
-            return
+        state = await _arm_v2(configuration, True)
+        if state is not None:
+            return {"over": "v2", "bridge_says": state}
         logger.warning("v2 arming failed for area %s; falling back to the v1 flag",
                        area_id)
     await _claim_area(client, area_id)
+    return {"over": "v1", "bridge_says": await _v1_stream_state(client, area_id)}
+
+
+async def _v1_stream_state(client, area_id: str) -> dict:
+    try:
+        groups = await client.get_groups()
+    except Exception:
+        logger.debug("Could not read back group %s", area_id, exc_info=True)
+        return {}
+    return (groups.get(area_id) or {}).get("stream") or {}
 
 
 async def _claim_area(client, area_id: str):
@@ -1132,8 +1199,7 @@ async def start_stream(req: StreamStartRequest):
     try:
         # The v1 flag binds the port; on a bridge that knows the area in v2,
         # only the v2 call arms what is behind it.
-        await _arm_area(client, req.area_id, configuration)
-        _note("armed", over="v2" if configuration else "v1")
+        _note("armed", **await _arm_area(client, req.area_id, configuration))
     except HTTPException as e:
         _note("claim-failed", detail=e.detail)
         raise
@@ -1150,9 +1216,8 @@ async def start_stream(req: StreamStartRequest):
     for attempt in range(attempts):
         if attempt:
             try:
-                await _arm_area(client, req.area_id, configuration)
                 _note("re-armed", attempt=attempt + 1,
-                      over="v2" if configuration else "v1")
+                      **await _arm_area(client, req.area_id, configuration))
             except Exception as e:
                 _note("re-claim-failed", detail=str(e))
                 break
@@ -1247,10 +1312,23 @@ async def start_stream(req: StreamStartRequest):
                         "stream does not. Run the console on the bridge's subnet, or "
                         "move the bridge."
                     )
+                elif not _arm_looked_real():
+                    detail += (
+                        " The bridge accepted the call to start the area and then went "
+                        "on reporting it as not streaming, so nothing was ever armed "
+                        "behind the port. Check that this console's key still owns the "
+                        "area — the Hue app takes it back when it streams to it — and "
+                        "try Release area, then Start."
+                    )
                 else:
                     detail += (
-                        " That is the network path: try Host networking, and compare "
-                        "scripts/probe_stream.py on the host against the container."
+                        f" This machine is already on the bridge's network as {local}, "
+                        "with nothing translating the address, and the bridge reports "
+                        "the area as armed. So the path and the claim are both ruled "
+                        "out, and guessing further from here is not worth your time: "
+                        f"run `tcpdump -ni any -vv udp port {STREAM_PORT}` on the host "
+                        "and press Start again. Whether our packets leave, and whether "
+                        "anything comes back, splits this three ways in one look."
                     )
         # Never leave the area held by a stream that isn't running.
         await _release_area(req.area_id)

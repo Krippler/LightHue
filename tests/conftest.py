@@ -73,23 +73,33 @@ def bridge(app_modules, monkeypatch):
         "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
         "id_v1": "/groups/6",
         "name": "Game room",
+        "status": "inactive",
         "channels": [{"channel_id": 0}, {"channel_id": 1}, {"channel_id": 2}],
     }]}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if "/clip/v2/resource/entertainment_configuration" in request.url.path:
+        path = request.url.path
+        if "/clip/v2/resource/entertainment_configuration" in path:
             if request.headers.get("hue-application-key") is None:
                 return httpx.Response(401, json={"errors": [{"description": "no key"}]})
+            wanted = path.rsplit("/", 1)[-1]
+            configurations = state["v2"]["configurations"]
+            if wanted != "entertainment_configuration":
+                configurations = [c for c in configurations if c["id"] == wanted]
             if request.method == "PUT":
                 import json
-                body = json.loads(request.content)
-                state["v2"]["armed"].append(body.get("action"))
+                action = json.loads(request.content).get("action")
+                state["v2"]["armed"].append(action)
+                # The bridge reports the stream as up only once it is; the app
+                # reads this back rather than trusting the 200.
+                for configuration in configurations:
+                    configuration["status"] = ("active" if action == "start"
+                                               else "inactive")
                 return httpx.Response(200, json={"data": [], "errors": []})
-            return httpx.Response(200, json={"data": state["v2"]["configurations"],
-                                             "errors": []})
-        if request.url.path.endswith("/groups"):
+            return httpx.Response(200, json={"data": configurations, "errors": []})
+        if path.endswith("/groups"):
             return httpx.Response(200, json=state["groups"])
-        if request.url.path.endswith("/lights"):
+        if path.endswith("/lights"):
             return httpx.Response(200, json=state["lights"])
         if request.method == "PUT" and "/groups/" in request.url.path:
             import json

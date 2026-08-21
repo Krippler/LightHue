@@ -52,6 +52,22 @@ VERDICT = {
   there. Streaming is the one part of the Hue API that wants the client on the
   same network as the bridge; REST routes anywhere, which is why everything
   except the stream has worked.
+
+  If the network is already ruled out, stop reasoning about it and watch the
+  wire. On the host, in another shell:
+
+      tcpdump -ni any -vv udp port {port}
+
+  then run this again. Three outcomes, and they point three different ways:
+
+    * nothing leaves at all      -> the socket never sent; a local firewall or
+                                    routing rule is dropping it before the wire
+    * we send, nothing returns   -> the bridge is receiving and not answering;
+                                    the area is not really armed, or the
+                                    ClientHello is being rejected in silence
+    * the bridge answers but the -> the reply is being dropped on the way back
+      handshake still times out     in, which on a host with two interfaces
+                                    sharing one address is a reverse-path check
 """,
 }
 
