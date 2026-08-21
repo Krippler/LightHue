@@ -21,6 +21,11 @@ _DEFAULT = {
     # pairing time, so a console paired before streaming existed has None here
     # and has to be paired again before it can stream.
     "client_key": None,
+    # Whether api_key and client_key came out of the same pairing. The bridge
+    # issues them together and the streaming handshake uses the api key as the
+    # PSK identity and the client key as the PSK, so a pair from two different
+    # pairings is two halves of two different credentials.
+    "keys_paired": False,
     "custom_patterns": {},   # id -> {id, name, sequence}
     "groups": {},            # id -> {id, name, light_ids}
     "snapshots": {},         # light_id -> bulb state captured before flickering

@@ -1139,12 +1139,43 @@ def test_a_bridge_too_old_to_issue_one_still_pairs(client, bridge, app_modules):
     assert r.json()["configured"] is True and r.json()["can_stream"] is False
 
 
-def test_saving_credentials_without_a_client_key_leaves_the_stored_one_alone(client, app_modules):
+def test_resaving_the_same_credentials_leaves_the_client_key_alone(client, app_modules):
+    """Moving a bridge to a new address must not cost it the streaming key."""
     client.post("/api/bridge/set", json={
         "bridge_ip": "10.0.0.5", "api_key": "k", "client_key": "00" * 16})
     assert client.get("/api/bridge").json()["can_stream"] is True
-    client.post("/api/bridge/set", json={"bridge_ip": "10.0.0.5", "api_key": "k2"})
+    client.post("/api/bridge/set", json={"bridge_ip": "10.0.0.9", "api_key": "k"})
     assert client.get("/api/bridge").json()["can_stream"] is True
+    client.post("/api/bridge/set", json={"bridge_ip": "10.0.0.9"})
+    assert client.get("/api/bridge").json()["can_stream"] is True
+
+
+def test_a_new_api_key_drops_the_client_key_that_did_not_come_with_it(client):
+    """The two are one credential, not two settings.
+
+    Streaming offers the api key as its DTLS identity and the client key as the
+    pre-shared key. Keeping the old client key beside a new api key builds an
+    offer out of halves that never belonged together, and a bridge that simply
+    ignores it is indistinguishable from a dead network.
+    """
+    client.post("/api/bridge/set", json={
+        "bridge_ip": "10.0.0.5", "api_key": "k", "client_key": "00" * 16})
+    r = client.post("/api/bridge/set", json={"bridge_ip": "10.0.0.5", "api_key": "k2"})
+    assert r.json()["can_stream"] is False
+    assert client.get("/api/bridge").json()["can_stream"] is False
+    # Supplying both together is how you replace them, and that still works.
+    client.post("/api/bridge/set", json={
+        "bridge_ip": "10.0.0.5", "api_key": "k3", "client_key": "11" * 16})
+    assert client.get("/api/bridge").json()["can_stream"] is True
+
+
+def test_pairing_is_the_only_thing_that_marks_the_keys_as_matched(client, bridge):
+    """Hand-entered keys cannot be vouched for; a pairing issues both at once."""
+    client.post("/api/bridge/set", json={
+        "bridge_ip": "10.0.0.5", "api_key": "k", "client_key": "00" * 16})
+    assert client.get("/api/stream/diagnostics").json()["keys_from_same_pairing"] is False
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    assert client.get("/api/stream/diagnostics").json()["keys_from_same_pairing"] is True
 
 
 # ---------- entertainment areas ----------

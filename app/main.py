@@ -517,7 +517,8 @@ async def pair_bridge(req: PairRequest):
     if not result.get("ok"):
         raise HTTPException(400, result.get("error", "Pairing failed — press the link button on the bridge first"))
     config_store.update(bridge_ip=req.bridge_ip, api_key=result["api_key"],
-                        client_key=result.get("client_key"))
+                        client_key=result.get("client_key"),
+                        keys_paired=bool(result.get("client_key")))
     return {
         "bridge_ip": req.bridge_ip,
         "configured": True,
@@ -543,8 +544,23 @@ async def set_bridge(req: BridgeSetRequest):
         changes["api_key"] = req.api_key
     if req.client_key is not None:
         changes["client_key"] = req.client_key or None
+    # The two keys are one credential. The streaming handshake offers the api
+    # key as its PSK identity and the client key as the PSK, so keeping a client
+    # key from an older pairing beside a new api key builds an offer out of two
+    # halves that never belonged together — and the bridge is under no
+    # obligation to explain itself about that. Changing one alone drops the
+    # other, which costs a re-pair and says so.
+    replacing = "api_key" in changes and changes["api_key"] != stored.get("api_key")
+    if replacing and "client_key" not in changes:
+        changes["client_key"] = None
+    changes["keys_paired"] = bool(
+        changes.get("client_key", stored.get("client_key"))
+        and not replacing
+        and stored.get("keys_paired")
+    )
     config_store.update(**changes)
-    return {"ok": True}
+    return {"ok": True, "can_stream": bool(changes.get("client_key",
+                                                       stored.get("client_key")))}
 
 
 # ---------- Lights ----------
@@ -1062,6 +1078,10 @@ async def stream_diagnostics():
     cfg = config_store.load()
     out = {
         "can_stream": bool(cfg.get("client_key")),
+        # The handshake offers the api key as its PSK identity and the client
+        # key as the PSK. Two halves of two pairings is a credential the bridge
+        # has no reason to answer, and nothing else here would show it.
+        "keys_from_same_pairing": bool(cfg.get("keys_paired")),
         "engine": stream_engine.status(),
         "last_attempt": _last_attempt or None,
         "stream_port": STREAM_PORT,
@@ -1331,9 +1351,11 @@ async def start_stream(req: StreamStartRequest):
                         "with nothing translating the address, and the bridge reports "
                         "the area as armed. So the path and the claim are both ruled "
                         "out, and guessing further from here is not worth your time: "
-                        f"run `tcpdump -ni any -vv udp port {STREAM_PORT}` on the host "
-                        "and press Start again. Whether our packets leave, and whether "
-                        "anything comes back, splits this three ways in one look."
+                        "run `tcpdump -ni any -vv 'udp port "
+                        f"{STREAM_PORT} or icmp'` on the host and press Start again. "
+                        "Whether our packets leave, whether anything comes back, and "
+                        "whether an ICMP refusal names a firewall splits this four ways "
+                        "in one look."
                     )
         # Never leave the area held by a stream that isn't running.
         await _release_area(req.area_id)
