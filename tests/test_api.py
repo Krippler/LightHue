@@ -1423,3 +1423,30 @@ def test_a_colour_can_be_cleared_mid_stream(client, bridge, app_modules, monkeyp
     applied.clear()
     client.post("/api/stream/update", json={"hz": 8})
     assert "hue" not in applied, "a colour nobody mentioned must be left alone"
+
+
+def test_an_area_stranded_by_a_previous_run_is_released_on_startup(app_modules, bridge):
+    """A container killed mid-stream leaves the area claimed on the bridge, and
+    nothing else ever clears it — those lights then answer to nothing at all,
+    not this console and not the Hue app."""
+    from fastapi.testclient import TestClient
+    app_modules.config_store.update(bridge_ip="10.0.0.5", api_key="k")
+    bridge["groups"]["6"]["stream"] = {"active": True, "owner": "k"}
+
+    with TestClient(app_modules.app):
+        pass                       # startup and shutdown are the whole test
+
+    assert bridge["groups"]["6"]["stream"]["active"] is False
+    assert ("6", False) in bridge["stream_calls"]
+
+
+def test_an_area_someone_else_holds_is_left_alone_on_startup(app_modules, bridge):
+    from fastapi.testclient import TestClient
+    app_modules.config_store.update(bridge_ip="10.0.0.5", api_key="k")
+    bridge["groups"]["6"]["stream"] = {"active": True, "owner": "hue-sync"}
+
+    with TestClient(app_modules.app):
+        pass
+
+    assert bridge["groups"]["6"]["stream"]["active"] is True, \
+        "released an area belonging to something else"
