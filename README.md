@@ -411,7 +411,18 @@ same claim, seconds apart. If the hand-rolled one gets through where the library
 does not, the bridge is willing and the client is the problem — which nothing
 else here can establish.
 
-It ships in the image, so it runs where the bridge is:
+It is one file with no dependencies beyond the standard library, so it can be
+copied anywhere that can see the bridge:
+
+```bash
+scp scripts/probe_stream.py someone@192.168.50.50:/tmp/
+python3 /tmp/probe_stream.py 192.168.50.31 <api-key> <client-key>
+```
+
+Working from a machine on the bridge's own network and failing from elsewhere
+is the single most useful thing to know, and that test is worthless if the tool
+needs a checkout to run. It also ships in the image, so it runs where the
+console does:
 
 ```bash
 docker exec -it lighthue python3 /srv/scripts/probe_stream.py --config /data/config.json
