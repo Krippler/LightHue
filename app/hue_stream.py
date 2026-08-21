@@ -31,6 +31,7 @@ import ipaddress
 import logging
 import socket
 
+from .dtls_psk import DtlsPskClient
 from .hue_client import parse_bridge_address
 
 logger = logging.getLogger("game_hue_flicker.stream")
@@ -323,17 +324,44 @@ class DtlsStream:
         # replies to whatever it saw, so on a multi-homed host this is the first
         # thing worth knowing when nothing comes back.
         self.local_address = None
+        # Which client got through, for the diagnostics to report.
+        self.transport = None
         self._sock = None
 
     def connect(self, timeout: float = 6.0):
-        """One handshake attempt against the bridge.
+        """Open the stream, preferring the smallest possible ClientHello.
 
-        Deliberately a single attempt. Retrying in here was worse than useless:
-        the bridge drops its claim on the area after about ten seconds without a
-        handshake, so a second and third try land on an area that is no longer
-        listening and can only fail. Retrying is the caller's job, because only
-        the caller can claim the area again first.
+        Two clients, tried in order. The hand-rolled one offers a single cipher
+        suite and no extensions; mbedtls adds an SCSV pseudo-suite plus
+        signature_algorithms, encrypt_then_mac, extended_master_secret and
+        session_ticket, and python-mbedtls exposes no way to turn any of that
+        off. Bridges have been seen answering the bare offer and ignoring the
+        fuller one, so the bare one goes first — and mbedtls stays as a fallback
+        rather than being dropped, since it is the better-tested of the two
+        wherever it does work.
         """
+        errors = []
+        try:
+            client = DtlsPskClient(self.bridge_ip, self.port, self.username,
+                                   self.psk, timeout=timeout)
+            client.connect()
+        except Exception as e:
+            errors.append(f"minimal: {e}")
+        else:
+            self._sock = client
+            self.transport = "minimal"
+            return
+
+        try:
+            self._sock = self._connect_mbedtls(timeout)
+        except StreamError as e:
+            errors.append(f"mbedtls: {e}")
+            raise StreamError(
+                "Could not open the entertainment stream: " + "; ".join(errors)
+            ) from e
+        self.transport = "mbedtls"
+
+    def _connect_mbedtls(self, timeout: float):
         try:
             from mbedtls import tls
         except ImportError as e:      # pragma: no cover - dependency is declared
@@ -355,8 +383,8 @@ class DtlsStream:
             sock.do_handshake()
         except Exception as e:
             sock.close()
-            raise StreamError(f"Could not open the entertainment stream: {e}") from e
-        self._sock = sock
+            raise StreamError(f"timed out or refused: {e}") from e
+        return sock
 
     def send(self, frame: bytes):
         if self._sock is None:
@@ -377,6 +405,10 @@ class DtlsStream:
         if self._sock is None:
             return
         try:
+            if self.transport == "minimal":
+                self._sock.close()          # sends its own close_notify
+                self._sock = None
+                return
             self._sock.shutdown(socket.SHUT_RDWR)
         except Exception:
             # Already gone, or the bridge stopped listening first. Closing is
