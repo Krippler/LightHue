@@ -56,12 +56,16 @@ VERDICT = {
   If the network is already ruled out, stop reasoning about it and watch the
   wire. On the host, in another shell:
 
-      tcpdump -ni any -vv udp port {port}
+      tcpdump -ni any -vv 'udp port {port} or icmp'
 
-  then run this again. Three outcomes, and they point three different ways:
+  then run this again. Keep the icmp half of that filter: an unreachable or
+  admin-prohibited reply names a firewall outright, and a filter on udp alone
+  throws that away. Four outcomes, pointing four different ways:
 
     * nothing leaves at all      -> the socket never sent; a local firewall or
                                     routing rule is dropping it before the wire
+    * ICMP admin-prohibited      -> something on the path is refusing it on
+                                    purpose; the message says which hop
     * we send, nothing returns   -> the bridge is receiving and not answering;
                                     the area is not really armed, or the
                                     ClientHello is being rejected in silence
