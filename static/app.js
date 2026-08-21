@@ -1211,12 +1211,21 @@ function setCardColor(card, hue, sat) {
   code.value = `${hue},${sat}`;
 }
 
-function cardColor(card) {
-  if (card.dataset.hue !== undefined) {
-    return { hue: Number(card.dataset.hue), sat: Number(card.dataset.sat) };
+// The exact hue/sat pair if one was recorded, otherwise derived from the
+// swatch. The pair is held separately because deriving it back from a hex is
+// lossy — but when none has been recorded the fallback is not optional: reading
+// a missing dataset gives NaN, JSON turns NaN into null, and the server reads
+// an explicit null as "this pattern names no colour". Ticking a colour box
+// without touching the swatch then silently ran with no colour at all.
+function exactColor(holder, swatch) {
+  if (holder.dataset.hue !== undefined) {
+    return { hue: Number(holder.dataset.hue), sat: Number(holder.dataset.sat) };
   }
-  // Nothing exact recorded yet, so fall back to whatever the swatch shows.
-  return rgbToHueSat(hexToRgb(card.querySelector('.color-input').value));
+  return rgbToHueSat(hexToRgb(swatch.value));
+}
+
+function cardColor(card) {
+  return exactColor(card, card.querySelector('.color-input'));
 }
 
 function hueSatToHex(hue, sat) {
@@ -1481,13 +1490,17 @@ function setStreamStatus(text, kind = '') {
 }
 
 function streamSettings() {
-  const hue = streamColorEnable.checked ? Number(streamColor.dataset.hue) : null;
-  const sat = streamColorEnable.checked ? Number(streamColor.dataset.sat) : null;
+  // The dataset lives on the swatch itself here, so it is both holder and
+  // swatch. Unlike a bulb over REST, a stream frame carries the colour every
+  // time — so unticking really can go back to no colour, and null is sent
+  // deliberately rather than being left out.
+  const colour = streamColorEnable.checked ? exactColor(streamColor, streamColor) : null;
   return {
     hz: Number(streamHz.value),
     min_bri: Number(streamMinBri.value),
     max_bri: Number(streamMaxBri.value),
-    ...(hue === null ? {} : { hue, sat }),
+    hue: colour && colour.hue,
+    sat: colour && colour.sat,
   };
 }
 

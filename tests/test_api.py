@@ -1398,3 +1398,27 @@ def test_the_area_goes_back_before_the_lights_are_restored(client, bridge, app_m
     assert ("stream", False) in order
     assert ("light", "1") in order
     assert order.index(("stream", False)) < order.index(("light", "1"))
+
+
+def test_a_colour_can_be_cleared_mid_stream(client, bridge, app_modules, monkeypatch):
+    """Unlike a bulb over REST, a stream frame carries the colour every time, so
+    a stream really can go back to having none. Null therefore means "clear it"
+    rather than "not mentioned", and dropping it with the other empties made
+    unticking the colour box do nothing at all."""
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    monkeypatch.setattr(app_modules.stream_engine, "start", lambda *a, **kw: None)
+    state = {"area_id": "6", "light_ids": ["1"], "hue": 3295, "sat": 236,
+             "min_bri": 1, "max_bri": 254}
+    monkeypatch.setattr(app_modules.stream_engine, "status",
+                        lambda: {"running": True, "settings": state, "area_id": "6"})
+    applied = {}
+    monkeypatch.setattr(app_modules.stream_engine, "update",
+                        lambda **kw: (applied.update(kw), True)[1])
+
+    client.post("/api/stream/update", json={"hue": None, "sat": None})
+    assert "hue" in applied and applied["hue"] is None
+    assert "sat" in applied and applied["sat"] is None
+
+    applied.clear()
+    client.post("/api/stream/update", json={"hz": 8})
+    assert "hue" not in applied, "a colour nobody mentioned must be left alone"

@@ -260,3 +260,23 @@ def test_a_failed_handshake_leaves_no_area_behind(stub_bridge):
         hue_stream.STREAM_PORT = original
     assert engine.area_id() is None
     assert engine.status()["running"] is False
+
+
+def test_a_colour_can_be_set_and_then_cleared_on_the_running_state():
+    engine = StreamEngine()
+    with engine._lock:
+        engine._state = {"sequence": "z", "hz": 10.0, "epoch": 0.0,
+                         "min_bri": 1, "max_bri": 254, "hue": None, "sat": None,
+                         "area_id": "6", "light_ids": ["1"], "pattern_id": "p"}
+    assert engine.update(hue=43000, sat=240) is True
+    assert engine.status()["settings"]["hue"] == 43000
+
+    # None is a request here, not an omission — the next frame carries it.
+    assert engine.update(hue=None, sat=None) is True
+    assert engine.status()["settings"]["hue"] is None
+    r, g, b = rgb_for(engine.status()["settings"], 0.0)
+    assert r == g == b, "with no colour a frame should be plain brightness"
+
+    # Everything else still treats None as "leave it alone".
+    assert engine.update(hz=None) is True
+    assert engine.status()["settings"]["hz"] == 10.0

@@ -1090,6 +1090,12 @@ async def start_stream(req: StreamStartRequest):
 @app.post("/api/stream/update")
 async def update_stream(req: StreamUpdateRequest):
     changes = req.model_dump(exclude_none=True)
+    # Colour is the one field where null means "clear it" rather than "not
+    # mentioned", so it is decided by whether it was sent at all. Dropping it
+    # with the other empties made unticking the colour box do nothing.
+    for field in ("hue", "sat"):
+        if field in req.model_fields_set:
+            changes[field] = getattr(req, field)
     if req.pattern_id is not None:
         pattern = _resolve_pattern(req.pattern_id)
         changes["sequence"] = pattern["sequence"]
