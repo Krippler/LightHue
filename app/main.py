@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import logging
+import socket
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -24,7 +25,12 @@ from . import auth, config_store, hue_client, packs
 from .auth import ConsoleAuthMiddleware
 from .flicker_engine import FlickerEngine
 from .hue_client import BridgeAddressError, HueClient, parse_bridge_address
-from .hue_stream import MAX_AREA_LIGHTS, MAX_STREAM_HZ
+from .hue_stream import (
+    MAX_AREA_LIGHTS,
+    MAX_STREAM_HZ,
+    STREAM_PORT,
+    udp_reaches_bridge,
+)
 from .patterns import (
     BUILTIN_BY_ID,
     BUILTIN_PATTERNS,
@@ -763,6 +769,29 @@ async def _release_area(area_id: str):
 # happen against hardware that isn't here, and "timed out" on its own says
 # almost nothing — this is the difference between a guess and a diagnosis.
 _last_attempt: dict = {}
+_last_local_address = None
+
+
+def _note_local_address(cfg) -> str | None:
+    """Which local address a datagram to the bridge would leave from.
+
+    Read by opening a socket and asking, without sending anything. The bridge
+    answers to the address it saw, so on a host with several interfaces — or
+    inside container networking — this is the first thing to check when nothing
+    comes back.
+    """
+    global _last_local_address
+    try:
+        host, _ = parse_bridge_address(cfg["bridge_ip"])
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe.connect((host, STREAM_PORT))
+            _last_local_address = f"{probe.getsockname()[0]}:{probe.getsockname()[1]}"
+        finally:
+            probe.close()
+    except Exception:
+        _last_local_address = None
+    return _last_local_address
 
 
 def _note(step: str, **detail):
@@ -863,6 +892,10 @@ async def stream_diagnostics():
         "can_stream": bool(cfg.get("client_key")),
         "engine": stream_engine.status(),
         "last_attempt": _last_attempt or None,
+        "stream_port": STREAM_PORT,
+        # Where a reply would have to come back to. On a host with more than one
+        # interface this is the first thing worth checking when nothing does.
+        "local_address": _last_local_address,
         "areas": None,
         "bridge_error": None,
     }
@@ -870,6 +903,15 @@ async def stream_diagnostics():
     if client is None:
         out["bridge_error"] = "Bridge not configured"
         return out
+    try:
+        host, _ = parse_bridge_address(cfg["bridge_ip"])
+        reachable, how = await asyncio.to_thread(udp_reaches_bridge, host, STREAM_PORT)
+        # The single most useful line here: whether the streaming port answers
+        # at all, which separates a blocked path from a credential the bridge
+        # will not accept. Both look like a timeout from anywhere else.
+        out["udp_to_stream_port"] = {"reachable": reachable, "detail": how}
+    except Exception as e:
+        out["udp_to_stream_port"] = {"reachable": None, "detail": str(e)}
     try:
         groups = await client.get_groups()
     except Exception as e:
@@ -970,25 +1012,63 @@ async def start_stream(req: StreamStartRequest):
         raise HTTPException(502, bridge_error(e, "hand the area to the stream")) from e
     _note("claimed")
 
-    try:
-        stream_engine.start(
-            cfg["bridge_ip"], cfg["api_key"], cfg["client_key"],
-            req.area_id, light_ids, pattern["sequence"], req.pattern_id,
-            min(framing["hz"], MAX_STREAM_HZ),
-            framing["min_bri"], framing["max_bri"], framing["hue"], framing["sat"],
-        )
-    except StreamError as e:
+    # Each attempt claims the area again before dialling. The bridge stops
+    # listening about ten seconds after a claim that nobody connects to, so a
+    # retry against the same claim is guaranteed to fail — the claim is the part
+    # that has to be repeated, not just the handshake.
+    attempts, last_error = 3, None
+    for attempt in range(attempts):
+        if attempt:
+            try:
+                await client.set_stream(req.area_id, True)
+                _note("re-claimed", attempt=attempt + 1)
+            except Exception as e:
+                _note("re-claim-failed", detail=str(e))
+                break
+        try:
+            stream_engine.start(
+                cfg["bridge_ip"], cfg["api_key"], cfg["client_key"],
+                req.area_id, light_ids, pattern["sequence"], req.pattern_id,
+                min(framing["hz"], MAX_STREAM_HZ),
+                framing["min_bri"], framing["max_bri"], framing["hue"], framing["sat"],
+                connect_timeout=6.0,
+            )
+            last_error = None
+            break
+        except StreamError as e:
+            last_error = e
+            _note("handshake-attempt-failed", attempt=attempt + 1, detail=str(e),
+                  from_address=_note_local_address(cfg))
+    if last_error is not None:
+        e = last_error
         _note("handshake-failed", detail=str(e))
         # Never leave the area held by a stream that isn't running.
         await _release_area(req.area_id)
         detail = str(e)
         if "timed out" in detail or "timeout" in detail.lower():
-            detail += (
-                " — the bridge accepted the area but never answered on the streaming "
-                "port. That is usually something else holding the area (Hue Sync, a "
-                "game, or a session that didn't shut down): close it, then try again. "
-                "Release area clears a stale hold."
-            )
+            # A blocked UDP path and a client key the bridge does not recognise
+            # both end as this same timeout, and the fixes have nothing in
+            # common. One probe tells them apart, so it is worth the two seconds
+            # rather than handing over a list of things it might be.
+            host, _ = parse_bridge_address(cfg["bridge_ip"])
+            reachable, how = await asyncio.to_thread(udp_reaches_bridge, host, STREAM_PORT)
+            _note("udp-probe", reachable=reachable, detail=how)
+            if reachable:
+                detail += (
+                    f" — but the bridge does answer on UDP {STREAM_PORT} ({how}), so the "
+                    "network path is fine and the streaming key is the problem. That key "
+                    "is only issued alongside the API key it belongs to, at pairing time, "
+                    "so a mismatched pair can only be fixed by pairing again: Change "
+                    "bridge, press the link button, Pair."
+                )
+            else:
+                detail += (
+                    f" — and nothing at all comes back on UDP {STREAM_PORT} ({how}), while "
+                    "HTTP to the same bridge works. That is the network path, not the key "
+                    "and not the area. Container networking is the usual cause: switch the "
+                    "container to Host networking. scripts/probe_stream.py run on the host "
+                    "and in the container says which side is dropping it."
+                )
         raise HTTPException(502, detail) from e
 
     _note("streaming")

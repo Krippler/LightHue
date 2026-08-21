@@ -1246,8 +1246,10 @@ def test_a_failed_stream_hands_the_area_back(client, bridge, app_modules, monkey
     monkeypatch.setattr(app_modules.stream_engine, "start", refuse)
     r = client.post("/api/stream/start", json=stream_body())
     assert r.status_code == 502
-    # Cleared, claimed, then handed straight back when the stream didn't open.
-    assert bridge["stream_calls"] == [("6", False), ("6", True), ("6", False)]
+    # Cleared, claimed, re-claimed for each further attempt, then handed back.
+    assert bridge["stream_calls"][0] == ("6", False)
+    assert bridge["stream_calls"][1] == ("6", True)
+    assert bridge["stream_calls"][-1] == ("6", False)
     assert bridge["groups"]["6"]["stream"]["active"] is False
 
 
@@ -1334,7 +1336,11 @@ def test_a_timeout_says_what_to_try(client, bridge, app_modules, monkeypatch):
     r = client.post("/api/stream/start", json=stream_body())
     assert r.status_code == 502
     detail = r.json()["detail"]
-    assert "Release area" in detail and "never answered" in detail
+    # A timeout means "no answer", which is equally what a blocked UDP path and
+    # a key the bridge won't accept look like. The message has to name whichever
+    # one the probe actually found rather than listing both.
+    assert ("streaming key is the problem" in detail
+            or "network path, not the key" in detail), detail
     # And the area is not left held by a stream that never opened.
     assert bridge["groups"]["6"]["stream"]["active"] is False
 

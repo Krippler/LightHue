@@ -28,7 +28,6 @@ Wire format, confirmed against two independent implementations
              -- channel id (1), R (2), G (2), B (2)
 """
 import socket
-import time
 
 from .hue_client import parse_bridge_address
 
@@ -120,6 +119,75 @@ class StreamError(Exception):
     pass
 
 
+# TLS_PSK_WITH_AES_128_GCM_SHA256, the only suite the bridge accepts.
+_PSK_SUITE = b"\x00\xa8"
+
+
+def _client_hello() -> bytes:
+    """A bare DTLS 1.2 ClientHello, hand-rolled.
+
+    Used to answer one question that the library cannot: did *anything* come
+    back from the bridge. A DTLS server replies to a first ClientHello with a
+    HelloVerifyRequest carrying a cookie, and it does that before it looks at
+    any credential — so a reply proves the UDP path works even when the key is
+    wrong, and silence proves it does not even when the key is right.
+    """
+    body = bytearray()
+    body += b"\xfe\xfd"                    # client_version: DTLS 1.2
+    body += bytes(32)                       # random; content is irrelevant here
+    body += b"\x00"                         # session id: empty
+    body += b"\x00"                         # cookie: empty, which is what draws
+    body += len(_PSK_SUITE).to_bytes(2, "big") + _PSK_SUITE
+    body += b"\x01\x00"                     # one compression method: null
+    body += b"\x00\x00"                     # no extensions
+
+    handshake = bytearray()
+    handshake += b"\x01"                     # msg_type: client_hello
+    handshake += len(body).to_bytes(3, "big")
+    handshake += b"\x00\x00"                 # message_seq
+    handshake += b"\x00\x00\x00"             # fragment_offset
+    handshake += len(body).to_bytes(3, "big")  # fragment_length
+    handshake += body
+
+    record = bytearray()
+    record += b"\x16"                        # ContentType: handshake
+    record += b"\xfe\xfd"                    # DTLS 1.2
+    record += b"\x00\x00"                    # epoch
+    record += bytes(6)                       # sequence number
+    record += len(handshake).to_bytes(2, "big")
+    record += handshake
+    return bytes(record)
+
+
+def udp_reaches_bridge(host: str, port: int = STREAM_PORT,
+                       timeout: float = 3.0) -> tuple[bool, str]:
+    """Does the bridge answer at all on the streaming port?
+
+    Separates the two failures that look identical from the outside. Both a
+    blocked UDP path and a client key the bridge does not recognise end as a
+    handshake timeout, and the fix for one is nothing like the fix for the
+    other.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect((host, port))
+        sock.send(_client_hello())
+        data = sock.recv(2048)
+        if not data:
+            return False, "the bridge closed without answering"
+        # 0x16 handshake (the HelloVerifyRequest we want), 0x15 an alert —
+        # either way something is listening and the path carries UDP.
+        kind = {0x16: "handshake", 0x15: "alert"}.get(data[0], f"0x{data[0]:02x}")
+        return True, f"answered with {len(data)} bytes ({kind})"
+    except TimeoutError:
+        return False, "nothing came back"
+    except OSError as e:
+        return False, f"could not send: {e}"
+    finally:
+        sock.close()
+
+
 class DtlsStream:
     """A DTLS-PSK datagram socket to the bridge's entertainment endpoint.
 
@@ -143,16 +211,20 @@ class DtlsStream:
         # Resolved now rather than baked into the signature at import, so the
         # module-level default stays the one source of truth.
         self.port = STREAM_PORT if port is None else port
+        # Which local address the socket actually went out from. The bridge
+        # replies to whatever it saw, so on a multi-homed host this is the first
+        # thing worth knowing when nothing comes back.
+        self.local_address = None
         self._sock = None
 
-    def connect(self, timeout: float = 4.0, attempts: int = 3):
-        """Handshake with the bridge, retrying a few times.
+    def connect(self, timeout: float = 6.0):
+        """One handshake attempt against the bridge.
 
-        The bridge opens port 2100 only once the area has been handed to the
-        stream over REST, and it does not open it the instant the REST call
-        returns — a first handshake landing a moment early gets no answer at
-        all, which surfaces as a timeout rather than a refusal. Retrying costs
-        a few seconds and turns a race into a non-event.
+        Deliberately a single attempt. Retrying in here was worse than useless:
+        the bridge drops its claim on the area after about ten seconds without a
+        handshake, so a second and third try land on an area that is no longer
+        listening and can only fail. Retrying is the caller's job, because only
+        the caller can claim the area again first.
         """
         try:
             from mbedtls import tls
@@ -166,23 +238,17 @@ class DtlsStream:
             ciphers=DTLS_CIPHERS,
             validate_certificates=False,
         )
-        last = None
-        for attempt in range(max(1, attempts)):
-            raw = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            raw.settimeout(timeout)
-            sock = tls.ClientContext(config).wrap_socket(raw, server_hostname=None)
-            try:
-                sock.connect((self.bridge_ip, self.port))
-                sock.do_handshake()
-            except Exception as e:
-                last = e
-                sock.close()
-                if attempt + 1 < max(1, attempts):
-                    time.sleep(0.5)
-                continue
-            self._sock = sock
-            return
-        raise StreamError(f"Could not open the entertainment stream: {last}") from last
+        raw = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        raw.settimeout(timeout)
+        sock = tls.ClientContext(config).wrap_socket(raw, server_hostname=None)
+        try:
+            sock.connect((self.bridge_ip, self.port))
+            self.local_address = sock.getsockname()
+            sock.do_handshake()
+        except Exception as e:
+            sock.close()
+            raise StreamError(f"Could not open the entertainment stream: {e}") from e
+        self._sock = sock
 
     def send(self, frame: bytes):
         if self._sock is None:

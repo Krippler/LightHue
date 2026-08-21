@@ -116,7 +116,7 @@ class StreamEngine:
     def start(self, bridge_ip: str, username: str, client_key: str,
               area_id: str, light_ids: list[str], sequence: str, pattern_id: str,
               hz: float, min_bri: int, max_bri: int,
-              hue: int | None, sat: int | None):
+              hue: int | None, sat: int | None, connect_timeout: float = 6.0):
         """Open the stream and start sending. The caller activates the area
         over REST first — the bridge ignores port 2100 until it has."""
         self.stop()
@@ -126,7 +126,7 @@ class StreamEngine:
         # otherwise leave an area id behind with nothing running under it, and
         # the next status push would claim a stream that does not exist.
         stream = DtlsStream(bridge_ip, username, client_key)
-        stream.connect()
+        stream.connect(timeout=connect_timeout)
         with self._lock:
             self._state = {
                 "area_id": area_id,
