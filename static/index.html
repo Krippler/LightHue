@@ -85,14 +85,16 @@
 
             <div class="setup-col">
               <h3>Existing key</h3>
-              <p class="hint">Already paired elsewhere? Paste the credentials.</p>
+              <p class="hint">Already paired? Paste the credentials. If this console
+              knows the bridge already and only its address changed, leave the key
+              blank — the bridge keeps the key, not the address.</p>
               <label class="field">
                 <span>Bridge IP</span>
                 <input id="manual-ip" type="text" placeholder="192.168.1.23" />
               </label>
               <label class="field">
                 <span>API key</span>
-                <input id="manual-key" type="text" placeholder="username / key" />
+                <input id="manual-key" type="text" placeholder="leave blank to keep the stored key" />
               </label>
               <button id="btn-manual-save" class="btn btn-ghost">Save</button>
               <div id="manual-status" class="status-line"></div>

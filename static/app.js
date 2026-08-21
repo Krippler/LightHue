@@ -103,15 +103,19 @@ $('#btn-manual-save').addEventListener('click', async () => {
   const ip = $('#manual-ip').value.trim();
   const key = $('#manual-key').value.trim();
   const statusEl = $('#manual-status');
-  if (!ip || !key) {
-    statusEl.textContent = 'Enter both the bridge IP and its key.';
+  if (!ip) {
+    statusEl.textContent = 'Enter the bridge IP.';
     statusEl.className = 'status-line err';
     return;
   }
   statusEl.textContent = '';
   statusEl.className = 'status-line';
   try {
-    await api('/api/bridge/set', { method: 'POST', body: JSON.stringify({ bridge_ip: ip, api_key: key }) });
+    // An empty key means "same bridge, new address": the key belongs to the
+    // bridge and survives it moving network, so it is left out rather than
+    // blanked.
+    const body = key ? { bridge_ip: ip, api_key: key } : { bridge_ip: ip };
+    await api('/api/bridge/set', { method: 'POST', body: JSON.stringify(body) });
     await checkBridge();
   } catch (e) {
     // The address is checked server-side now, so a typo lands here rather

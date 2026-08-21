@@ -356,6 +356,13 @@ mind.
 minutes, point the console at its new address, and press Start. It is
 reversible, needs no VLAN or firewall changes, and answers the question outright.
 
+Moving a bridge does not mean pairing again. The key belongs to the bridge, not
+to its address, so under **Change bridge → Existing key** you can enter the new
+address and leave the key blank: the stored API key and streaming key are kept.
+The Hue app is also less affected than it looks — local discovery is mDNS and
+will not cross a VLAN, but a bridge linked to a Hue account stays controllable
+through Philips' cloud from anywhere.
+
 ### Which side to move
 
 Move the console, not the bridge. The requirement is that the streaming client

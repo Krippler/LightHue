@@ -1450,3 +1450,25 @@ def test_an_area_someone_else_holds_is_left_alone_on_startup(app_modules, bridge
 
     assert bridge["groups"]["6"]["stream"]["active"] is True, \
         "released an area belonging to something else"
+
+
+def test_a_bridge_that_moved_network_keeps_its_credentials(client, bridge):
+    """The key belongs to the bridge, not to its address. Requiring it back on
+    every address change would mean digging a forty-character string out of the
+    config file to retype whenever a DHCP lease moved."""
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    before = client.get("/api/bridge").json()
+    assert before["can_stream"] is True
+
+    r = client.post("/api/bridge/set", json={"bridge_ip": "10.0.0.9"})
+    assert r.status_code == 200
+    after = client.get("/api/bridge").json()
+    assert after["bridge_ip"] == "10.0.0.9"
+    assert after["configured"] is True
+    assert after["can_stream"] is True, "moving the bridge cost it the streaming key"
+
+
+def test_an_address_with_no_key_at_all_is_still_refused(client):
+    r = client.post("/api/bridge/set", json={"bridge_ip": "10.0.0.9"})
+    assert r.status_code == 400
+    assert "API key" in r.json()["detail"]
