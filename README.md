@@ -398,6 +398,13 @@ The parent has to be a real interface *on that VLAN*. Check first:
 ip -4 addr | grep 192.168.50.
 ```
 
+Note that with ordinary bridge networking the container's own address is
+`172.x` and gets translated to the host's on the way out, so it never matches
+the bridge's network however things are arranged — Diagnostics says
+`behind_container_nat` rather than pretending to compare. **Host networking** is
+the simplest way to make the client genuinely share the bridge's network when
+the host already does, and it is worth trying before any of what follows.
+
 Nothing there means the VLAN is not reaching the server, and no Docker network
 can conjure it: frames would still leave untagged on the parent's own VLAN,
 giving the container an address on a network it cannot actually reach. Trunk

@@ -229,6 +229,25 @@ def probe_handshake_stage(host: str, port: int = STREAM_PORT,
         sock.close()
 
 
+# Docker's own default pools. An address from one of these means the socket is
+# inside a container whose packets get translated on the way out, so its address
+# says nothing about what the bridge will actually see.
+_CONTAINER_RANGES = ("172.16.0.0/12", "10.0.0.0/8", "192.168.0.0/16")
+
+
+def looks_translated(local_ip: str) -> bool:
+    """Is this a container address that will be NAT'd before the bridge sees it?
+
+    Only Docker's bridge pool is treated as a giveaway. The other private ranges
+    are where real LANs live, and calling those translated would be wrong far
+    more often than right.
+    """
+    try:
+        return ipaddress.ip_address(local_ip) in ipaddress.ip_network("172.16.0.0/12")
+    except ValueError:
+        return False
+
+
 def same_subnet_as_bridge(local_ip: str, bridge_ip: str, prefix: int = 24) -> bool:
     """Are we on the bridge's own network?
 

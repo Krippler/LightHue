@@ -30,6 +30,7 @@ from .hue_stream import (
     MAX_STREAM_HZ,
     STREAM_PORT,
     local_address_for,
+    looks_translated,
     probe_handshake_stage,
     probe_stream_port,
     same_subnet_as_bridge,
@@ -954,11 +955,20 @@ async def stream_diagnostics():
         host, _ = parse_bridge_address(cfg["bridge_ip"])
         state, how = await asyncio.to_thread(probe_stream_port, host, STREAM_PORT)
         local = local_address_for(host)
+        translated = bool(local and looks_translated(local))
         out["network"] = {
             "bridge": host,
             "we_appear_as": local,
-            "same_subnet": same_subnet_as_bridge(local, host) if local else None,
+            # Inconclusive behind Docker's NAT: the bridge sees the host's
+            # address, not this one, so comparing this one proves nothing.
+            "same_subnet": None if translated else (
+                same_subnet_as_bridge(local, host) if local else None),
+            "behind_container_nat": translated,
             "note": (
+                "this is a container address, translated to the host's before the "
+                "bridge sees it — host networking removes the translation and makes "
+                "the comparison meaningful"
+                if translated else
                 "streaming wants the client on the bridge's own network; REST does "
                 "not, which is why everything else works across a routed hop"
             ),
@@ -1156,7 +1166,16 @@ async def start_stream(req: StreamStartRequest):
                     f" — and nothing comes back on UDP {STREAM_PORT} at all ({how}), "
                     "while HTTP to the same bridge works."
                 )
-                if local and not same_subnet_as_bridge(local, host):
+                if local and looks_translated(local):
+                    detail += (
+                        f" This is a container address ({local}), translated to the "
+                        "host's before the bridge ever sees it — so whether it shares "
+                        "the bridge's network cannot be told from here. Switch the "
+                        "container to Host networking: that removes the translation, "
+                        "and if the host is on the bridge's network the client then "
+                        "genuinely is too."
+                    )
+                elif local and not same_subnet_as_bridge(local, host):
                     detail += (
                         f" This machine reaches the bridge as {local}, which is not on "
                         f"the bridge's own network ({host}). Streaming is the one part of "
