@@ -388,3 +388,18 @@ def test_the_standalone_probe_sends_the_same_bytes_as_the_app():
     assert probe.PSK_SUITE == b"\x00\xa8"
     assert probe.same_subnet("192.168.10.37", "192.168.50.31") is False
     assert probe.same_subnet("192.168.50.5", "192.168.50.31") is True
+
+
+def test_a_container_address_is_not_mistaken_for_a_subnet_mismatch():
+    """Behind Docker's NAT the bridge sees the host's address, not the
+    container's, so comparing the container's proves nothing — and saying
+    "different network" on that basis sends people rearranging a network that
+    was never the problem."""
+    from app.hue_stream import looks_translated
+    assert looks_translated("172.17.0.44") is True
+    assert looks_translated("172.31.255.1") is True
+    # Real LANs live in the other private ranges; calling those translated
+    # would be wrong far more often than right.
+    assert looks_translated("192.168.10.37") is False
+    assert looks_translated("10.0.0.5") is False
+    assert looks_translated("not-an-ip") is False
