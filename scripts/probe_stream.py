@@ -142,12 +142,24 @@ def parse_hello_verify(datagram: bytes):
     return payload[3:3 + payload[2]]
 
 
+SOURCE = None       # optional local address to speak from, set by --from
+
+
+def _udp_socket(timeout):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(timeout)
+    if SOURCE:
+        # Bind before connect, so the datagram leaves from the interface being
+        # tested rather than whichever one the routing table prefers.
+        sock.bind((SOURCE, 0))
+    return sock
+
+
 def handshake_stage(host, port=STREAM_PORT, timeout=4.0):
     """How far a bare handshake gets. The PSK identity is not sent until the
     fifth message, so everything up to ServerHello is the same whatever the
     key — which is what makes this useful without one."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.settimeout(timeout)
+    sock = _udp_socket(timeout)
     try:
         sock.connect((host, port))
         sock.send(client_hello())
@@ -349,6 +361,9 @@ def main() -> int:
     ap.add_argument("--config", default=None,
                     help="read all three from a config.json instead (e.g. /data/config.json)")
     ap.add_argument("--area", help="entertainment area id; default is the first found")
+    ap.add_argument("--from", dest="source", default=None, metavar="ADDRESS",
+                    help="bind to this local address, to test from an interface "
+                         "on the bridge's own network without moving anything")
     ap.add_argument("--timeout", type=float, default=8.0)
     ap.add_argument("--repeat", type=int, default=1,
                     help="run this many attempts and summarise — for a failure "
@@ -377,7 +392,10 @@ def main() -> int:
     if args.repeat > 1:
         return repeat_mode(args, tls)
 
-    print(f"\nProbing {args.bridge} as {args.api_key[:6]}...\n")
+    global SOURCE
+    SOURCE = args.source
+    print(f"\nProbing {args.bridge} as {args.api_key[:6]}..."
+          + (f" from {args.source}" if args.source else "") + "\n")
 
     # 1. REST reachable at all?
     try:
@@ -417,7 +435,7 @@ def main() -> int:
 
     # 3. Where would a reply come back to?
     host = split_host(args.bridge)
-    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    probe = _udp_socket(2.0)
     probe.connect((host, STREAM_PORT))
     local = probe.getsockname()
     probe.close()
@@ -441,8 +459,7 @@ def main() -> int:
         try:
             if config is None:
                 raise RuntimeError("python-mbedtls is not installed here")
-            raw = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            raw.settimeout(args.timeout)
+            raw = _udp_socket(args.timeout)
             sock = tls.ClientContext(config).wrap_socket(raw, server_hostname=None)
             started = time.monotonic()
             sock.connect((host, STREAM_PORT))

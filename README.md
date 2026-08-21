@@ -322,6 +322,30 @@ frame holding every light in the area, so a frame costs the same whether it
 holds one bulb or ten, and the speed stops being divided — up to 25 Hz across
 the whole area at once, every light changing on the same frame.
 
+### Putting the console on the bridge's network
+
+If the bridge sits on its own VLAN — an IoT network, say — the console has to
+join it for streaming to work. Everything else routes across the boundary
+happily, so this only bites the one feature.
+
+On Unraid, the way to do that is a Docker network on the bridge's VLAN rather
+than the default bridge or host networking:
+
+```bash
+docker network create -d macvlan \
+    --subnet=192.168.50.0/24 --gateway=192.168.50.1 \
+    -o parent=br0.50 hue-vlan
+```
+
+then set the container's network to `hue-vlan`. The parent interface is
+whichever one carries that VLAN — `ip -d link show` names them. If the host has
+no interface on the bridge's VLAN at all, the VLAN is not trunked to it and
+that has to come first.
+
+To test before rearranging anything: if the host does have an address on the
+bridge's network, `scripts/probe_stream.py --from <that-address>` speaks from it
+directly and answers the question without moving the container.
+
 **The client has to be on the bridge's own network.** This is the one part of
 the Hue API with that constraint, and it is easy to miss because nothing else
 has it: discovery, pairing, rooms and the ordinary per-light flicker all route
