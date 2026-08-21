@@ -360,6 +360,11 @@ leaves a ghost session that blocks the next handshake until the bridge times it
 out on its own. Streaming once and then never again, with no other symptom, is
 what that looks like.
 
+On startup the console hands back any entertainment area the bridge still
+records as claimed by its own API key. That covers the case nothing else does:
+a container killed, redeployed or crashed mid-stream leaves the claim behind,
+and until something clears it those lights answer to nothing at all.
+
 **If a stream is left claimed** — a killed container, a dropped network — the
 bridge keeps holding the area, and from the outside that looks like it simply
 ignoring the streaming port: the area is accepted and then the handshake times

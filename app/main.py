@@ -46,6 +46,31 @@ from .patterns import (
 from .stream_engine import StreamEngine, StreamError
 
 
+async def _release_areas_left_claimed():
+    """Hand back any entertainment area still recorded as ours."""
+    client = get_client()
+    if client is None:
+        return
+    api_key = config_store.load().get("api_key")
+    try:
+        groups = await client.get_groups()
+    except Exception:
+        logger.debug("Could not check for stranded entertainment areas", exc_info=True)
+        return
+    for gid, info in groups.items():
+        if (info.get("type") or "") != ENTERTAINMENT_GROUP_TYPE:
+            continue
+        stream = info.get("stream") or {}
+        if stream.get("active") and stream.get("owner") == api_key:
+            logger.warning(
+                "Entertainment area %s was left claimed by a previous run; releasing it",
+                gid)
+            try:
+                await client.set_stream(gid, False)
+            except Exception:
+                logger.exception("Could not release stranded entertainment area %s", gid)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     global _loop
@@ -62,6 +87,13 @@ async def lifespan(_app: FastAPI):
         if engine.restore_on_stop and get_client() is not None:
             restored = await engine.restore()
             logger.info("Restored %d light(s) left flickering by a previous run", len(restored))
+
+    # An entertainment area we still hold means the last run went away without
+    # letting go — killed, redeployed, or crashed mid-stream. The bridge keeps
+    # it claimed indefinitely, and while it does, those lights answer to nothing
+    # at all: not this console, not the Hue app. Nothing else ever clears it,
+    # so a container that restarts mid-stream would strand them for good.
+    await _release_areas_left_claimed()
     yield
     # The area has to go back before anything else: while the bridge holds one
     # in streaming mode, nothing can drive those lights — not this console, not
