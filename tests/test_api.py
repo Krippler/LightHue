@@ -1268,8 +1268,8 @@ def test_starting_a_stream_stops_rest_flicker_on_those_lights(client, bridge, ap
 def test_stopping_a_stream_releases_the_area(client, bridge, app_modules, monkeypatch):
     client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
     monkeypatch.setattr(app_modules.stream_engine, "start", lambda *a, **kw: None)
-    monkeypatch.setattr(app_modules.stream_engine, "status",
-                        lambda: {"area_id": "6", "running": True, "settings": {}})
+    monkeypatch.setattr(app_modules.stream_engine, "area_id", lambda: "6")
+    monkeypatch.setattr(app_modules.stream_engine, "light_ids", lambda: ["1", "2"])
     client.post("/api/stream/start", json=stream_body())
     assert client.post("/api/stream/stop").status_code == 200
     assert bridge["stream_calls"][-1] == ("6", False)
@@ -1337,3 +1337,56 @@ def test_a_timeout_says_what_to_try(client, bridge, app_modules, monkeypatch):
     assert "Release area" in detail and "never answered" in detail
     # And the area is not left held by a stream that never opened.
     assert bridge["groups"]["6"]["stream"]["active"] is False
+
+
+def test_streaming_snapshots_the_lights_and_puts_them_back(client, bridge, app_modules,
+                                                           monkeypatch):
+    """A stream leaves each bulb on whatever the last frame held. Without a
+    snapshot taken before the area is claimed there is nothing to put back —
+    and it has to be taken first, because a claimed area stops answering REST."""
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    monkeypatch.setattr(app_modules.stream_engine, "start", lambda *a, **kw: None)
+    monkeypatch.setattr(app_modules.stream_engine, "area_id", lambda: "6")
+    monkeypatch.setattr(app_modules.stream_engine, "light_ids", lambda: ["1", "2", "3", "4"])
+
+    assert client.post("/api/stream/start", json=stream_body()).status_code == 200
+    snapshots = client.get("/api/status").json()["snapshots"]
+    assert set(snapshots) >= {"1", "2", "3", "4"}
+    # Light 1 was on, bright and warm before we touched it.
+    assert snapshots["1"]["bri"] == 180
+
+    bridge["puts"].clear()
+    assert client.post("/api/stream/stop").status_code == 200
+    assert bridge["puts"], "nothing was sent to put the bulbs back"
+    assert any(p.get("bri") == 180 for p in bridge["puts"])
+
+
+def test_the_area_goes_back_before_the_lights_are_restored(client, bridge, app_modules,
+                                                           monkeypatch):
+    """A restore sent while the bridge is still streaming to the area goes
+    nowhere, so the order is not incidental."""
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    monkeypatch.setattr(app_modules.stream_engine, "start", lambda *a, **kw: None)
+    monkeypatch.setattr(app_modules.stream_engine, "area_id", lambda: "6")
+    monkeypatch.setattr(app_modules.stream_engine, "light_ids", lambda: ["1"])
+    client.post("/api/stream/start", json=stream_body())
+
+    order = []
+    original_set_stream = app_modules.HueClient.set_stream
+    original_set_state = app_modules.HueClient.set_light_state
+
+    async def note_stream(self, gid, active):
+        order.append(("stream", active))
+        return await original_set_stream(self, gid, active)
+
+    async def note_state(self, lid, **st):
+        order.append(("light", lid))
+        return await original_set_state(self, lid, **st)
+
+    monkeypatch.setattr(app_modules.HueClient, "set_stream", note_stream)
+    monkeypatch.setattr(app_modules.HueClient, "set_light_state", note_state)
+    client.post("/api/stream/stop")
+
+    assert ("stream", False) in order
+    assert ("light", "1") in order
+    assert order.index(("stream", False)) < order.index(("light", "1"))

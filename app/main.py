@@ -57,10 +57,11 @@ async def lifespan(_app: FastAPI):
     # The area has to go back before anything else: while the bridge holds one
     # in streaming mode, nothing can drive those lights — not this console, not
     # the Hue app — so a container stopped mid-stream would strand them.
-    streaming = stream_engine.status().get("area_id")
+    streaming = stream_engine.area_id()
+    streamed_lights = stream_engine.light_ids()
     stream_engine.stop()
     if streaming:
-        await _release_area(streaming)
+        await _finish_stream(streaming, streamed_lights)
     # Cancel the flicker loops before tearing down the pool they send through,
     # otherwise in-flight ticks fail against a closed client on the way out.
     await engine.stop_all()
@@ -131,9 +132,25 @@ def _from_stream_thread(coro):
         logger.warning("Could not schedule stream cleanup; the loop is gone")
 
 
-def _stream_stopped(area_id: str):
+def _stream_stopped(area_id: str, light_ids: list[str]):
     """The sender has exited — for any reason, asked for or not."""
-    _from_stream_thread(_release_area(area_id))
+    _from_stream_thread(_finish_stream(area_id, light_ids))
+
+
+async def _finish_stream(area_id: str, light_ids):
+    """Hand the area back, then put the bulbs where they were.
+
+    In that order: the bridge ignores REST for an area it is streaming, so a
+    restore sent before the release goes nowhere. Streaming leaves a bulb on
+    whatever the last frame held, which is why this matters at all — without it
+    a room keeps the colour and brightness the pattern happened to stop on.
+    """
+    await _release_area(area_id)
+    if light_ids and engine.restore_on_stop:
+        try:
+            await engine.restore(list(light_ids))
+        except Exception:
+            logger.exception("Could not put the streamed lights back")
 
 
 def _broadcast_status_soon():
@@ -742,24 +759,74 @@ async def _release_area(area_id: str):
         logger.exception("Could not hand entertainment area %s back", area_id)
 
 
+# What the last start attempt actually did, step by step. Streaming failures
+# happen against hardware that isn't here, and "timed out" on its own says
+# almost nothing — this is the difference between a guess and a diagnosis.
+_last_attempt: dict = {}
+
+
+def _note(step: str, **detail):
+    _last_attempt.setdefault("steps", []).append(
+        {"step": step, "at": round(time.monotonic() - _last_attempt.get("t0", 0), 2), **detail})
+    logger.info("stream/start %s %s", step, detail or "")
+
+
+async def _stream_flag(client, area_id: str) -> bool:
+    """What the bridge currently thinks about this area's stream."""
+    groups = await client.get_groups()
+    return bool(((groups.get(area_id) or {}).get("stream") or {}).get("active"))
+
+
+async def _await_stream_flag(client, area_id: str, wanted: bool,
+                             timeout: float = 5.0) -> bool:
+    """Wait for the bridge to actually be in the state we asked for.
+
+    Setting the flag and sleeping a guessed interval was the bug: the REST call
+    returns before the bridge has finished, and claiming an area while it is
+    still tearing the last session down leaves it in a state where it accepts
+    the claim and then never answers on the streaming port. How long that takes
+    is not ours to guess, so we ask until it is true.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            if await _stream_flag(client, area_id) is wanted:
+                return True
+        except Exception:
+            logger.debug("Could not read back area %s", area_id, exc_info=True)
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(0.25)
+
+
 async def _claim_area(client, area_id: str):
-    """Take the area for streaming, clearing anyone's stale hold first.
+    """Take the area for streaming, clearing any stale hold first.
 
     The bridge keeps an area claimed until something tells it otherwise, and a
-    session that died without releasing — a killed container, a dropped
-    network, a crash — leaves the claim behind. From the outside that looks
-    like the bridge simply not answering on port 2100: the REST call to claim
-    it succeeds, and then the handshake times out. Clearing the claim first
-    costs one call and turns that dead end into a normal start.
+    session that died without releasing leaves the claim behind. From the
+    outside that looks like the bridge simply not answering on port 2100: the
+    REST call to claim it succeeds, and then the handshake times out.
+
+    Both transitions are waited for rather than assumed. The previous session
+    has to be fully down before the next claim, or the bridge ends up holding
+    an area it is not listening for — which is exactly the "works once, then
+    times out until the container restarts" shape.
     """
     try:
         await client.set_stream(area_id, False)
-        await asyncio.sleep(0.3)      # let the bridge finish tearing down
+        if not await _await_stream_flag(client, area_id, False):
+            logger.warning("Area %s still reads as claimed after being released", area_id)
     except Exception:
         # Nothing held it, or the bridge disliked being told so. Either way the
         # claim below is the call that actually matters.
         logger.debug("Pre-emptive release of area %s did nothing", area_id, exc_info=True)
     await client.set_stream(area_id, True)
+    if not await _await_stream_flag(client, area_id, True):
+        raise HTTPException(
+            502,
+            "The bridge accepted the area but never reported it as streaming. "
+            "Give it a moment and try again, or use Release area first.",
+        )
 
 
 @app.post("/api/stream/release")
@@ -777,14 +844,58 @@ async def release_stream_area(req: StreamAreaRequest):
         stream_engine.stop()
     try:
         await client.set_stream(req.area_id, False)
+        await _await_stream_flag(client, req.area_id, False)
     except Exception as e:
         raise HTTPException(502, bridge_error(e, "hand the area back")) from e
     _broadcast_status_soon()
     return {"ok": True, **status_payload()}
 
 
+@app.get("/api/stream/diagnostics")
+async def stream_diagnostics():
+    """What the bridge says, and what the last start attempt did.
+
+    Streaming fails against hardware that isn't in front of whoever is fixing
+    it, so this exists to be pasted into a bug report.
+    """
+    cfg = config_store.load()
+    out = {
+        "can_stream": bool(cfg.get("client_key")),
+        "engine": stream_engine.status(),
+        "last_attempt": _last_attempt or None,
+        "areas": None,
+        "bridge_error": None,
+    }
+    client = get_client()
+    if client is None:
+        out["bridge_error"] = "Bridge not configured"
+        return out
+    try:
+        groups = await client.get_groups()
+    except Exception as e:
+        out["bridge_error"] = bridge_error(e, "read the entertainment areas")
+        return out
+    out["areas"] = {
+        gid: {
+            "name": info.get("name"),
+            "lights": info.get("lights"),
+            # Verbatim, including proxymode and proxynode: whatever the bridge
+            # thinks is what matters here, not our reading of it.
+            "stream": info.get("stream"),
+            # Whether the lights were ever positioned. The bridge refuses to
+            # stream to an area that was never finished in the Hue app.
+            "has_locations": bool(info.get("locations")),
+        }
+        for gid, info in groups.items()
+        if (info.get("type") or "") == ENTERTAINMENT_GROUP_TYPE
+    }
+    return out
+
+
 @app.post("/api/stream/start")
 async def start_stream(req: StreamStartRequest):
+    _last_attempt.clear()
+    _last_attempt.update({"t0": time.monotonic(), "area_id": req.area_id, "steps": []})
     cfg = config_store.load()
     if not cfg.get("client_key"):
         raise HTTPException(
@@ -836,11 +947,28 @@ async def start_stream(req: StreamStartRequest):
     for lid in light_ids:
         await engine.stop(lid, notify=False, restore=False)
 
+    # Read the bulbs before the area is claimed: once the bridge is streaming
+    # to it, REST no longer speaks for those lights, and there would be nothing
+    # to put back afterwards. Lights already holding a snapshot keep it.
+    engine.expect_batch(len(light_ids) + 1)
+    try:
+        await engine.capture(light_ids)
+    except Exception:
+        logger.warning("Could not snapshot the area's lights before streaming",
+                       exc_info=True)
+
     client = get_client()
+    _note("before-claim", bridge_says=(info.get("stream") or {}),
+          has_locations=bool(info.get("locations")))
     try:
         await _claim_area(client, req.area_id)
+    except HTTPException as e:
+        _note("claim-failed", detail=e.detail)
+        raise
     except Exception as e:
+        _note("claim-error", detail=str(e))
         raise HTTPException(502, bridge_error(e, "hand the area to the stream")) from e
+    _note("claimed")
 
     try:
         stream_engine.start(
@@ -850,6 +978,7 @@ async def start_stream(req: StreamStartRequest):
             framing["min_bri"], framing["max_bri"], framing["hue"], framing["sat"],
         )
     except StreamError as e:
+        _note("handshake-failed", detail=str(e))
         # Never leave the area held by a stream that isn't running.
         await _release_area(req.area_id)
         detail = str(e)
@@ -862,6 +991,7 @@ async def start_stream(req: StreamStartRequest):
             )
         raise HTTPException(502, detail) from e
 
+    _note("streaming")
     _broadcast_status_soon()
     return {"ok": True, **status_payload()}
 
@@ -890,10 +1020,11 @@ async def update_stream(req: StreamUpdateRequest):
 
 @app.post("/api/stream/stop")
 async def stop_stream():
-    area_id = stream_engine.status().get("area_id")
+    area_id = stream_engine.area_id()
+    light_ids = stream_engine.light_ids()
     stream_engine.stop()
     if area_id:
-        await _release_area(area_id)
+        await _finish_stream(area_id, light_ids)
     _broadcast_status_soon()
     return {"ok": True, **status_payload()}
 

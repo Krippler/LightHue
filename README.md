@@ -339,12 +339,21 @@ including the Hue app, so the console hands the area back when you press Stop,
 when the sender stops for any reason at all, and on the way out if the container
 is stopped mid-stream.
 
+Streaming leaves each bulb on whatever the last frame held, so the console
+reads the area's lights before it claims the area and puts them back after it
+releases it — the same snapshot the normal path uses, and in that order,
+because a bridge that is streaming to an area ignores anything else sent to
+those lights.
+
 **If a stream is left claimed** — a killed container, a dropped network — the
 bridge keeps holding the area, and from the outside that looks like it simply
 ignoring the streaming port: the area is accepted and then the handshake times
 out. Starting a stream clears a claim this console left behind before making
 its own, so that usually sorts itself out. **Release area** clears one by hand,
 including a claim left by something else, which beats restarting the bridge.
+**Diagnostics** shows what the bridge says about each area and what the last
+start attempt actually did, step by step — worth pasting into a bug report,
+since "timed out" on its own says almost nothing.
 
 Streaming has no transition setting: every frame is sent, so there is nothing
 to interpolate between.

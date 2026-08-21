@@ -63,12 +63,13 @@ class StreamEngine:
 
     def __init__(self, on_change=None, on_stopped=None):
         self._on_change = on_change or (lambda: None)
-        # Fired with the area id whenever the sender stops for any reason,
+        # Fired with the area id and its lights whenever the sender stops for
+        # any reason,
         # including one nobody asked for. The bridge keeps an area claimed
         # until it is told otherwise, so a sender that dies quietly would
         # leave those lights answering to nothing — not this console, not the
         # Hue app — until the bridge was restarted.
-        self._on_stopped = on_stopped or (lambda area_id: None)
+        self._on_stopped = on_stopped or (lambda area_id, light_ids: None)
         self._lock = threading.Lock()
         self._state: dict | None = None
         self._thread: threading.Thread | None = None
@@ -158,6 +159,10 @@ class StreamEngine:
         with self._lock:
             return self._state["area_id"] if self._state else None
 
+    def light_ids(self) -> list[str]:
+        with self._lock:
+            return list(self._state["light_ids"]) if self._state else []
+
     # ---------- the sender ----------
 
     def _run(self, stream: DtlsStream):
@@ -204,12 +209,12 @@ class StreamEngine:
                     self._stop.wait(delay)
         finally:
             stream.close()
-            area = self.area_id()
+            area, lights = self.area_id(), self.light_ids()
             # Told even when the sender is exiting because it was asked to:
             # releasing an area twice is harmless, never releasing one is not.
             if area:
                 try:
-                    self._on_stopped(area)
+                    self._on_stopped(area, lights)
                 except Exception:
                     logger.exception("Could not hand entertainment area %s back", area)
             self._on_change()
