@@ -322,6 +322,18 @@ frame holding every light in the area, so a frame costs the same whether it
 holds one bulb or ten, and the speed stops being divided — up to 25 Hz across
 the whole area at once, every light changing on the same frame.
 
+### Which side to move
+
+Move the console, not the bridge. The requirement is that the streaming client
+shares a network with the bridge, and it does not care which network that is —
+so the cheap change is the one that leaves the Hue setup alone.
+
+Bulbs are not a consideration either way: they talk Zigbee, have no IP address
+and no VLAN, and neither notice nor care which Ethernet port the bridge is on.
+The Hue app is the one that would notice. It finds the bridge by mDNS, which
+does not cross a VLAN boundary without a reflector, so moving the bridge away
+from the phones would hand them the problem the console has now.
+
 ### Putting the console on the bridge's network
 
 If the bridge sits on its own VLAN — an IoT network, say — the console has to
