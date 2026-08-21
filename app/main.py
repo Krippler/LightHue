@@ -847,6 +847,20 @@ def _note_local_address(cfg) -> str | None:
     return _last_local_address
 
 
+def _arm_looked_real() -> bool:
+    """Did the last arm end with the bridge itself reporting the area as up?
+
+    Not "did the call succeed" — that only says the bridge took the word. An
+    area that reads inactive right afterwards was never armed, and saying so is
+    worth more than another sentence about the network.
+    """
+    for step in reversed(_last_attempt.get("steps", [])):
+        if step["step"] in ("armed", "re-armed"):
+            says = step.get("bridge_says") or {}
+            return says.get("status") == "active" or bool(says.get("active"))
+    return False
+
+
 def _note(step: str, **detail):
     _last_attempt.setdefault("steps", []).append(
         {"step": step, "at": round(time.monotonic() - _last_attempt.get("t0", 0), 2), **detail})
@@ -1298,10 +1312,23 @@ async def start_stream(req: StreamStartRequest):
                         "stream does not. Run the console on the bridge's subnet, or "
                         "move the bridge."
                     )
+                elif not _arm_looked_real():
+                    detail += (
+                        " The bridge accepted the call to start the area and then went "
+                        "on reporting it as not streaming, so nothing was ever armed "
+                        "behind the port. Check that this console's key still owns the "
+                        "area — the Hue app takes it back when it streams to it — and "
+                        "try Release area, then Start."
+                    )
                 else:
                     detail += (
-                        " That is the network path: try Host networking, and compare "
-                        "scripts/probe_stream.py on the host against the container."
+                        f" This machine is already on the bridge's network as {local}, "
+                        "with nothing translating the address, and the bridge reports "
+                        "the area as armed. So the path and the claim are both ruled "
+                        "out, and guessing further from here is not worth your time: "
+                        f"run `tcpdump -ni any -vv udp port {STREAM_PORT}` on the host "
+                        "and press Start again. Whether our packets leave, and whether "
+                        "anything comes back, splits this three ways in one look."
                     )
         # Never leave the area held by a stream that isn't running.
         await _release_area(req.area_id)
