@@ -21,13 +21,13 @@ bridge, the credentials, or the area.
 The api key and client key are the pair stored in /data/config.json.
 """
 import argparse
+import ipaddress
 import json
 import socket
 import sys
 import time
 import urllib.request
 from contextlib import suppress
-from pathlib import Path
 
 STREAM_PORT = 2100
 CIPHERS = ("TLS-PSK-WITH-AES-128-GCM-SHA256",)
@@ -86,6 +86,115 @@ EXPLAIN = {
   networking; switch the container to Host networking.
 """,
 }
+
+
+# ---------------------------------------------------------------------------
+# Everything below is deliberately standard-library only and self-contained, so
+# this file can be copied to any machine that can see the bridge and run there.
+# Working from the bridge's own network and failing from elsewhere is the whole
+# question, and that test is worthless if the tool needs a checkout to run.
+#
+# It duplicates app/hue_stream.py on purpose; a test asserts the two produce
+# identical bytes, so the copy cannot drift.
+# ---------------------------------------------------------------------------
+
+PSK_SUITE = b"\x00\xa8"          # TLS_PSK_WITH_AES_128_GCM_SHA256
+
+
+def client_hello(cookie: bytes = b"", message_seq: int = 0) -> bytes:
+    """A bare DTLS 1.2 ClientHello: one cipher suite, no extensions."""
+    body = bytearray()
+    body += b"\xfe\xfd"                    # client_version: DTLS 1.2
+    body += bytes(32)                       # random
+    body += b"\x00"                         # session id: empty
+    body += bytes([len(cookie)]) + cookie
+    body += len(PSK_SUITE).to_bytes(2, "big") + PSK_SUITE
+    body += b"\x01\x00"                     # null compression only
+    body += b"\x00\x00"                     # no extensions
+
+    handshake = bytearray()
+    handshake += b"\x01"                     # client_hello
+    handshake += len(body).to_bytes(3, "big")
+    handshake += message_seq.to_bytes(2, "big")
+    handshake += b"\x00\x00\x00"             # fragment_offset
+    handshake += len(body).to_bytes(3, "big")  # fragment_length
+    handshake += body
+
+    record = bytearray()
+    record += b"\x16"                        # handshake
+    record += b"\xfe\xfd"
+    record += b"\x00\x00"                    # epoch
+    record += message_seq.to_bytes(6, "big")
+    record += len(handshake).to_bytes(2, "big")
+    record += handshake
+    return bytes(record)
+
+
+def parse_hello_verify(datagram: bytes):
+    if len(datagram) < 25 or datagram[0] != 0x16:
+        return None
+    body = datagram[13:]
+    if not body or body[0] != 0x03:
+        return None
+    payload = body[12:]
+    if len(payload) < 3:
+        return None
+    return payload[3:3 + payload[2]]
+
+
+SOURCE = None       # optional local address to speak from, set by --from
+
+
+def _udp_socket(timeout):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(timeout)
+    if SOURCE:
+        # Bind before connect, so the datagram leaves from the interface being
+        # tested rather than whichever one the routing table prefers.
+        sock.bind((SOURCE, 0))
+    return sock
+
+
+def handshake_stage(host, port=STREAM_PORT, timeout=4.0):
+    """How far a bare handshake gets. The PSK identity is not sent until the
+    fifth message, so everything up to ServerHello is the same whatever the
+    key — which is what makes this useful without one."""
+    sock = _udp_socket(timeout)
+    try:
+        sock.connect((host, port))
+        sock.send(client_hello())
+        first = sock.recv(4096)
+        cookie = parse_hello_verify(first)
+        if cookie is None:
+            kind = f"0x{first[0]:02x}" if first else "nothing"
+            return "no-hello-verify", f"first reply was {kind}, not a HelloVerifyRequest"
+        sock.send(client_hello(cookie=cookie, message_seq=1))
+        second = sock.recv(4096)
+        if not second:
+            return "hello-verify-only", "cookie accepted, then nothing came back"
+        if second[0] == 0x15:
+            desc = second[14] if len(second) > 14 else "?"
+            return "alert", f"the bridge sent alert {desc} after our ClientHello"
+        if second[0] == 0x16 and len(second) > 13 and second[13] == 0x02:
+            return "server-hello", "the bridge accepted our ClientHello and answered ServerHello"
+        return "unexpected", f"reply was 0x{second[0]:02x}"
+    except TimeoutError:
+        return "silent", "nothing came back"
+    except ConnectionRefusedError:
+        return "refused", "the port is shut (ICMP port unreachable), so the path is fine"
+    except OSError as e:
+        return "error", f"could not send: {e}"
+    finally:
+        sock.close()
+
+
+def same_subnet(local_ip, bridge_ip, prefix=24):
+    try:
+        a = ipaddress.ip_network(f"{local_ip}/{prefix}", strict=False)
+        b = ipaddress.ip_network(f"{bridge_ip}/{prefix}", strict=False)
+    except ValueError:
+        return True
+    return a == b
 
 
 QUIET = False
@@ -179,11 +288,10 @@ def attempt(args, tls, quiet=False) -> dict:
     except Exception as e:
         result["error"] = f"{type(e).__name__}: {e}"
         result["seconds"] = round(time.monotonic() - handshake_started, 2)
-        from app.hue_stream import probe_handshake_stage
         with suppress(Exception):
             rest(args.bridge, args.api_key, f"/groups/{area_id}", "PUT",
                  {"stream": {"active": True}})
-        stage, _how = probe_handshake_stage(host, STREAM_PORT, timeout=args.timeout)
+        stage, _how = handshake_stage(host, STREAM_PORT, timeout=args.timeout)
         result["stage"] = stage
     finally:
         with suppress(Exception):
@@ -196,13 +304,18 @@ def attempt(args, tls, quiet=False) -> dict:
 def repeat_mode(args, tls) -> int:
     """Run the same attempt many times and report the shape of the failures."""
     host = split_host(args.bridge)
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from app.hue_stream import local_address_for, same_subnet_as_bridge
-    local = local_address_for(host)
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect((host, STREAM_PORT))
+        local = probe.getsockname()[0]
+    except OSError:
+        local = None
+    finally:
+        probe.close()
     print(f"\nProbing {args.bridge} as {args.api_key[:6]}..., "
           f"{args.repeat} attempts every {args.interval}s")
     print(f"we reach the bridge as {local}; same network: "
-          f"{same_subnet_as_bridge(local, host) if local else 'unknown'}\n")
+          f"{same_subnet(local, host) if local else 'unknown'}\n")
     print(f"  {'#':>3}  {'result':<8} {'secs':>5}  detail")
 
     results = []
@@ -248,6 +361,9 @@ def main() -> int:
     ap.add_argument("--config", default=None,
                     help="read all three from a config.json instead (e.g. /data/config.json)")
     ap.add_argument("--area", help="entertainment area id; default is the first found")
+    ap.add_argument("--from", dest="source", default=None, metavar="ADDRESS",
+                    help="bind to this local address, to test from an interface "
+                         "on the bridge's own network without moving anything")
     ap.add_argument("--timeout", type=float, default=8.0)
     ap.add_argument("--repeat", type=int, default=1,
                     help="run this many attempts and summarise — for a failure "
@@ -276,7 +392,10 @@ def main() -> int:
     if args.repeat > 1:
         return repeat_mode(args, tls)
 
-    print(f"\nProbing {args.bridge} as {args.api_key[:6]}...\n")
+    global SOURCE
+    SOURCE = args.source
+    print(f"\nProbing {args.bridge} as {args.api_key[:6]}..."
+          + (f" from {args.source}" if args.source else "") + "\n")
 
     # 1. REST reachable at all?
     try:
@@ -316,14 +435,12 @@ def main() -> int:
 
     # 3. Where would a reply come back to?
     host = split_host(args.bridge)
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    probe = _udp_socket(2.0)
     probe.connect((host, STREAM_PORT))
     local = probe.getsockname()
     probe.close()
     say(True, f"UDP would leave from {local[0]} — the bridge replies to this")
-    from app.hue_stream import same_subnet_as_bridge
-    on_net = same_subnet_as_bridge(local[0], host)
+    on_net = same_subnet(local[0], host)
     say(on_net, f"on the bridge's own network: {on_net}"
                 + ("" if on_net else f"  ({local[0]} vs {host})"))
 
@@ -334,7 +451,6 @@ def main() -> int:
     # follow-up question — "would this bridge have talked to anyone?" — and
     # asking it first would spend the claim on a connection we then abandon.
     ok = False
-    from app.hue_stream import probe_handshake_stage
 
     try:
         config = None if tls is None else tls.DTLSConfiguration(
@@ -343,8 +459,7 @@ def main() -> int:
         try:
             if config is None:
                 raise RuntimeError("python-mbedtls is not installed here")
-            raw = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            raw.settimeout(args.timeout)
+            raw = _udp_socket(args.timeout)
             sock = tls.ClientContext(config).wrap_socket(raw, server_hostname=None)
             started = time.monotonic()
             sock.connect((host, STREAM_PORT))
@@ -370,7 +485,7 @@ def main() -> int:
             with suppress(Exception):
                 rest(args.bridge, args.api_key, f"/groups/{area_id}", "PUT",
                      {"stream": {"active": True}})
-            stage, how = probe_handshake_stage(host, STREAM_PORT, timeout=args.timeout)
+            stage, how = handshake_stage(host, STREAM_PORT, timeout=args.timeout)
             reached = stage == "server-hello"
             say(reached, f"hand-rolled handshake: {stage} — {how}")
             print(VERDICT["library" if reached else "nothing"].format(

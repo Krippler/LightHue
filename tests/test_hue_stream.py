@@ -365,3 +365,26 @@ def test_an_unparseable_address_says_nothing_rather_than_crying_wolf():
 def test_the_local_address_is_reported_without_sending_anything(stub_bridge):
     from app.hue_stream import local_address_for
     assert local_address_for(stub_bridge["host"]) is not None
+
+
+def test_the_standalone_probe_sends_the_same_bytes_as_the_app():
+    """scripts/probe_stream.py carries its own copy of the protocol so it can be
+    run on any machine that can see the bridge, with no checkout and no
+    dependencies — the "does it work from the bridge's own network" test is
+    worthless if the tool cannot get there. Duplication earns a test: if the two
+    ever diverge, the probe stops describing what the app actually does."""
+    import importlib.util
+    from pathlib import Path
+
+    from app.hue_stream import _client_hello
+
+    path = Path(__file__).resolve().parent.parent / "scripts" / "probe_stream.py"
+    spec = importlib.util.spec_from_file_location("probe_stream", path)
+    probe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe)
+
+    assert probe.client_hello() == _client_hello()
+    assert probe.client_hello(b"\xde\xad", 1) == _client_hello(b"\xde\xad", 1)
+    assert probe.PSK_SUITE == b"\x00\xa8"
+    assert probe.same_subnet("192.168.10.37", "192.168.50.31") is False
+    assert probe.same_subnet("192.168.50.5", "192.168.50.31") is True

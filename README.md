@@ -322,6 +322,95 @@ frame holding every light in the area, so a frame costs the same whether it
 holds one bulb or ten, and the speed stops being divided — up to 25 Hz across
 the whole area at once, every light changing on the same frame.
 
+### If the bridge is on an isolated VLAN
+
+Keeping IoT gear off the main network is worth keeping, so it is worth being
+precise about what this actually asks for. A macvlan or ipvlan Docker network
+does **not** put the server on the bridge's VLAN. The host keeps its own
+address and gains no reachability from that network; what gets an address there
+is one container — a single process whose entire job is talking to the bridge.
+Its exposure is its own listening port, not the server's shares.
+
+Not zero risk: the NIC then carries tagged frames for that VLAN, and a
+container escape would land on it. But it is a long way from putting the server
+itself on the IoT network, and there are narrower options:
+
+* **A dedicated NIC.** If the server has a spare port, make it an access port on
+  the bridge's VLAN and hang the Docker network off that interface alone. The
+  main NIC never carries the tagged traffic at all.
+* **A separate small host.** A Pi or a VM on the bridge's VLAN running the
+  console, with nothing else on it. The server stays entirely out of it.
+* **A firewall rule for UDP 2100 only.** Cheap, but see below — the evidence
+  suggests it will not help.
+* **Do without streaming.** The per-light path works across the boundary and is
+  what everything below the entertainment section describes.
+
+A firewall rule is worth understanding before spending time on it. When the
+port is shut, the bridge's ICMP port-unreachable comes back across the boundary
+every time — so the firewall is already passing return traffic for that flow.
+That points at the bridge declining an off-subnet source rather than at
+anything dropping packets in between, and a rule cannot change the bridge's
+mind.
+
+**Before any of this, test it.** Move the bridge to the main network for ten
+minutes, point the console at its new address, and press Start. It is
+reversible, needs no VLAN or firewall changes, and answers the question outright.
+
+Moving a bridge does not mean pairing again. The key belongs to the bridge, not
+to its address, so under **Change bridge → Existing key** you can enter the new
+address and leave the key blank: the stored API key and streaming key are kept.
+The Hue app is also less affected than it looks — local discovery is mDNS and
+will not cross a VLAN, but a bridge linked to a Hue account stays controllable
+through Philips' cloud from anywhere.
+
+### Which side to move
+
+Move the console, not the bridge. The requirement is that the streaming client
+shares a network with the bridge, and it does not care which network that is —
+so the cheap change is the one that leaves the Hue setup alone.
+
+Bulbs are not a consideration either way: they talk Zigbee, have no IP address
+and no VLAN, and neither notice nor care which Ethernet port the bridge is on.
+The Hue app is the one that would notice. It finds the bridge by mDNS, which
+does not cross a VLAN boundary without a reflector, so moving the bridge away
+from the phones would hand them the problem the console has now.
+
+### Putting the console on the bridge's network
+
+If the bridge sits on its own VLAN — an IoT network, say — the console has to
+join it for streaming to work. Everything else routes across the boundary
+happily, so this only bites the one feature.
+
+On Unraid, the way to do that is a Docker network on the bridge's VLAN rather
+than the default bridge or host networking:
+
+```bash
+docker network create -d ipvlan \
+    --subnet=192.168.50.0/24 --gateway=192.168.50.1 \
+    -o parent=bond0.50 hue-vlan
+```
+
+then set the container's network to `hue-vlan`.
+
+The parent has to be a real interface *on that VLAN*. Check first:
+
+```bash
+ip -4 addr | grep 192.168.50.
+```
+
+Nothing there means the VLAN is not reaching the server, and no Docker network
+can conjure it: frames would still leave untagged on the parent's own VLAN,
+giving the container an address on a network it cannot actually reach. Trunk
+the VLAN to the server and add it under Settings → Network Settings first, so
+a `bond0.50` (or equivalent) exists to hang the Docker network off.
+
+Use `-d macvlan` instead of `ipvlan` if Unraid is not in ipvlan mode; a `vhost0`
+interface alongside `bond0` means it is.
+
+To test before rearranging anything: if the host does have an address on the
+bridge's network, `scripts/probe_stream.py --from <that-address>` speaks from it
+directly and answers the question without moving the container.
+
 **The client has to be on the bridge's own network.** This is the one part of
 the Hue API with that constraint, and it is easy to miss because nothing else
 has it: discovery, pairing, rooms and the ordinary per-light flicker all route
@@ -411,7 +500,18 @@ same claim, seconds apart. If the hand-rolled one gets through where the library
 does not, the bridge is willing and the client is the problem — which nothing
 else here can establish.
 
-It ships in the image, so it runs where the bridge is:
+It is one file with no dependencies beyond the standard library, so it can be
+copied anywhere that can see the bridge:
+
+```bash
+scp scripts/probe_stream.py someone@192.168.50.50:/tmp/
+python3 /tmp/probe_stream.py 192.168.50.31 <api-key> <client-key>
+```
+
+Working from a machine on the bridge's own network and failing from elsewhere
+is the single most useful thing to know, and that test is worthless if the tool
+needs a checkout to run. It also ships in the image, so it runs where the
+console does:
 
 ```bash
 docker exec -it lighthue python3 /srv/scripts/probe_stream.py --config /data/config.json

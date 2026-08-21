@@ -258,7 +258,11 @@ class _BridgeAddress(BaseModel):
 
 
 class BridgeSetRequest(_BridgeAddress):
-    api_key: str = Field(..., min_length=1, max_length=128)
+    # Optional, because a bridge that moved network keeps its credentials: the
+    # key lives on the bridge, not in its address. Leaving it out means "same
+    # bridge, new address" — otherwise changing a DHCP lease would mean digging
+    # a forty-character key out of the config file to type back in.
+    api_key: str | None = Field(None, min_length=1, max_length=128)
     client_key: str | None = Field(None, max_length=128)
 
 
@@ -520,9 +524,17 @@ async def pair_bridge(req: PairRequest):
 
 @app.post("/api/bridge/set")
 async def set_bridge(req: BridgeSetRequest):
-    # Only overwrite the streaming key when one was supplied: a manual save of
-    # the same credentials shouldn't silently cost the console its stream.
-    changes = {"bridge_ip": req.bridge_ip, "api_key": req.api_key}
+    stored = config_store.load()
+    if req.api_key is None and not stored.get("api_key"):
+        raise HTTPException(
+            400, "No API key stored yet, so one has to be supplied — pair with the "
+                 "bridge, or paste a key you already have.")
+    # Only overwrite what was actually supplied. A bridge that moved network
+    # still knows this console, so re-entering the address must not cost it the
+    # key, and a manual save must not silently cost it the streaming key either.
+    changes = {"bridge_ip": req.bridge_ip}
+    if req.api_key is not None:
+        changes["api_key"] = req.api_key
     if req.client_key is not None:
         changes["client_key"] = req.client_key or None
     config_store.update(**changes)
