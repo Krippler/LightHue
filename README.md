@@ -403,6 +403,18 @@ It ships in the image, so it runs where the bridge is:
 docker exec -it lighthue python3 /srv/scripts/probe_stream.py --config /data/config.json
 ```
 
+For a failure that only happens sometimes, `--repeat` runs the same attempt on
+a loop and reports the shape of it rather than one sample:
+
+```bash
+docker exec -it lighthue python3 /srv/scripts/probe_stream.py \
+    --config /data/config.json --repeat 20 --interval 20
+```
+
+Evenly spaced successes mean state carried from one attempt to the next.
+Scattered ones mean loss. Those want completely different fixes, and one
+attempt cannot tell them apart.
+
 `--config` reads the bridge address and both keys from the console's own config,
 which beats copying a 40-character key onto a command line and into shell
 history. Passing them explicitly still works.

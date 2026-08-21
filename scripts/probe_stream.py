@@ -88,8 +88,12 @@ EXPLAIN = {
 }
 
 
+QUIET = False
+
+
 def say(ok, text):
-    print(f"  {'ok  ' if ok else 'FAIL'}  {text}")
+    if not QUIET:
+        print(f"  {'ok  ' if ok else 'FAIL'}  {text}")
     return ok
 
 
@@ -115,6 +119,124 @@ def rest(bridge, key, path, method="GET", body=None):
         return json.loads(r.read())
 
 
+def attempt(args, tls, quiet=False) -> dict:
+    """One claim-and-handshake, returning what happened.
+
+    Split out so it can be run on a loop. An intermittent failure is not
+    something to reason about from one sample: what a run of them shows is
+    whether it is random, periodic, or tied to what came before, and those want
+    quite different fixes.
+    """
+    global QUIET
+    QUIET = quiet
+    result = {"ok": False, "stage": None, "seconds": None, "error": None,
+              "claimed": False, "area": None}
+    started = time.monotonic()
+    try:
+        groups = rest(args.bridge, args.api_key, "/groups")
+    except Exception as e:
+        result["error"] = f"REST failed: {e}"
+        return result
+
+    areas = {gid: g for gid, g in groups.items()
+             if (g.get("type") or "") == "Entertainment"}
+    if not areas:
+        result["error"] = "no entertainment areas"
+        return result
+    free = [gid for gid, g in areas.items() if not (g.get("stream") or {}).get("active")]
+    area_id = args.area or (free[0] if free else next(iter(areas)))
+    result["area"] = area_id
+    result["held_before"] = bool((areas[area_id].get("stream") or {}).get("active"))
+
+    try:
+        rest(args.bridge, args.api_key, f"/groups/{area_id}", "PUT",
+             {"stream": {"active": True}})
+        result["claimed"] = True
+    except Exception as e:
+        result["error"] = f"claim failed: {e}"
+        return result
+
+    host = split_host(args.bridge)
+    handshake_started = time.monotonic()
+    try:
+        if tls is None:
+            raise RuntimeError("python-mbedtls not installed")
+        config = tls.DTLSConfiguration(
+            pre_shared_key=(args.api_key, bytes.fromhex(args.client_key)),
+            ciphers=CIPHERS, validate_certificates=False)
+        raw = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        raw.settimeout(args.timeout)
+        sock = tls.ClientContext(config).wrap_socket(raw, server_hostname=None)
+        handshake_started = time.monotonic()
+        sock.connect((host, STREAM_PORT))
+        sock.do_handshake()
+        result["ok"] = True
+        result["seconds"] = round(time.monotonic() - handshake_started, 2)
+        sock.send(b"HueStream" + bytes([0x01, 0x00, 0x00, 0, 0, 0x00, 0x00]))
+        with suppress(OSError):
+            sock.shutdown(socket.SHUT_RDWR)
+        sock.close()
+    except Exception as e:
+        result["error"] = f"{type(e).__name__}: {e}"
+        result["seconds"] = round(time.monotonic() - handshake_started, 2)
+        from app.hue_stream import probe_handshake_stage
+        with suppress(Exception):
+            rest(args.bridge, args.api_key, f"/groups/{area_id}", "PUT",
+                 {"stream": {"active": True}})
+        stage, _how = probe_handshake_stage(host, STREAM_PORT, timeout=args.timeout)
+        result["stage"] = stage
+    finally:
+        with suppress(Exception):
+            rest(args.bridge, args.api_key, f"/groups/{area_id}", "PUT",
+                 {"stream": {"active": False}})
+    result["total"] = round(time.monotonic() - started, 2)
+    return result
+
+
+def repeat_mode(args, tls) -> int:
+    """Run the same attempt many times and report the shape of the failures."""
+    host = split_host(args.bridge)
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from app.hue_stream import local_address_for, same_subnet_as_bridge
+    local = local_address_for(host)
+    print(f"\nProbing {args.bridge} as {args.api_key[:6]}..., "
+          f"{args.repeat} attempts every {args.interval}s")
+    print(f"we reach the bridge as {local}; same network: "
+          f"{same_subnet_as_bridge(local, host) if local else 'unknown'}\n")
+    print(f"  {'#':>3}  {'result':<8} {'secs':>5}  detail")
+
+    results = []
+    for i in range(args.repeat):
+        r = attempt(args, tls, quiet=True)
+        results.append(r)
+        mark = "OK" if r["ok"] else "fail"
+        detail = "" if r["ok"] else f"{r.get('stage') or ''} {r.get('error') or ''}".strip()
+        secs = r.get("seconds")
+        print(f"  {i + 1:>3}  {mark:<8} {'-' if secs is None else f'{secs:.2f}':>5}  "
+              f"{detail[:78]}")
+        if i + 1 < args.repeat:
+            time.sleep(args.interval)
+
+    ok = [i for i, r in enumerate(results) if r["ok"]]
+    print(f"\n  {len(ok)}/{len(results)} succeeded")
+    if ok and len(ok) < len(results):
+        print(f"  successes at attempts: {[i + 1 for i in ok]}")
+        # The two shapes worth telling apart: every-other-time points at state
+        # left behind by the previous attempt, scattered points at the network.
+        gaps = [b - a for a, b in zip(ok, ok[1:], strict=False)]
+        if gaps and all(g == gaps[0] for g in gaps):
+            print(f"  evenly spaced, every {gaps[0]} attempts — that is state carried "
+                  f"from one attempt to the next, not chance")
+        else:
+            print("  not evenly spaced — looks like loss rather than a cycle")
+        stages = {}
+        for r in results:
+            if not r["ok"]:
+                stages[r.get("stage")] = stages.get(r.get("stage"), 0) + 1
+        print(f"  failure stages: {stages}")
+    return 0 if ok else 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     # All three live in the console's config, so reading them from there beats
@@ -127,6 +249,11 @@ def main() -> int:
                     help="read all three from a config.json instead (e.g. /data/config.json)")
     ap.add_argument("--area", help="entertainment area id; default is the first found")
     ap.add_argument("--timeout", type=float, default=8.0)
+    ap.add_argument("--repeat", type=int, default=1,
+                    help="run this many attempts and summarise — for a failure "
+                         "that only happens sometimes")
+    ap.add_argument("--interval", type=float, default=20.0,
+                    help="seconds between attempts in --repeat mode")
     args = ap.parse_args()
 
     if args.config:
@@ -139,14 +266,17 @@ def main() -> int:
     if missing:
         ap.error(f"missing {', '.join(missing)} — pass them, or use --config /data/config.json")
 
-    print(f"\nProbing {args.bridge} as {args.api_key[:6]}...\n")
-
     try:
         from mbedtls import tls
     except ImportError:
         tls = None
         say(False, "python-mbedtls is not installed here — the library handshake "
                    "will be skipped, the hand-rolled one still runs")
+
+    if args.repeat > 1:
+        return repeat_mode(args, tls)
+
+    print(f"\nProbing {args.bridge} as {args.api_key[:6]}...\n")
 
     # 1. REST reachable at all?
     try:
