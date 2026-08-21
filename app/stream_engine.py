@@ -28,6 +28,8 @@ from .patterns import level_for_char
 
 logger = logging.getLogger("game_hue_flicker.stream")
 
+LIVE_FIELDS = ("sequence", "pattern_id", "hz", "min_bri", "max_bri", "hue", "sat")
+
 # How often a frame goes on the wire. Also the ceiling on a pattern's speed:
 # you cannot show frames you do not send.
 FRAME_RATE_HZ = MAX_STREAM_HZ
@@ -105,10 +107,15 @@ class StreamEngine:
             if self._state is None:
                 return False
             for key, value in changes.items():
-                if value is not None and key in (
-                    "sequence", "pattern_id", "hz", "min_bri", "max_bri", "hue", "sat"
-                ):
-                    self._state[key] = value
+                if key not in LIVE_FIELDS:
+                    continue
+                # Colour is the one field where None is a request rather than an
+                # omission. A frame carries the colour every time, so a stream
+                # can genuinely go back to having none — unlike a bulb over
+                # REST, where there is no call that undoes a colour.
+                if value is None and key not in ("hue", "sat"):
+                    continue
+                self._state[key] = value
         return True
 
     # ---------- lifecycle ----------
