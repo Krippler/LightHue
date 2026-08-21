@@ -225,21 +225,24 @@ def test_a_listening_bridge_answers_a_bare_client_hello(stub_bridge):
     """A DTLS server replies to a first ClientHello with a HelloVerifyRequest,
     and it does that before looking at any credential. That is what makes this
     usable as a path test: it answers even when our key is wrong."""
-    from app.hue_stream import udp_reaches_bridge
-    reachable, how = udp_reaches_bridge(stub_bridge["host"], stub_bridge["port"], timeout=3.0)
-    assert reachable is True
+    from app.hue_stream import probe_stream_port
+    state, how = probe_stream_port(stub_bridge["host"], stub_bridge["port"], timeout=3.0)
+    assert state == "answered"
     assert "bytes" in how
 
 
-def test_nothing_listening_is_reported_as_unreachable():
-    from app.hue_stream import udp_reaches_bridge
+def test_a_shut_port_reads_as_refused_not_as_a_broken_path():
+    """ICMP port-unreachable is proof the path works: the datagram arrived and
+    the reply routed home. Calling that a network failure is what sent the last
+    round of debugging in the wrong direction."""
+    from app.hue_stream import probe_stream_port
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((usable_stub_host(), 0))
     port = sock.getsockname()[1]
     sock.close()                      # free the port so nothing is behind it
-    reachable, how = udp_reaches_bridge(usable_stub_host(), port, timeout=1.0)
-    assert reachable is False
-    assert how
+    state, how = probe_stream_port(usable_stub_host(), port, timeout=1.0)
+    assert state == "refused"
+    assert "path is fine" in how
 
 
 def test_the_client_hello_is_a_well_formed_dtls_record():

@@ -159,14 +159,23 @@ def _client_hello() -> bytes:
     return bytes(record)
 
 
-def udp_reaches_bridge(host: str, port: int = STREAM_PORT,
-                       timeout: float = 3.0) -> tuple[bool, str]:
-    """Does the bridge answer at all on the streaming port?
+def probe_stream_port(host: str, port: int = STREAM_PORT,
+                      timeout: float = 3.0) -> tuple[str, str]:
+    """Send a bare ClientHello and report, precisely, what came back.
 
-    Separates the two failures that look identical from the outside. Both a
-    blocked UDP path and a client key the bridge does not recognise end as a
-    handshake timeout, and the fix for one is nothing like the fix for the
-    other.
+    Three outcomes that a handshake timeout cannot tell apart:
+
+    * ``answered``  something spoke DTLS. The path carries UDP both ways and
+      the bridge is listening, so a handshake that still fails is about the
+      credentials, not the network.
+    * ``refused``   an ICMP port-unreachable came back. That is *also* proof
+      the path works — the datagram arrived and the reply routed home — but
+      nothing is bound to the port right now. The bridge only opens it while it
+      holds the area, so this is the expected answer when nothing is claimed
+      and a real finding when something is.
+    * ``silent``    nothing at all. Either the datagram never arrived or the
+      reply never came back: the only one of the three that is a network
+      problem.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(timeout)
@@ -175,15 +184,16 @@ def udp_reaches_bridge(host: str, port: int = STREAM_PORT,
         sock.send(_client_hello())
         data = sock.recv(2048)
         if not data:
-            return False, "the bridge closed without answering"
-        # 0x16 handshake (the HelloVerifyRequest we want), 0x15 an alert —
-        # either way something is listening and the path carries UDP.
+            return "silent", "the bridge closed without answering"
         kind = {0x16: "handshake", 0x15: "alert"}.get(data[0], f"0x{data[0]:02x}")
-        return True, f"answered with {len(data)} bytes ({kind})"
+        return "answered", f"answered with {len(data)} bytes ({kind})"
     except TimeoutError:
-        return False, "nothing came back"
+        return "silent", "nothing came back"
+    except ConnectionRefusedError:
+        # ICMP port-unreachable: the packet got there and the reply got home.
+        return "refused", "the port is shut (ICMP port unreachable), so the path is fine"
     except OSError as e:
-        return False, f"could not send: {e}"
+        return "error", f"could not send: {e}"
     finally:
         sock.close()
 

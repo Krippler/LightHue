@@ -29,7 +29,7 @@ from .hue_stream import (
     MAX_AREA_LIGHTS,
     MAX_STREAM_HZ,
     STREAM_PORT,
-    udp_reaches_bridge,
+    probe_stream_port,
 )
 from .patterns import (
     BUILTIN_BY_ID,
@@ -905,11 +905,15 @@ async def stream_diagnostics():
         return out
     try:
         host, _ = parse_bridge_address(cfg["bridge_ip"])
-        reachable, how = await asyncio.to_thread(udp_reaches_bridge, host, STREAM_PORT)
-        # The single most useful line here: whether the streaming port answers
-        # at all, which separates a blocked path from a credential the bridge
-        # will not accept. Both look like a timeout from anywhere else.
-        out["udp_to_stream_port"] = {"reachable": reachable, "detail": how}
+        state, how = await asyncio.to_thread(probe_stream_port, host, STREAM_PORT)
+        out["udp_to_stream_port"] = {
+            "state": state, "detail": how,
+            # Read this with the claim in mind: the bridge only binds the port
+            # while it holds an area, so "refused" here, with nothing claimed,
+            # is the healthy answer and says the path works.
+            "note": "probed with no area claimed" if not stream_engine.running else
+                    "probed while streaming",
+        }
     except Exception as e:
         out["udp_to_stream_port"] = {"reachable": None, "detail": str(e)}
     try:
@@ -1042,33 +1046,40 @@ async def start_stream(req: StreamStartRequest):
     if last_error is not None:
         e = last_error
         _note("handshake-failed", detail=str(e))
-        # Never leave the area held by a stream that isn't running.
-        await _release_area(req.area_id)
         detail = str(e)
         if "timed out" in detail or "timeout" in detail.lower():
-            # A blocked UDP path and a client key the bridge does not recognise
-            # both end as this same timeout, and the fixes have nothing in
-            # common. One probe tells them apart, so it is worth the two seconds
-            # rather than handing over a list of things it might be.
+            # Probed while the area is still claimed, because the bridge only
+            # binds the port while it holds one. Probing after the release —
+            # which is what this used to do — measures a port that has already
+            # closed and calls a healthy network broken.
             host, _ = parse_bridge_address(cfg["bridge_ip"])
-            reachable, how = await asyncio.to_thread(udp_reaches_bridge, host, STREAM_PORT)
-            _note("udp-probe", reachable=reachable, detail=how)
-            if reachable:
+            state, how = await asyncio.to_thread(probe_stream_port, host, STREAM_PORT)
+            _note("udp-probe-while-claimed", state=state, detail=how)
+            if state == "answered":
                 detail += (
-                    f" — but the bridge does answer on UDP {STREAM_PORT} ({how}), so the "
-                    "network path is fine and the streaming key is the problem. That key "
-                    "is only issued alongside the API key it belongs to, at pairing time, "
-                    "so a mismatched pair can only be fixed by pairing again: Change "
-                    "bridge, press the link button, Pair."
+                    f" — but the bridge does answer on UDP {STREAM_PORT} while it holds "
+                    f"the area ({how}), so the path is fine and the streaming key is the "
+                    "problem. That key is only issued alongside the API key it belongs "
+                    "to, at pairing time, so a mismatched pair can only be fixed by "
+                    "pairing again: Change bridge, press the link button, Pair."
+                )
+            elif state == "refused":
+                detail += (
+                    f" — and UDP {STREAM_PORT} is shut even while the bridge says it is "
+                    "holding the area. The path is fine (the refusal itself had to reach "
+                    "us), so this is the bridge never opening the port: it took the claim "
+                    "over the v1 API without arming the stream behind it. That is what "
+                    "newer firmware does when the area was made by the current Hue app."
                 )
             else:
                 detail += (
-                    f" — and nothing at all comes back on UDP {STREAM_PORT} ({how}), while "
-                    "HTTP to the same bridge works. That is the network path, not the key "
-                    "and not the area. Container networking is the usual cause: switch the "
-                    "container to Host networking. scripts/probe_stream.py run on the host "
-                    "and in the container says which side is dropping it."
+                    f" — and nothing comes back on UDP {STREAM_PORT} at all ({how}), while "
+                    "HTTP to the same bridge works. That is the network path: try Host "
+                    "networking, and compare scripts/probe_stream.py on the host against "
+                    "the container."
                 )
+        # Never leave the area held by a stream that isn't running.
+        await _release_area(req.area_id)
         raise HTTPException(502, detail) from e
 
     _note("streaming")
