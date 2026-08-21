@@ -175,3 +175,30 @@ def test_sending_before_connecting_is_an_error():
 
 def test_closing_an_unopened_client_is_harmless():
     DtlsPskClient("10.0.0.5", 2100, IDENTITY, KEY).close()
+
+
+def test_the_sample_first_flight_is_the_real_opening_datagram():
+    """It exists to be compared against a packet capture, so it has to be the
+    same bytes connect() sends — a plausible-looking sample would send whoever
+    reads the capture after a difference that was never on the wire."""
+    from app.dtls_psk import (
+        CLIENT_HELLO,
+        HANDSHAKE,
+        PSK_AES_128_GCM_SHA256,
+        first_flight,
+    )
+
+    flight = first_flight("some-application-key")
+    assert flight[0] == HANDSHAKE
+    assert flight[1:3] == b"\xfe\xfd"                  # DTLS 1.2
+    assert flight[3:5] == b"\x00\x00"                  # epoch 0
+    assert flight[5:11] == b"\x00" * 6                 # first record of the flight
+    body = flight[13:]
+    assert int.from_bytes(flight[11:13], "big") == len(body)
+    assert body[0] == CLIENT_HELLO
+    # One cipher suite and no extensions is the whole point of this client.
+    assert PSK_AES_128_GCM_SHA256 in body
+    assert body.endswith(b"\x01\x00\x00\x00")
+    # No cookie yet: the bridge answers the first ClientHello with one.
+    assert body[12 + 2 + 32] == 0                      # empty session id
+    assert body[12 + 2 + 32 + 1] == 0                  # empty cookie
