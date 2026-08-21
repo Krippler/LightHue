@@ -200,8 +200,12 @@ def test_stopping_closes_the_stream_and_clears_the_state(stub_bridge):
     engine.stop()
     assert engine.running is False
     assert engine.status()["area_id"] is None
-    sent = len(stub_bridge["frames"])
+    # Let anything already on the wire land before taking the baseline: a
+    # datagram sent a moment before stop can arrive after it, and counting that
+    # as "still sending" makes the test fail under load rather than on a bug.
     time.sleep(0.3)
+    sent = len(stub_bridge["frames"])
+    time.sleep(0.5)
     assert len(stub_bridge["frames"]) == sent, "still sending after stop"
 
 
@@ -211,11 +215,13 @@ def test_update_before_start_is_refused():
 
 def test_stopping_tells_the_caller_which_area_to_hand_back(stub_bridge):
     released = []
-    engine = StreamEngine(on_stopped=released.append)
+    engine = StreamEngine(on_stopped=lambda area, lights: released.append((area, lights)))
     run_area(engine, stub_bridge, ["1"], seconds=0.4)
     engine.stop()
     time.sleep(0.3)
-    assert released == ["6"]
+    # The lights come with it: they have to be put back where they were, and
+    # once the area is released there is nothing left to ask which they were.
+    assert released == [("6", ["1"])]
 
 
 def test_a_sender_that_dies_on_its_own_still_hands_the_area_back(stub_bridge, monkeypatch):
@@ -223,7 +229,7 @@ def test_a_sender_that_dies_on_its_own_still_hands_the_area_back(stub_bridge, mo
     gives up quietly would leave those lights answering to nothing — not this
     console, not the Hue app — until the bridge was restarted."""
     released = []
-    engine = StreamEngine(on_stopped=released.append)
+    engine = StreamEngine(on_stopped=lambda area, lights: released.append(area))
     import app.hue_stream as hue_stream
 
     def die(self, frame):

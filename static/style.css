@@ -414,6 +414,13 @@ input[type="color"] {
 #btn-reset-layout { display: none; }
 #layout-tools.show #btn-reset-layout { display: inline-flex; }
 
+.diagnostics {
+  margin-top: 12px; padding: 12px; max-height: 320px; overflow: auto;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
+  color: var(--muted); white-space: pre; user-select: text;
+}
+
 /* ---------- Light cards ---------- */
 
 .lights-grid {

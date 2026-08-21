@@ -1620,6 +1620,19 @@ streamColorCode.addEventListener('input', () => {
 
 $('#btn-stream-refresh').addEventListener('click', loadStreamAreas);
 
+$('#btn-stream-diagnostics').addEventListener('click', async () => {
+  const box = $('#stream-diagnostics');
+  if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
+  try {
+    // Verbatim, for pasting into a bug report: streaming fails against a
+    // bridge that whoever is fixing it cannot see.
+    box.textContent = JSON.stringify(await api('/api/stream/diagnostics'), null, 2);
+    box.classList.remove('hidden');
+  } catch (e) {
+    setStreamStatus(e.message, 'err');
+  }
+});
+
 $('#btn-stream-release').addEventListener('click', async () => {
   const areaId = streamArea.value || STREAM.area_id;
   if (!areaId) return;
