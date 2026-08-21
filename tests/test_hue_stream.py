@@ -217,3 +217,40 @@ def test_a_bad_bridge_address_is_refused_here_too():
     from app.hue_client import BridgeAddressError
     with pytest.raises(BridgeAddressError):
         DtlsStream("127.0.0.1", "user", "00" * 16)
+
+
+# ---------- telling a blocked path from a rejected key ----------
+
+def test_a_listening_bridge_answers_a_bare_client_hello(stub_bridge):
+    """A DTLS server replies to a first ClientHello with a HelloVerifyRequest,
+    and it does that before looking at any credential. That is what makes this
+    usable as a path test: it answers even when our key is wrong."""
+    from app.hue_stream import udp_reaches_bridge
+    reachable, how = udp_reaches_bridge(stub_bridge["host"], stub_bridge["port"], timeout=3.0)
+    assert reachable is True
+    assert "bytes" in how
+
+
+def test_nothing_listening_is_reported_as_unreachable():
+    from app.hue_stream import udp_reaches_bridge
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind((usable_stub_host(), 0))
+    port = sock.getsockname()[1]
+    sock.close()                      # free the port so nothing is behind it
+    reachable, how = udp_reaches_bridge(usable_stub_host(), port, timeout=1.0)
+    assert reachable is False
+    assert how
+
+
+def test_the_client_hello_is_a_well_formed_dtls_record():
+    from app.hue_stream import _client_hello
+    hello = _client_hello()
+    assert hello[0] == 0x16                       # handshake record
+    assert hello[1:3] == b"\xfe\xfd"              # DTLS 1.2
+    assert hello[3:5] == b"\x00\x00"              # epoch 0
+    body_len = int.from_bytes(hello[11:13], "big")
+    assert len(hello) == 13 + body_len            # length field agrees
+    assert hello[13] == 0x01                      # client_hello
+    # The suite the bridge insists on has to be offered, or it has no reason
+    # to carry on past the first exchange.
+    assert b"\x00\xa8" in hello

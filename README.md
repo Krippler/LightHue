@@ -351,9 +351,27 @@ ignoring the streaming port: the area is accepted and then the handshake times
 out. Starting a stream clears a claim this console left behind before making
 its own, so that usually sorts itself out. **Release area** clears one by hand,
 including a claim left by something else, which beats restarting the bridge.
-**Diagnostics** shows what the bridge says about each area and what the last
-start attempt actually did, step by step — worth pasting into a bug report,
-since "timed out" on its own says almost nothing.
+**Diagnostics** shows what the bridge says about each area, whether UDP reaches
+the streaming port, and what the last start attempt actually did, step by step.
+
+That UDP line matters more than it looks. A handshake that times out means the
+bridge said nothing, and there are two quite different reasons for that: the
+key is not one the bridge accepts, or UDP is not getting through. They are
+indistinguishable from the error alone. A bare DTLS ClientHello separates them,
+because a DTLS server answers one *before* it looks at any credential — so a
+reply means the path is fine and the key is wrong, and silence means the path
+is the problem whatever the key is. A failed start runs that probe and says
+which it found.
+
+`scripts/probe_stream.py` does the same check standalone, claiming an area and
+opening a socket with nothing else in the way:
+
+```bash
+python3 scripts/probe_stream.py 192.168.1.23 <api-key> <client-key>
+```
+
+Run it on the host and inside the container. Working on the host and failing in
+the container is container networking — switch to Host networking.
 
 Streaming has no transition setting: every frame is sent, so there is nothing
 to interpolate between.
