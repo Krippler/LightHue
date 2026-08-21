@@ -332,15 +332,27 @@ On Unraid, the way to do that is a Docker network on the bridge's VLAN rather
 than the default bridge or host networking:
 
 ```bash
-docker network create -d macvlan \
+docker network create -d ipvlan \
     --subnet=192.168.50.0/24 --gateway=192.168.50.1 \
-    -o parent=br0.50 hue-vlan
+    -o parent=bond0.50 hue-vlan
 ```
 
-then set the container's network to `hue-vlan`. The parent interface is
-whichever one carries that VLAN — `ip -d link show` names them. If the host has
-no interface on the bridge's VLAN at all, the VLAN is not trunked to it and
-that has to come first.
+then set the container's network to `hue-vlan`.
+
+The parent has to be a real interface *on that VLAN*. Check first:
+
+```bash
+ip -4 addr | grep 192.168.50.
+```
+
+Nothing there means the VLAN is not reaching the server, and no Docker network
+can conjure it: frames would still leave untagged on the parent's own VLAN,
+giving the container an address on a network it cannot actually reach. Trunk
+the VLAN to the server and add it under Settings → Network Settings first, so
+a `bond0.50` (or equivalent) exists to hang the Docker network off.
+
+Use `-d macvlan` instead of `ipvlan` if Unraid is not in ipvlan mode; a `vhost0`
+interface alongside `bond0` means it is.
 
 To test before rearranging anything: if the host does have an address on the
 bridge's network, `scripts/probe_stream.py --from <that-address>` speaks from it
