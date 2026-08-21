@@ -322,6 +322,40 @@ frame holding every light in the area, so a frame costs the same whether it
 holds one bulb or ten, and the speed stops being divided — up to 25 Hz across
 the whole area at once, every light changing on the same frame.
 
+### If the bridge is on an isolated VLAN
+
+Keeping IoT gear off the main network is worth keeping, so it is worth being
+precise about what this actually asks for. A macvlan or ipvlan Docker network
+does **not** put the server on the bridge's VLAN. The host keeps its own
+address and gains no reachability from that network; what gets an address there
+is one container — a single process whose entire job is talking to the bridge.
+Its exposure is its own listening port, not the server's shares.
+
+Not zero risk: the NIC then carries tagged frames for that VLAN, and a
+container escape would land on it. But it is a long way from putting the server
+itself on the IoT network, and there are narrower options:
+
+* **A dedicated NIC.** If the server has a spare port, make it an access port on
+  the bridge's VLAN and hang the Docker network off that interface alone. The
+  main NIC never carries the tagged traffic at all.
+* **A separate small host.** A Pi or a VM on the bridge's VLAN running the
+  console, with nothing else on it. The server stays entirely out of it.
+* **A firewall rule for UDP 2100 only.** Cheap, but see below — the evidence
+  suggests it will not help.
+* **Do without streaming.** The per-light path works across the boundary and is
+  what everything below the entertainment section describes.
+
+A firewall rule is worth understanding before spending time on it. When the
+port is shut, the bridge's ICMP port-unreachable comes back across the boundary
+every time — so the firewall is already passing return traffic for that flow.
+That points at the bridge declining an off-subnet source rather than at
+anything dropping packets in between, and a rule cannot change the bridge's
+mind.
+
+**Before any of this, test it.** Move the bridge to the main network for ten
+minutes, point the console at its new address, and press Start. It is
+reversible, needs no VLAN or firewall changes, and answers the question outright.
+
 ### Which side to move
 
 Move the console, not the bridge. The requirement is that the streaming client
