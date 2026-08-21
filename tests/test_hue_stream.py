@@ -257,3 +257,43 @@ def test_the_client_hello_is_a_well_formed_dtls_record():
     # The suite the bridge insists on has to be offered, or it has no reason
     # to carry on past the first exchange.
     assert b"\x00\xa8" in hello
+
+
+def test_the_staged_probe_reaches_server_hello_against_a_live_psk_server(stub_bridge):
+    """A ServerHello proves the bridge accepted the offer and would have gone on
+    to check a key — which is what separates "wrong key" from "wrong offer".
+    Stopping at the first reply cannot: the identity is not sent until the fifth
+    message of the flight."""
+    from app.hue_stream import probe_handshake_stage
+    stage, how = probe_handshake_stage(stub_bridge["host"], stub_bridge["port"], timeout=4.0)
+    assert stage == "server-hello", f"{stage}: {how}"
+
+
+def test_the_staged_probe_reports_a_shut_port_as_refused():
+    from app.hue_stream import probe_handshake_stage
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind((usable_stub_host(), 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    stage, _ = probe_handshake_stage(usable_stub_host(), port, timeout=1.0)
+    assert stage == "refused"
+
+
+def test_the_cookie_is_carried_into_the_second_client_hello():
+    from app.hue_stream import _client_hello
+    first = _client_hello()
+    assert first[13 + 12 + 2 + 32 + 1] == 0            # cookie length: empty
+    second = _client_hello(cookie=b"\xaa\xbb\xcc", message_seq=1)
+    offset = 13 + 12 + 2 + 32 + 1                       # past version, random, session id
+    assert second[offset] == 3
+    assert second[offset + 1:offset + 4] == b"\xaa\xbb\xcc"
+    # A second ClientHello has to advance the sequence, or the server treats it
+    # as a retransmission of the first and answers with the cookie again.
+    assert second[13 + 4:13 + 6] == (1).to_bytes(2, "big")
+
+
+def test_a_hello_verify_request_that_is_not_one_is_rejected():
+    from app.hue_stream import _parse_hello_verify
+    assert _parse_hello_verify(b"") is None
+    assert _parse_hello_verify(b"\x17" + bytes(40)) is None       # not a handshake
+    assert _parse_hello_verify(b"\x16" + bytes(12) + b"\x02" + bytes(30)) is None  # ServerHello

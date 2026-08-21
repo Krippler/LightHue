@@ -123,7 +123,7 @@ class StreamError(Exception):
 _PSK_SUITE = b"\x00\xa8"
 
 
-def _client_hello() -> bytes:
+def _client_hello(cookie: bytes = b"", message_seq: int = 0) -> bytes:
     """A bare DTLS 1.2 ClientHello, hand-rolled.
 
     Used to answer one question that the library cannot: did *anything* come
@@ -136,7 +136,7 @@ def _client_hello() -> bytes:
     body += b"\xfe\xfd"                    # client_version: DTLS 1.2
     body += bytes(32)                       # random; content is irrelevant here
     body += b"\x00"                         # session id: empty
-    body += b"\x00"                         # cookie: empty, which is what draws
+    body += bytes([len(cookie)]) + cookie   # empty first time; the server sends one
     body += len(_PSK_SUITE).to_bytes(2, "big") + _PSK_SUITE
     body += b"\x01\x00"                     # one compression method: null
     body += b"\x00\x00"                     # no extensions
@@ -144,7 +144,7 @@ def _client_hello() -> bytes:
     handshake = bytearray()
     handshake += b"\x01"                     # msg_type: client_hello
     handshake += len(body).to_bytes(3, "big")
-    handshake += b"\x00\x00"                 # message_seq
+    handshake += message_seq.to_bytes(2, "big")
     handshake += b"\x00\x00\x00"             # fragment_offset
     handshake += len(body).to_bytes(3, "big")  # fragment_length
     handshake += body
@@ -153,10 +153,75 @@ def _client_hello() -> bytes:
     record += b"\x16"                        # ContentType: handshake
     record += b"\xfe\xfd"                    # DTLS 1.2
     record += b"\x00\x00"                    # epoch
-    record += bytes(6)                       # sequence number
+    record += message_seq.to_bytes(6, "big")   # record sequence number
     record += len(handshake).to_bytes(2, "big")
     record += handshake
     return bytes(record)
+
+
+def _parse_hello_verify(datagram: bytes) -> bytes | None:
+    """Pull the cookie out of a HelloVerifyRequest, if that is what this is."""
+    if len(datagram) < 25 or datagram[0] != 0x16:      # not a handshake record
+        return None
+    body = datagram[13:]                                # past the record header
+    if not body or body[0] != 0x03:                     # 3 = hello_verify_request
+        return None
+    payload = body[12:]                                 # past the handshake header
+    if len(payload) < 3:
+        return None
+    length = payload[2]                                 # server_version, then cookie
+    return payload[3:3 + length]
+
+
+def probe_handshake_stage(host: str, port: int = STREAM_PORT,
+                          timeout: float = 4.0) -> tuple[str, str]:
+    """Carry a handshake as far as the credentials, without offering any.
+
+    The PSK identity is not sent until the ClientKeyExchange, which is the fifth
+    message. Everything before it is the same whether our key is right or
+    hopeless — so a probe that stops at the first reply cannot tell a bridge
+    that dislikes our key from one that dislikes our ClientHello.
+
+    Going one flight further splits them. A ServerHello means the bridge
+    accepted the offer and would have gone on to check a key, so a real
+    handshake failing after that is about the credentials. No ServerHello means
+    it rejected the ClientHello itself, and the credentials never came into it.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect((host, port))
+        sock.send(_client_hello())
+        first = sock.recv(4096)
+        cookie = _parse_hello_verify(first)
+        if cookie is None:
+            kind = f"0x{first[0]:02x}" if first else "nothing"
+            return "no-hello-verify", f"first reply was {kind}, not a HelloVerifyRequest"
+
+        sock.send(_client_hello(cookie=cookie, message_seq=1))
+        second = sock.recv(4096)
+        if not second:
+            return "hello-verify-only", "cookie accepted, then nothing came back"
+        if second[0] == 0x15:
+            # An alert here names the objection outright.
+            level, desc = (second[13], second[14]) if len(second) > 14 else (0, 0)
+            return "alert", f"the bridge sent alert {desc} (level {level}) after our ClientHello"
+        if second[0] != 0x16:
+            return "unexpected", f"reply was 0x{second[0]:02x}, not a handshake"
+        if len(second) > 13 and second[13] == 0x02:
+            return "server-hello", (
+                "the bridge accepted our ClientHello and answered ServerHello, so it "
+                "would have gone on to check a key"
+            )
+        return "handshake-other", f"handshake message 0x{second[13]:02x}"
+    except TimeoutError:
+        return "silent", "nothing came back"
+    except ConnectionRefusedError:
+        return "refused", "the port is shut (ICMP port unreachable), so the path is fine"
+    except OSError as e:
+        return "error", f"could not send: {e}"
+    finally:
+        sock.close()
 
 
 def probe_stream_port(host: str, port: int = STREAM_PORT,
