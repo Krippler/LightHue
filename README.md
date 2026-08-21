@@ -355,13 +355,19 @@ including a claim left by something else, which beats restarting the bridge.
 the streaming port, and what the last start attempt actually did, step by step.
 
 That UDP line matters more than it looks. A handshake that times out means the
-bridge said nothing, and there are two quite different reasons for that: the
-key is not one the bridge accepts, or UDP is not getting through. They are
-indistinguishable from the error alone. A bare DTLS ClientHello separates them,
-because a DTLS server answers one *before* it looks at any credential — so a
-reply means the path is fine and the key is wrong, and silence means the path
-is the problem whatever the key is. A failed start runs that probe and says
-which it found.
+bridge said nothing, and three quite different things cause that. A bare DTLS
+ClientHello, sent *while the area is claimed*, tells them apart:
+
+| what comes back | what it means |
+|---|---|
+| **answered** | The bridge is speaking DTLS. Path fine, so the streaming key is the problem — pair again to get a matching key and API key. |
+| **refused** (ICMP port unreachable) | The path is fine — the refusal itself had to reach you — but the port is shut. If the bridge claims to be holding the area and still refuses, it took the v1 claim without arming the stream behind it. |
+| **silent** | Nothing arrived, or nothing came back. The only one of the three that is a network problem. |
+
+Note the middle row: an ICMP refusal is *proof of reachability*, not evidence
+of blockage. It also means the probe has to run while the area is claimed — the
+bridge only binds the port while it holds one, so probing after the release
+measures a closed port and calls a healthy network broken.
 
 `scripts/probe_stream.py` does the same check standalone, claiming an area and
 opening a socket with nothing else in the way:

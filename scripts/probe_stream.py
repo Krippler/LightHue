@@ -145,10 +145,17 @@ def main() -> int:
             # separates them: a DTLS server answers one before it looks at any
             # credential, so a reply means the path is fine and the key is not.
             sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-            from app.hue_stream import udp_reaches_bridge
-            reachable, how = udp_reaches_bridge(host, STREAM_PORT)
-            say(reachable, f"bare DTLS ClientHello to UDP {STREAM_PORT}: {how}")
-            if reachable:
+            from app.hue_stream import probe_stream_port
+            state, how = probe_stream_port(host, STREAM_PORT)
+            say(state == "answered", f"bare ClientHello to UDP {STREAM_PORT}: {how}")
+            if state == "refused":
+                print("""
+  The port is shut even though the bridge says it is holding the area, and the
+  refusal itself proves the path works. So the bridge took the v1 claim without
+  arming the stream behind it — newer firmware does that when the area was made
+  by the current Hue app, which wants the v2 API to start it.
+""")
+            elif state == "answered":
                 print("""
   The path is fine — the bridge answers on the streaming port. So the client key
   is not one this bridge will accept. It is only issued alongside the api key it
