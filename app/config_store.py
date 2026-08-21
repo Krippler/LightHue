@@ -25,7 +25,13 @@ _DEFAULT = {
     # issues them together and the streaming handshake uses the api key as the
     # PSK identity and the client key as the PSK, so a pair from two different
     # pairings is two halves of two different credentials.
-    "keys_paired": False,
+    #
+    # Three-valued on purpose. None means nobody knows -- keys typed in by hand,
+    # or a console configured before this was tracked -- and that is not the
+    # same claim as False, which is only set where the split is known to have
+    # happened. Collapsing the two would turn every older config into evidence
+    # of a fault it may not have.
+    "keys_paired": None,
     "custom_patterns": {},   # id -> {id, name, sequence}
     "groups": {},            # id -> {id, name, light_ids}
     "snapshots": {},         # light_id -> bulb state captured before flickering

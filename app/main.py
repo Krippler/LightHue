@@ -552,12 +552,15 @@ async def set_bridge(req: BridgeSetRequest):
     # other, which costs a re-pair and says so.
     replacing = "api_key" in changes and changes["api_key"] != stored.get("api_key")
     if replacing and "client_key" not in changes:
+        # Known split: the client key that was there belonged to the key being
+        # replaced, so it is gone, and we can say why.
         changes["client_key"] = None
-    changes["keys_paired"] = bool(
-        changes.get("client_key", stored.get("client_key"))
-        and not replacing
-        and stored.get("keys_paired")
-    )
+        changes["keys_paired"] = False
+    elif "api_key" in changes or "client_key" in changes:
+        # Typed in by hand. They may well be a matched set copied from
+        # somewhere, so this is not evidence of a fault — only of nobody having
+        # watched the bridge issue them.
+        changes["keys_paired"] = None
     config_store.update(**changes)
     return {"ok": True, "can_stream": bool(changes.get("client_key",
                                                        stored.get("client_key")))}
@@ -866,6 +869,19 @@ def _note_local_address(cfg) -> str | None:
     return _last_local_address
 
 
+def _pairing_provenance(cfg: dict) -> str:
+    """Whether the two streaming credentials are known to belong together.
+
+    Deliberately not a boolean. "unknown" is the honest answer for keys typed in
+    by hand or stored before this was tracked, and reporting those as "no" would
+    make every older console look like it had a fault to chase.
+    """
+    paired = cfg.get("keys_paired")
+    if paired is None:
+        return "unknown"
+    return "yes" if paired else "no"
+
+
 def _arm_looked_real() -> bool:
     """Did the last arm end with the bridge itself reporting the area as up?
 
@@ -1081,7 +1097,7 @@ async def stream_diagnostics():
         # The handshake offers the api key as its PSK identity and the client
         # key as the PSK. Two halves of two pairings is a credential the bridge
         # has no reason to answer, and nothing else here would show it.
-        "keys_from_same_pairing": bool(cfg.get("keys_paired")),
+        "keys_from_same_pairing": _pairing_provenance(cfg),
         "engine": stream_engine.status(),
         "last_attempt": _last_attempt or None,
         "stream_port": STREAM_PORT,
@@ -1336,6 +1352,19 @@ async def start_stream(req: StreamStartRequest):
                         "the per-light flicker all work across the hop and only the "
                         "stream does not. Run the console on the bridge's subnet, or "
                         "move the bridge."
+                    )
+                elif _pairing_provenance(cfg) != "yes":
+                    detail += (
+                        " Everything the console can see is in order, so the next "
+                        "thing to rule out is the credential itself: the handshake "
+                        "offers the API key as its identity and the streaming key as "
+                        "the secret, and this console cannot show that the two were "
+                        "issued together. Press the bridge's link button and pair "
+                        "again — that takes a minute and either fixes this or removes "
+                        "it from the list. If it changes nothing, the capture below "
+                        "is the next step."
+                        f" Run `tcpdump -ni any -vv 'udp port {STREAM_PORT} or icmp'` "
+                        "on the host and press Start again."
                     )
                 elif not _arm_looked_real():
                     detail += (
