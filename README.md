@@ -358,11 +358,17 @@ That UDP line matters more than it looks. A handshake that times out means the
 bridge said nothing, and three quite different things cause that. A bare DTLS
 ClientHello, sent *while the area is claimed*, tells them apart:
 
-| what comes back | what it means |
+| how far it gets | what it means |
 |---|---|
-| **answered** | The bridge is speaking DTLS. Path fine, so the streaming key is the problem — pair again to get a matching key and API key. |
-| **refused** (ICMP port unreachable) | The path is fine — the refusal itself had to reach you — but the port is shut. If the bridge claims to be holding the area and still refuses, it took the v1 claim without arming the stream behind it. |
-| **silent** | Nothing arrived, or nothing came back. The only one of the three that is a network problem. |
+| **server-hello** | The bridge accepted the offer and would have gone on to check a key. Path fine, port open — so the streaming key is the problem. Pair again for a matching key and API key. |
+| **hello-verify-only** / **alert** | It answers but rejects our ClientHello. That is the offer, not the key: the key is not sent until several messages later. |
+| **refused** (ICMP port unreachable) | The path is fine — the refusal itself had to reach you — but the port is shut. A bridge that says it holds the area and still refuses took the v1 claim without arming the stream behind it. |
+| **silent** | Nothing arrived, or nothing came back. The only one that is a network problem. |
+
+The probe has to go as far as ServerHello because the PSK identity is not sent
+until the fifth message of the handshake. Everything before that is identical
+whether the key is right or hopeless, so a probe that stops at the first reply
+cannot tell a rejected key from a rejected offer.
 
 Note the middle row: an ICMP refusal is *proof of reachability*, not evidence
 of blockage. It also means the probe has to run while the area is claimed — the

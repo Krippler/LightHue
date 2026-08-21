@@ -29,6 +29,7 @@ from .hue_stream import (
     MAX_AREA_LIGHTS,
     MAX_STREAM_HZ,
     STREAM_PORT,
+    probe_handshake_stage,
     probe_stream_port,
 )
 from .patterns import (
@@ -1053,23 +1054,35 @@ async def start_stream(req: StreamStartRequest):
             # which is what this used to do — measures a port that has already
             # closed and calls a healthy network broken.
             host, _ = parse_bridge_address(cfg["bridge_ip"])
-            state, how = await asyncio.to_thread(probe_stream_port, host, STREAM_PORT)
-            _note("udp-probe-while-claimed", state=state, detail=how)
-            if state == "answered":
+            # Carried as far as the credentials, while the area is still
+            # claimed. Stopping at the first reply could not tell a bridge that
+            # rejects our key from one that rejects our ClientHello — the
+            # identity is not sent until the fifth message of the flight.
+            stage, how = await asyncio.to_thread(probe_handshake_stage, host, STREAM_PORT)
+            _note("handshake-stage-while-claimed", stage=stage, detail=how)
+            if stage == "server-hello":
                 detail += (
-                    f" — but the bridge does answer on UDP {STREAM_PORT} while it holds "
-                    f"the area ({how}), so the path is fine and the streaming key is the "
-                    "problem. That key is only issued alongside the API key it belongs "
-                    "to, at pairing time, so a mismatched pair can only be fixed by "
-                    "pairing again: Change bridge, press the link button, Pair."
+                    f" — but a bare handshake to UDP {STREAM_PORT} gets all the way to "
+                    "ServerHello while the bridge holds the area. So the path is fine, "
+                    "the port is open, and the bridge accepts our offer: what it will not "
+                    "accept is the streaming key. That key is only issued alongside the "
+                    "API key it belongs to, at pairing time, so a mismatched pair can only "
+                    "be fixed by pairing again — Change bridge, press the link button, Pair."
                 )
-            elif state == "refused":
+            elif stage in ("hello-verify-only", "alert", "no-hello-verify", "unexpected",
+                           "handshake-other"):
+                detail += (
+                    f" — the bridge is listening on UDP {STREAM_PORT} and answers, but "
+                    f"will not get past our ClientHello ({how}). That is the bridge "
+                    "objecting to the offer itself rather than to the key, which usually "
+                    "means its firmware wants the v2 entertainment API to start the "
+                    "stream."
+                )
+            elif stage == "refused":
                 detail += (
                     f" — and UDP {STREAM_PORT} is shut even while the bridge says it is "
-                    "holding the area. The path is fine (the refusal itself had to reach "
-                    "us), so this is the bridge never opening the port: it took the claim "
-                    "over the v1 API without arming the stream behind it. That is what "
-                    "newer firmware does when the area was made by the current Hue app."
+                    "holding the area. The path is fine (the refusal had to reach us), so "
+                    "the bridge took the v1 claim without arming the stream behind it."
                 )
             else:
                 detail += (

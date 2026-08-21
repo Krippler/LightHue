@@ -32,6 +32,38 @@ STREAM_PORT = 2100
 CIPHERS = ("TLS-PSK-WITH-AES-128-GCM-SHA256",)
 
 
+EXPLAIN = {
+    "server-hello": """
+  The bridge answered ServerHello, so it accepts our offer and would have gone
+  on to check a key. The path is fine and the port is open: what it will not
+  accept is this client key. A client key is only issued alongside the api key
+  it belongs to, so pair again and use both new values together.
+""",
+    "refused": """
+  The port is shut even though the bridge says it is holding the area, and the
+  refusal itself proves the path works. So the bridge took the v1 claim without
+  arming the stream behind it.
+""",
+    "hello-verify-only": """
+  The bridge sent its cookie and then went quiet, so it is rejecting our
+  ClientHello rather than our key — the key is never offered this early. That
+  usually means firmware that wants the v2 entertainment API to start a stream.
+""",
+    "alert": """
+  The bridge rejected our ClientHello outright ({how}). That is the offer, not
+  the key: the key is not sent until several messages later.
+""",
+    "silent": """
+  Nothing comes back on UDP {port} ({how}), while HTTP to the same bridge works.
+  That is the network path: UDP is not getting there, or the reply is not
+  finding its way back to {local}.
+
+  Run this on the host as well. Working there and failing here means container
+  networking; switch the container to Host networking.
+""",
+}
+
+
 def say(ok, text):
     print(f"  {'ok  ' if ok else 'FAIL'}  {text}")
     return ok
@@ -141,35 +173,16 @@ def main() -> int:
         kind = type(e).__name__
         say(False, f"DTLS handshake failed after {args.timeout:.0f}s: {kind}: {e}")
         if "timed out" in str(e) or kind in ("timeout", "TimeoutError"):
-            # A wrong key and a blocked path both end here. A bare ClientHello
-            # separates them: a DTLS server answers one before it looks at any
-            # credential, so a reply means the path is fine and the key is not.
+            # A wrong key, a bridge that dislikes our offer, and a blocked path
+            # all end as this same timeout. Carrying a bare handshake as far as
+            # ServerHello splits them: the identity is not sent until the fifth
+            # message, so everything up to there is identical whatever the key.
             sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-            from app.hue_stream import probe_stream_port
-            state, how = probe_stream_port(host, STREAM_PORT)
-            say(state == "answered", f"bare ClientHello to UDP {STREAM_PORT}: {how}")
-            if state == "refused":
-                print("""
-  The port is shut even though the bridge says it is holding the area, and the
-  refusal itself proves the path works. So the bridge took the v1 claim without
-  arming the stream behind it — newer firmware does that when the area was made
-  by the current Hue app, which wants the v2 API to start it.
-""")
-            elif state == "answered":
-                print("""
-  The path is fine — the bridge answers on the streaming port. So the client key
-  is not one this bridge will accept. It is only issued alongside the api key it
-  belongs to, at pairing time, so pair again and use both new values together.
-""")
-            else:
-                print(f"""
-  Nothing comes back on UDP {STREAM_PORT}, while HTTP to the same bridge works.
-  That is the network path: UDP is not getting there, or the reply is not
-  finding its way back to {local[0]}.
-
-  Run this on the host as well. Working there and failing here means container
-  networking; switch the container to Host networking.
-""")
+            from app.hue_stream import probe_handshake_stage
+            stage, how = probe_handshake_stage(host, STREAM_PORT)
+            say(stage == "server-hello", f"bare handshake to UDP {STREAM_PORT}: {how}")
+            print(EXPLAIN.get(stage, EXPLAIN["silent"]).format(
+                port=STREAM_PORT, local=local[0], how=how))
         else:
             print("""
   The bridge answered and refused. That is the credentials: the client key has
