@@ -413,11 +413,6 @@ class UpdateRequest(BaseModel):
         return self
 
 
-class GroupRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=60)
-    light_ids: list[str] = Field(..., min_length=1)
-
-
 # ---------- Console password ----------
 
 @app.get("/api/auth")
@@ -1222,6 +1217,23 @@ async def create_stream_area(req: AreaRequest):
     return {"ok": True, "id": area_id, "name": req.name, "light_ids": wanted}
 
 
+class AreaRenameRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=32)
+
+
+@app.put("/api/stream/areas/{area_uuid}")
+async def rename_stream_area(area_uuid: str, req: AreaRenameRequest):
+    cfg = config_store.load()
+    if not cfg.get("bridge_ip") or not cfg.get("api_key"):
+        raise HTTPException(400, "Bridge not configured yet")
+    try:
+        v2 = HueV2Client(cfg["bridge_ip"], cfg["api_key"])
+        await v2.rename_entertainment_configuration(area_uuid, req.name)
+    except Exception as e:
+        raise HTTPException(502, bridge_error(e, "rename the entertainment area")) from e
+    return {"ok": True, "name": req.name}
+
+
 @app.delete("/api/stream/areas/{area_uuid}")
 async def delete_stream_area(area_uuid: str):
     """Remove an entertainment area from the bridge.
@@ -1696,40 +1708,6 @@ async def stop_stream():
         await _finish_stream(area_id, light_ids)
     _broadcast_status_soon()
     return {"ok": True, **status_payload()}
-
-
-@app.get("/api/groups")
-async def list_groups():
-    cfg = config_store.load()
-    return {"groups": list(cfg.get("groups", {}).values())}
-
-
-@app.post("/api/groups")
-async def create_group(req: GroupRequest):
-    gid = f"group_{uuid.uuid4().hex[:8]}"
-    cfg = config_store.load()
-    cfg["groups"][gid] = {"id": gid, "name": req.name.strip(), "light_ids": req.light_ids}
-    config_store.save(cfg)
-    return cfg["groups"][gid]
-
-
-@app.put("/api/groups/{group_id}")
-async def replace_group(group_id: str, req: GroupRequest):
-    cfg = config_store.load()
-    if group_id not in cfg["groups"]:
-        raise HTTPException(404, f"Unknown group_id: {group_id}")
-    cfg["groups"][group_id] = {"id": group_id, "name": req.name.strip(), "light_ids": req.light_ids}
-    config_store.save(cfg)
-    return cfg["groups"][group_id]
-
-
-@app.delete("/api/groups/{group_id}")
-async def delete_group(group_id: str):
-    cfg = config_store.load()
-    if cfg["groups"].pop(group_id, None) is None:
-        raise HTTPException(404, f"Unknown group_id: {group_id}")
-    config_store.save(cfg)
-    return {"ok": True}
 
 
 # ---------- Flicker control ----------

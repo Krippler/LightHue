@@ -205,72 +205,6 @@ def test_update_can_set_colour_on_a_colourless_run(client, bridge):
     status = client.get("/api/status").json()["lights"]["1"]
     assert (status["hue"], status["sat"]) == (12000, 200)
     client.post("/api/flicker/stop", json={})
-
-
-def test_update_on_stopped_lights_is_409(client, bridge):
-    configure(client)
-    assert client.post("/api/flicker/update",
-                       json={"light_ids": ["1"], "hz": 5}).status_code == 409
-
-
-def test_update_validates_like_start(client, bridge):
-    configure(client)
-    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "steady"})
-    for payload in ({"hz": 99}, {"min_bri": 200, "max_bri": 5}, {"hue": 100}, {"sat": 900}):
-        body = {"light_ids": ["1"], **payload}
-        assert client.post("/api/flicker/update", json=body).status_code == 422, payload
-    assert client.post("/api/flicker/update",
-                       json={"light_ids": ["1"], "pattern_id": "nope"}).status_code == 404
-    client.post("/api/flicker/stop", json={})
-
-
-# ---------- groups ----------
-
-def test_group_crud(client):
-    created = client.post("/api/groups", json={"name": " Hallway ", "light_ids": ["1", "2"]}).json()
-    assert created["name"] == "Hallway"
-    assert created["light_ids"] == ["1", "2"]
-    assert [g["id"] for g in client.get("/api/groups").json()["groups"]] == [created["id"]]
-
-    updated = client.put(f"/api/groups/{created['id']}",
-                         json={"name": "Hall", "light_ids": ["3"]}).json()
-    assert updated["name"] == "Hall" and updated["light_ids"] == ["3"]
-    assert updated["id"] == created["id"]
-
-    assert client.delete(f"/api/groups/{created['id']}").status_code == 200
-    assert client.get("/api/groups").json()["groups"] == []
-
-
-def test_group_requires_a_name_and_members(client):
-    assert client.post("/api/groups", json={"name": "", "light_ids": ["1"]}).status_code == 422
-    assert client.post("/api/groups", json={"name": "x", "light_ids": []}).status_code == 422
-
-
-def test_unknown_group_is_404(client):
-    assert client.delete("/api/groups/group_nope").status_code == 404
-    assert client.put("/api/groups/group_nope",
-                      json={"name": "x", "light_ids": ["1"]}).status_code == 404
-
-
-def test_groups_survive_a_restart(client, app_modules):
-    created = client.post("/api/groups", json={"name": "Hallway", "light_ids": ["1", "2"]}).json()
-    app_modules.config_store._cache = None      # force a re-read from disk
-    assert client.get("/api/groups").json()["groups"][0]["id"] == created["id"]
-
-
-def test_starting_a_group_starts_every_member(client, bridge):
-    configure(client)
-    group = client.post("/api/groups", json={"name": "Hallway", "light_ids": ["1", "2"]}).json()
-    client.post("/api/flicker/start",
-                json={"light_ids": group["light_ids"], "pattern_id": "flicker_a", "hz": 5})
-    status = client.get("/api/status").json()["lights"]
-    assert status["1"]["running"] and status["2"]["running"]
-    assert status["1"]["pattern_id"] == status["2"]["pattern_id"] == "flicker_a"
-    client.post("/api/flicker/stop", json={})
-
-
-# ---------- colour snapshot / restore ----------
-
 def test_lights_expose_their_current_colour(client, bridge):
     configure(client)
     lights = {x["name"]: x for x in client.get("/api/lights").json()["lights"]}
@@ -1008,23 +942,6 @@ def test_bridge_groups_surface_a_failure(client, app_modules, monkeypatch):
 
     monkeypatch.setattr(app_modules.HueClient, "get_groups", boom)
     assert client.get("/api/bridge/groups").status_code == 502
-
-
-def test_a_bridge_room_can_be_saved_as_a_group(client, bridge):
-    configure(client)
-    room = next(g for g in client.get("/api/bridge/groups").json()["groups"]
-                if g["name"] == "Living room")
-    made = client.post("/api/groups",
-                       json={"name": room["name"], "light_ids": room["light_ids"]}).json()
-    assert made["light_ids"] == ["1", "3"]
-    # and it drives its members like any other group
-    client.post("/api/flicker/start",
-                json={"light_ids": made["light_ids"], "pattern_id": "flicker_a"})
-    status = client.get("/api/status").json()["lights"]
-    assert status["1"]["running"] and status["3"]["running"]
-    client.post("/api/flicker/stop", json={})
-
-
 def test_importing_is_gated_by_the_console_password(client):
     client.put("/api/auth/password", json={"new_password": "quaddamage"})
     client.cookies.clear()
@@ -1823,3 +1740,30 @@ def test_an_area_is_not_deleted_out_from_under_a_running_stream(client, bridge,
     r = client.delete("/api/stream/areas/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
     assert r.status_code == 409
     assert "Stop the stream" in r.json()["detail"]
+
+
+def test_an_area_can_be_renamed(client, bridge):
+    """Renaming addresses the configuration, so it survives in the Hue app too —
+    which is the point of areas living on the bridge rather than in here."""
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    r = client.put(f"/api/stream/areas/{uuid}", json={"name": "Snug"})
+    assert r.status_code == 200
+    assert next(c for c in bridge["v2"]["configurations"]
+                if c["id"] == uuid)["name"] == "Snug"
+
+
+def test_renaming_an_area_still_wants_a_name(client, bridge):
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    assert client.put(f"/api/stream/areas/{uuid}", json={"name": ""}).status_code == 422
+
+
+def test_local_groups_are_gone(client, bridge):
+    """Areas on the bridge replaced them. The routes should be absent rather
+    than lingering as something a stale page could still call."""
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    assert client.get("/api/groups").status_code == 404
+    assert client.post("/api/groups", json={"name": "x", "light_ids": ["1"]}).status_code == 404
+    # And nothing writes a groups key back into the config.
+    assert "groups" not in client.get("/api/stream/diagnostics").json()

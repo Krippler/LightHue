@@ -28,17 +28,19 @@ anything else.
 
 ## Making an area
 
-Areas are created on the bridge, not in this console's config, so one made here
-appears in the Hue app and survives the container being replaced.
+The Entertainment Areas panel builds them: tick lights in Lights & Plugs, name
+the set, save. Areas are created on the bridge, not in this console's config, so
+one made here appears in the Hue app and survives the container being replaced,
+and renaming or deleting one here does the same there.
 
 `POST /clip/v2/resource/entertainment_configuration` takes a name, a
 configuration type, and a `service_locations` entry per light. Each entry
 references the light's **entertainment service** rather than the light itself —
 `GET /clip/v2/resource/entertainment` lists them, carrying `id_v1` to map back
 to a v1 light id and a `renderer` flag saying whether the light can be driven by
-a stream at all. That flag is the real difference between an area and a group:
-a plug or a white-only bulb has no service to contribute, and the bridge will
-refuse an area containing one.
+a stream at all. That flag is what limits which lights may join: a plug or a
+white-only bulb has no service to contribute, and the bridge will refuse an
+area containing one.
 
 Positions are required even though nothing here uses them — this app drives
 every light in an area from the same pattern, so where a bulb sits in the room

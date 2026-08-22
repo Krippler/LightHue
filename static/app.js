@@ -3,11 +3,12 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 let PATTERNS = { builtin: [], custom: [] };
 let LIGHTS = [];
-let GROUPS = [];
+let AREAS = [];        // entertainment areas on the bridge
+let canStream = false; // whether pairing left us a streaming key
 let STATUS = {}; // light_id -> settings from server
 let cardEls = {}; // card key -> DOM element
 let cardEntities = {}; // card key -> { kind, id, name, lightIds }
-let selected = new Set(); // light ids ticked for a new group
+let selected = new Set(); // light ids ticked for a new area
 let SNAPSHOTS = {}; // light_id -> pre-flicker bulb state the server can restore
 
 const setupPanel = $('#setup-panel');
@@ -136,20 +137,18 @@ $('#btn-stop-all').addEventListener('click', async () => {
   await api('/api/flicker/stop', { method: 'POST', body: JSON.stringify({}) });
 });
 
-// ---------- Lights, groups + patterns ----------
+// ---------- Lights, areas + patterns ----------
 
 async function loadPatternsAndLights() {
-  const [patterns, statusRes, groupsRes] = await Promise.all([
+  const [patterns, statusRes] = await Promise.all([
     api('/api/patterns'),
     api('/api/status'),
-    api('/api/groups'),
   ]);
   PATTERNS = patterns;
   STATUS = statusRes.lights;
   SNAPSHOTS = statusRes.snapshots || {};
   STREAM = statusRes.stream || { running: false };
   noteServerClock(statusRes.now);
-  GROUPS = groupsRes.groups;
 
   // Only the light list actually needs the bridge. If it's unreachable, say so
   // and keep the rest of the console usable rather than failing everything.
@@ -260,23 +259,14 @@ function framingFor(patternId) {
   return framing;
 }
 
-// A card drives one light or a whole group; everything below treats them the
-// same way, keyed by "light:<id>" / "group:<id>".
+// Cards drive one light each. Areas are not cards of this kind: the bridge
+// streams to an area as a unit, so it is driven from the stream panel rather
+// than by sending its lights commands one at a time.
 function lightEntity(light) {
   return { kind: 'light', id: light.id, key: `light:${light.id}`, name: light.name,
            lightIds: [light.id], light };
 }
 
-function groupEntity(group) {
-  const names = group.light_ids
-    .map(id => (LIGHTS.find(l => l.id === id) || {}).name)
-    .filter(Boolean);
-  return { kind: 'group', id: group.id, key: `group:${group.id}`, name: group.name,
-           lightIds: group.light_ids, memberNames: names, group };
-}
-
-// A group counts as running only when every member is; anything in between is
-// reported so one stuck light doesn't read as the whole group flickering.
 function entityState(entity) {
   const states = entity.lightIds.map(id => STATUS[id]).filter(Boolean);
   const running = states.filter(s => s.running);
@@ -305,14 +295,11 @@ function hasSnapshot(entity) {
 }
 
 function renderGrid() {
-  const groupGrid = $('#groups-grid');
   const lightGrid = $('#lights-grid');
-  groupGrid.innerHTML = '';
   lightGrid.innerHTML = '';
   cardEls = {};
   cardEntities = {};
 
-  GROUPS.map(groupEntity).forEach(e => groupGrid.appendChild(buildCard(e)));
   LIGHTS.map(lightEntity).forEach(e => lightGrid.appendChild(buildCard(e)));
 
   // An empty grid would otherwise be an unexplained gap in its panel.
@@ -336,50 +323,23 @@ function buildCard(entity) {
   const node = tpl.content.cloneNode(true);
   const card = node.querySelector('.light-card');
   card.dataset.cardKey = entity.key;
-  card.classList.toggle('group-card', entity.kind === 'group');
 
   node.querySelector('.light-name').textContent = entity.name;
 
   const dot = node.querySelector('.reachable-dot');
   const reachText = node.querySelector('.reachable-text');
-  const selectWrap = node.querySelector('.card-select');
-  const deleteBtn = node.querySelector('.btn-delete-group');
-
-  if (entity.kind === 'group') {
-    selectWrap.classList.add('hidden');
-    deleteBtn.classList.remove('hidden');
-    dot.classList.add('group-dot');
-    // Keep the header to one or two lines however many lights are in here.
-    const shown = entity.memberNames.slice(0, 3).join(', ');
-    const extra = entity.memberNames.length - 3;
-    reachText.textContent = entity.memberNames.length
-      ? `${entity.lightIds.length} lights · ${shown}${extra > 0 ? ` +${extra} more` : ''}`
-      : `${entity.lightIds.length} lights`;
-    deleteBtn.addEventListener('click', async () => {
-      try {
-        await api(`/api/groups/${encodeURIComponent(entity.id)}`, { method: 'DELETE' });
-        setGroupStatus(`Deleted "${entity.name}".`);
-        await loadPatternsAndLights();
-      } catch (e) {
-        setGroupStatus(e.message, 'err');
-      }
-    });
+  if (entity.light.reachable) {
+    reachText.textContent = 'reachable';
   } else {
-    deleteBtn.classList.add('hidden');
-    if (entity.light.reachable) {
-      reachText.textContent = 'reachable';
-    } else {
-      dot.classList.add('off');
-      reachText.textContent = 'unreachable';
-    }
-    const box = node.querySelector('.select-light');
-    box.checked = selected.has(entity.id);
-    box.addEventListener('change', () => {
-      if (box.checked) selected.add(entity.id); else selected.delete(entity.id);
-      renderSelection();
-    });
+    dot.classList.add('off');
+    reachText.textContent = 'unreachable';
   }
-
+  const box = node.querySelector('.select-light');
+  box.checked = selected.has(entity.id);
+  box.addEventListener('change', () => {
+    if (box.checked) selected.add(entity.id); else selected.delete(entity.id);
+    renderSelection();
+  });
   const select = node.querySelector('.pattern-select');
   fillPatternSelect(select);
   selectPattern(select, 'flicker_a');
@@ -564,10 +524,10 @@ function pushLive(entity) {
   }, 180);
 }
 
-// ---------- Group selection ----------
+// ---------- Area selection ----------
 
 function setGroupStatus(text, kind = '') {
-  const el = $('#group-status');
+  const el = $('#area-status');
   el.textContent = text;
   el.className = `status-line ${kind}`.trim();
 }
@@ -577,7 +537,7 @@ function renderSelection() {
   $('#selection-count').textContent = n
     ? `${n} light${n === 1 ? '' : 's'} selected`
     : 'No lights selected';
-  $('#btn-save-group').disabled = n === 0;
+  $('#btn-save-area').disabled = n === 0;
   $('#btn-clear-selection').disabled = n === 0;
 }
 
@@ -648,7 +608,7 @@ function renderBridgeGroups({ groups, seen = {}, total = 0 }) {
     // that has since gone, and driving an id that isn't there just burns
     // bridge budget until it gets written off.
     const usable = g.light_ids.filter(id => LIGHTS.some(l => l.id === id));
-    const already = GROUPS.some(existing =>
+    const already = AREAS.some(existing =>
       existing.name === g.name
       && [...existing.light_ids].sort().join() === [...usable].sort().join());
 
@@ -685,21 +645,19 @@ function renderBridgeGroups({ groups, seen = {}, total = 0 }) {
       const btn = document.createElement('button');
       btn.className = 'btn';
       btn.type = 'button';
-      btn.textContent = 'Add';
-      btn.addEventListener('click', async () => {
-        btn.disabled = true;
-        try {
-          await api('/api/groups', {
-            method: 'POST',
-            body: JSON.stringify({ name: g.name, light_ids: usable }),
-          });
-          setGroupStatus(`Added "${g.name}" from the bridge.`, 'ok');
-          await loadPatternsAndLights();
-          renderBridgeGroups({ groups, seen, total });
-        } catch (e) {
-          btn.disabled = false;
-          setGroupStatus(e.message, 'err');
-        }
+      btn.textContent = 'Use';
+      // Ticks the room's lights rather than creating the area outright. A room
+      // can hold lights that cannot join an area at all, and Save is where that
+      // gets reported — creating here would quietly hand back a shorter area.
+      btn.addEventListener('click', () => {
+        selected.clear();
+        usable.forEach(id => selected.add(id));
+        $$('.select-light').forEach(b => { b.checked = selected.has(b.value); });
+        $('#area-name').value = g.name;
+        renderSelection();
+        showBridgeGroups(false);
+        setGroupStatus(`Ticked the ${usable.length} light`
+          + `${usable.length === 1 ? '' : 's'} in "${g.name}". Save as area when ready.`, 'ok');
       });
       row.appendChild(btn);
     }
@@ -707,19 +665,25 @@ function renderBridgeGroups({ groups, seen = {}, total = 0 }) {
   });
 }
 
-$('#btn-save-group').addEventListener('click', async () => {
-  const name = $('#group-name').value.trim();
-  if (!name) return setGroupStatus('Give the group a name.', 'err');
+$('#btn-save-area').addEventListener('click', async () => {
+  const name = $('#area-name').value.trim();
+  if (!name) return setGroupStatus('Give the area a name.', 'err');
   if (!selected.size) return setGroupStatus('Tick at least one light first.', 'err');
+  setGroupStatus('Creating on the bridge…');
   try {
-    await api('/api/groups', {
+    const made = await api('/api/stream/areas', {
       method: 'POST',
       body: JSON.stringify({ name, light_ids: [...selected] }),
     });
-    $('#group-name').value = '';
-    setGroupStatus(`Saved "${name}".`, 'ok');
+    $('#area-name').value = '';
     selected.clear();
-    await loadPatternsAndLights();
+    $$('.select-light').forEach(b => { b.checked = false; });
+    renderSelection();
+    await loadStreamAreas();
+    // Pick what was just made: it is almost certainly what you want to drive.
+    const fresh = AREAS.find(a => a.uuid === made.id);
+    if (fresh) pickArea(fresh.id);
+    setGroupStatus(`Created "${name}" on the bridge.`, 'ok');
   } catch (e) {
     setGroupStatus(e.message, 'err');
   }
@@ -1500,9 +1464,8 @@ initCollapsibles();
 // light, which is why a seven-bulb room lands near 1 Hz each. Streaming sends
 // one frame carrying the whole area, so nothing is divided.
 let STREAM = { running: false };
-let streamAreas = [];
+let pickedAreaId = null;   // which area the stream panel will drive
 
-const streamArea = $('#stream-area');
 const streamPattern = $('#stream-pattern');
 const streamHz = $('#stream-hz');
 const streamMinBri = $('#stream-minbri');
@@ -1542,7 +1505,7 @@ function setStreamColor(hue, sat) {
 async function loadStreamAreas() {
   try {
     const body = await api('/api/stream/areas');
-    streamAreas = body.areas || [];
+    AREAS = body.areas || [];
     $('#stream-max-hz').textContent = body.max_stream_hz;
     streamHz.max = body.max_stream_hz;
     const warning = $('#stream-unavailable');
@@ -1556,151 +1519,138 @@ async function loadStreamAreas() {
     } else {
       warning.classList.add('hidden');
     }
-    streamArea.innerHTML = '';
-    if (!streamAreas.length) {
-      const o = document.createElement('option');
-      o.textContent = 'No entertainment areas on this bridge';
-      o.value = '';
-      streamArea.appendChild(o);
+    canStream = body.can_stream;
+    // Keep the pick if it still exists; otherwise fall back to the only area,
+    // since with one area there is nothing to choose.
+    if (!AREAS.some(a => a.id === pickedAreaId)) {
+      pickedAreaId = AREAS.length === 1 ? AREAS[0].id : null;
     }
-    streamAreas.forEach(a => {
-      const o = document.createElement('option');
-      o.value = a.id;
-      const n = a.light_ids.length;
-      o.textContent = `${a.name} (${n} light${n === 1 ? '' : 's'})`;
-      if (a.claimed_by_us) {
-        // Left behind by this console, so it is ours to take back rather than
-        // a conflict — Start clears it first.
-        o.textContent += ' — left claimed, will be taken back';
-      } else if (a.in_use_by_someone_else) {
-        o.textContent += ' — in use elsewhere';
-        o.disabled = true;
+    renderAreas();
+  } catch (e) {
+    setStreamStatus(e.message, 'err');
+  }
+}
+
+function pickedArea() {
+  return AREAS.find(a => a.id === pickedAreaId) || null;
+}
+
+function pickArea(id) {
+  pickedAreaId = id;
+  renderAreas();
+}
+
+// One card per area: what it holds, and the three things you can do to it.
+function renderAreas() {
+  const grid = $('#areas-grid');
+  grid.innerHTML = '';
+  if (!AREAS.length) {
+    grid.appendChild(emptyState(
+      'No entertainment areas yet. Tick some lights below and save one.'));
+  }
+  AREAS.forEach(a => grid.appendChild(buildAreaCard(a)));
+  renderPickedArea();
+}
+
+function buildAreaCard(area) {
+  const card = document.createElement('div');
+  card.className = 'light-card area-card';
+  card.classList.toggle('is-picked', area.id === pickedAreaId);
+
+  const head = document.createElement('div');
+  head.className = 'card-head';
+  const name = document.createElement('div');
+  name.className = 'light-name';
+  name.textContent = area.name;
+  head.appendChild(name);
+  card.appendChild(head);
+
+  const meta = document.createElement('div');
+  meta.className = 'reachable-text';
+  const names = area.light_ids
+    .map(id => (LIGHTS.find(l => l.id === id) || {}).name)
+    .filter(Boolean);
+  const shown = names.slice(0, 3).join(', ');
+  const extra = names.length - 3;
+  meta.textContent = `${area.light_ids.length} light`
+    + `${area.light_ids.length === 1 ? '' : 's'}`
+    + (names.length ? ` · ${shown}${extra > 0 ? ` +${extra} more` : ''}` : '');
+  card.appendChild(meta);
+
+  if (area.in_use_by_someone_else) {
+    const busy = document.createElement('div');
+    busy.className = 'status-line err';
+    busy.textContent = 'In use by another app — Hue Sync or a game.';
+    card.appendChild(busy);
+  }
+
+  const row = document.createElement('div');
+  row.className = 'action-row';
+
+  const pick = document.createElement('button');
+  pick.className = area.id === pickedAreaId ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm';
+  pick.type = 'button';
+  pick.textContent = area.id === pickedAreaId ? 'Picked for stream' : 'Use for stream';
+  pick.disabled = area.id === pickedAreaId;
+  pick.addEventListener('click', () => pickArea(area.id));
+  row.appendChild(pick);
+
+  // Rename and delete address the configuration itself, which older firmware
+  // does not expose — so they are absent rather than offered and then failing.
+  if (area.uuid) {
+    const rename = document.createElement('button');
+    rename.className = 'btn btn-ghost btn-sm';
+    rename.type = 'button';
+    rename.textContent = 'Rename';
+    rename.addEventListener('click', async () => {
+      const next = prompt(`Rename "${area.name}" to:`, area.name);
+      if (next === null) return;
+      const trimmed = next.trim();
+      if (!trimmed || trimmed === area.name) return;
+      try {
+        await api(`/api/stream/areas/${encodeURIComponent(area.uuid)}`, {
+          method: 'PUT', body: JSON.stringify({ name: trimmed }),
+        });
+        await loadStreamAreas();
+        setGroupStatus(`Renamed to "${trimmed}".`, 'ok');
+      } catch (e) {
+        setGroupStatus(e.message, 'err');
       }
-      streamArea.appendChild(o);
     });
-    $('#btn-stream-start').disabled = !body.can_stream || !streamAreas.length;
-    updateAreaDeleteButton();
-  } catch (e) {
-    setStreamStatus(e.message, 'err');
-  }
-}
+    row.appendChild(rename);
 
-// ---------- Building an entertainment area ----------
-
-function selectedArea() {
-  return streamAreas.find(a => a.id === streamArea.value);
-}
-
-// Deleting addresses the configuration itself, which older firmware does not
-// expose — so the button is hidden rather than offered and then failing.
-function updateAreaDeleteButton() {
-  const area = selectedArea();
-  $('#btn-area-delete').classList.toggle('hidden', !(area && area.uuid));
-}
-
-async function openAreaBuilder() {
-  const builder = $('#area-builder');
-  const status = $('#area-status');
-  status.textContent = '';
-  status.className = 'status-line';
-  $('#area-name').value = '';
-  const list = $('#area-candidates');
-  list.innerHTML = '<span class="hint">Loading lights…</span>';
-  builder.classList.remove('hidden');
-  try {
-    const body = await api('/api/stream/candidates');
-    $('#area-max').textContent = body.max_lights;
-    list.innerHTML = '';
-    if (!body.candidates.length) {
-      list.innerHTML = '<span class="hint">No light on this bridge can be in an '
-        + 'entertainment area. They have to be colour-capable.</span>';
-    }
-    body.candidates.forEach(c => {
-      const label = document.createElement('label');
-      label.className = 'field checkbox-field';
-      const box = document.createElement('input');
-      box.type = 'checkbox';
-      box.value = c.light_id;
-      box.className = 'area-pick';
-      const text = document.createElement('span');
-      text.textContent = c.name;
-      label.append(box, text);
-      list.appendChild(label);
+    const del = document.createElement('button');
+    del.className = 'btn btn-ghost btn-sm';
+    del.type = 'button';
+    del.textContent = 'Delete';
+    del.addEventListener('click', async () => {
+      if (!confirm(`Delete "${area.name}" from the bridge?\n\n`
+          + 'It disappears from the Hue app too, and anything else using it '
+          + 'stops being able to.')) return;
+      try {
+        await api(`/api/stream/areas/${encodeURIComponent(area.uuid)}`, { method: 'DELETE' });
+        await loadStreamAreas();
+        setGroupStatus(`Deleted "${area.name}".`, 'ok');
+      } catch (e) {
+        setGroupStatus(e.message, 'err');
+      }
     });
-    // Named rather than silently absent: a light missing from this list with no
-    // explanation reads as a bug in the list.
-    const excluded = $('#area-excluded');
-    excluded.textContent = body.excluded.length
-      ? `Cannot join an area: ${body.excluded.map(e => e.name).join(', ')} — `
-        + 'plugs and white-only bulbs have nothing for the bridge to stream to.'
-      : '';
-  } catch (e) {
-    list.innerHTML = '';
-    status.textContent = e.message;
-    status.className = 'status-line err';
+    row.appendChild(del);
   }
+
+  card.appendChild(row);
+  return card;
 }
 
-function closeAreaBuilder() {
-  $('#area-builder').classList.add('hidden');
+function renderPickedArea() {
+  const area = pickedArea();
+  const label = $('#stream-area-name');
+  label.textContent = area
+    ? `${area.name} (${area.light_ids.length} light${area.light_ids.length === 1 ? '' : 's'})`
+    : (AREAS.length ? 'No area picked — choose one above' : 'No areas yet');
+  label.classList.toggle('dim', !area);
+  $('#btn-stream-start').disabled = !canStream || !area || STREAM.running;
 }
-
-async function createArea() {
-  const status = $('#area-status');
-  const name = $('#area-name').value.trim();
-  const lightIds = [...document.querySelectorAll('.area-pick:checked')].map(b => b.value);
-  if (!name) {
-    status.textContent = 'Give the area a name.';
-    status.className = 'status-line err';
-    return;
-  }
-  if (!lightIds.length) {
-    status.textContent = 'Pick at least one light.';
-    status.className = 'status-line err';
-    return;
-  }
-  status.textContent = 'Creating…';
-  status.className = 'status-line';
-  try {
-    const made = await api('/api/stream/areas', {
-      method: 'POST',
-      body: JSON.stringify({ name, light_ids: lightIds }),
-    });
-    closeAreaBuilder();
-    await loadStreamAreas();
-    // Select what was just made, so Start is the obvious next thing.
-    const fresh = streamAreas.find(a => a.uuid === made.id);
-    if (fresh) {
-      streamArea.value = fresh.id;
-      updateAreaDeleteButton();
-    }
-    setStreamStatus(`Created "${made.name}".`, 'ok');
-  } catch (e) {
-    status.textContent = e.message;
-    status.className = 'status-line err';
-  }
-}
-
-async function deleteArea() {
-  const area = selectedArea();
-  if (!area || !area.uuid) return;
-  if (!confirm(`Delete "${area.name}" from the bridge?\n\n`
-      + 'It disappears from the Hue app too, and anything else using it stops '
-      + 'being able to.')) return;
-  try {
-    await api(`/api/stream/areas/${encodeURIComponent(area.uuid)}`, { method: 'DELETE' });
-    await loadStreamAreas();
-    setStreamStatus(`Deleted "${area.name}".`, 'ok');
-  } catch (e) {
-    setStreamStatus(e.message, 'err');
-  }
-}
-
-$('#btn-area-new').addEventListener('click', openAreaBuilder);
-$('#btn-area-cancel').addEventListener('click', closeAreaBuilder);
-$('#btn-area-create').addEventListener('click', createArea);
-$('#btn-area-delete').addEventListener('click', deleteArea);
-streamArea.addEventListener('change', updateAreaDeleteButton);
 
 function drawStreamWaveform() {
   drawWaveform('stream', sequenceFor(streamPattern.value), $('#stream-waveform'));
@@ -1793,7 +1743,7 @@ $('#btn-stream-diagnostics').addEventListener('click', async () => {
 });
 
 $('#btn-stream-release').addEventListener('click', async () => {
-  const areaId = streamArea.value || STREAM.area_id;
+  const areaId = pickedAreaId || STREAM.area_id;
   if (!areaId) return;
   try {
     await api('/api/stream/release', { method: 'POST', body: JSON.stringify({ area_id: areaId }) });
@@ -1805,13 +1755,13 @@ $('#btn-stream-release').addEventListener('click', async () => {
 });
 
 $('#btn-stream-start').addEventListener('click', async () => {
-  if (!streamArea.value) return;
+  if (!pickedAreaId) return;
   setStreamStatus('Opening the stream...');
   try {
     await api('/api/stream/start', {
       method: 'POST',
       body: JSON.stringify({
-        area_id: streamArea.value, pattern_id: streamPattern.value, ...streamSettings(),
+        area_id: pickedAreaId, pattern_id: streamPattern.value, ...streamSettings(),
       }),
     });
     setStreamStatus('Streaming.', 'ok');
@@ -1833,10 +1783,9 @@ function applyStreamStatus() {
   const running = !!STREAM.running;
   $('#btn-stream-start').classList.toggle('hidden', running);
   $('#btn-stream-stop').classList.toggle('hidden', !running);
-  streamArea.disabled = running;
   const state = $('#stream-state');
   if (running) {
-    const area = streamAreas.find(a => a.id === STREAM.area_id);
+    const area = AREAS.find(a => a.id === STREAM.area_id);
     const n = (STREAM.light_ids || []).length;
     state.textContent = `streaming ${area ? area.name : 'area'} · `
       + `${STREAM.effective_hz} Hz across ${n} light${n === 1 ? '' : 's'}`;
