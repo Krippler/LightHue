@@ -1337,6 +1337,58 @@ def test_each_client_gets_a_freshly_armed_area(client, bridge, app_modules,
     assert len(arms) == len(tried)
 
 
+def test_a_release_that_did_not_take_is_said_out_loud(client, bridge, app_modules,
+                                                     monkeypatch):
+    """An area the bridge keeps holding blocks the Hue app too, so silence here
+    costs the user their lights with nothing on screen explaining why."""
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    monkeypatch.setattr(app_modules.stream_engine, "start",
+                        lambda *a, **kw: (_ for _ in ()).throw(
+                            app_modules.StreamError("no route to the bridge")))
+
+    # A bridge that takes the release call and goes on streaming anyway.
+    original = app_modules.HueClient.set_stream
+
+    async def ignore_release(self, group_id, active):
+        if not active:
+            return [{"success": {}}]
+        return await original(self, group_id, active)
+
+    monkeypatch.setattr(app_modules.HueClient, "set_stream", ignore_release)
+    monkeypatch.setattr(app_modules, "_arm_v2", lambda *a, **kw: _none())
+
+    r = client.post("/api/stream/start", json=stream_body())
+    assert r.status_code == 502
+    assert "still holding area 6" in r.json()["detail"]
+    steps = client.get("/api/stream/diagnostics").json()["last_attempt"]["steps"]
+    assert any(s["step"] == "release-failed" for s in steps)
+
+
+async def _none():
+    return None
+
+
+def test_the_port_probe_note_reads_the_bridge_not_our_engine(client, bridge):
+    """An area stranded by a failed attempt is the case worth naming, and the
+    engine knows nothing about it — it is not running, which is the point."""
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+
+    # Area 4 is streaming, but to Hue Sync — working as intended, not a fault.
+    note = client.get("/api/stream/diagnostics").json()["udp_to_stream_port"]["note"]
+    assert "something else is streaming to area 4" in note
+    assert "stranded" not in note
+
+    # An area this console claimed and never released is the one worth naming.
+    bridge["groups"]["6"]["stream"] = {"active": True, "owner": "stub-key"}
+    note = client.get("/api/stream/diagnostics").json()["udp_to_stream_port"]["note"]
+    assert "this console is holding area 6" in note and "stranded" in note
+
+    bridge["groups"]["4"]["stream"] = {"active": False, "owner": None}
+    bridge["groups"]["6"]["stream"] = {"active": False, "owner": None}
+    assert "no area claimed" in client.get(
+        "/api/stream/diagnostics").json()["udp_to_stream_port"]["note"]
+
+
 def test_streaming_needs_a_console_paired_for_it(client, bridge):
     configure(client)                               # api key only, no client key
     r = client.post("/api/stream/start", json=stream_body())
