@@ -318,6 +318,7 @@ class SettingsRequest(BaseModel):
 
     max_commands_per_second: float | None = Field(None, ge=1.0, le=30.0)
     restore_on_stop: bool | None = None
+    stream_settle_ms: int | None = Field(None, ge=0, le=10000)
 
 
 class StartRequest(BaseModel):
@@ -1319,6 +1320,7 @@ async def start_stream(req: StreamStartRequest):
     # claim means the second speaks into a window the first has already spent,
     # and a retry against a stale claim is guaranteed to fail whatever it says.
     last_error = None
+    settle = config_store.get_settings()["stream_settle_ms"] / 1000
     for attempt, transport in enumerate(STREAM_TRANSPORTS):
         if attempt:
             try:
@@ -1327,6 +1329,14 @@ async def start_stream(req: StreamStartRequest):
             except Exception as e:
                 _note("re-claim-failed", detail=str(e))
                 break
+        # Let the bridge finish arming before speaking to it. The socket answers
+        # a cookie as soon as it is bound, which is well before the session
+        # behind it exists — handshaking into that gap gets a HelloVerifyRequest
+        # and then nothing, because there is nowhere yet to put the session.
+        # This wait used to happen by accident, in the polling the old claim did.
+        if settle:
+            await asyncio.sleep(settle)
+            _note("settled", seconds=round(settle, 2))
         try:
             stream_engine.start(
                 cfg["bridge_ip"], cfg["api_key"], cfg["client_key"],

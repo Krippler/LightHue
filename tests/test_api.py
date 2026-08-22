@@ -926,7 +926,23 @@ def test_an_empty_settings_body_changes_nothing(client):
     client.put("/api/settings", json={"max_commands_per_second": 7, "restore_on_stop": False})
     r = client.put("/api/settings", json={})
     assert r.status_code == 200
-    assert r.json() == {"max_commands_per_second": 7.0, "restore_on_stop": False}
+    assert r.json() == {"max_commands_per_second": 7.0, "restore_on_stop": False,
+                        "stream_settle_ms": 1500}
+
+
+def test_the_settle_delay_is_adjustable_and_can_be_turned_off(client):
+    """The right pause between arming an area and handshaking is a property of
+    one bridge on one network, so it is a setting rather than a constant."""
+    assert client.get("/api/settings").json()["stream_settle_ms"] == 1500
+    assert client.put("/api/settings", json={"stream_settle_ms": 0}).json()[
+        "stream_settle_ms"] == 0
+    assert client.put("/api/settings", json={"stream_settle_ms": 3000}).json()[
+        "stream_settle_ms"] == 3000
+    assert client.put("/api/settings", json={"stream_settle_ms": -1}).status_code == 422
+    assert client.put("/api/settings", json={"stream_settle_ms": 60000}).status_code == 422
+    # And it survives a change to something else.
+    client.put("/api/settings", json={"restore_on_stop": False})
+    assert client.get("/api/settings").json()["stream_settle_ms"] == 3000
 
 
 def test_settings_still_rejects_out_of_range_values(client):
