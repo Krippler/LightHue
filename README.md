@@ -145,13 +145,22 @@ each.
 frame holding the whole area, so the speed stops being divided — up to 25 Hz
 across every light at once, all changing together.
 
-To use it you need an **entertainment area** set up in the Hue app, and a
-pairing that included a streaming key. A console paired before this feature
-existed has to pair again; the panel tells you when that applies. Only one app
-can stream to an area at a time, so areas Hue Sync or a game has claimed are
-listed but greyed out.
+**New area…** in the Entertainment Stream panel builds one: name it, tick the
+lights, and it is created on the bridge — so it shows up in the Hue app too, and
+outlives this container. **Delete area** removes it again. You can equally make
+one in the Hue app; either way it lives on the bridge.
 
-Pick the area in the **Entertainment Stream** panel and press **Start stream**.
+Two limits, both the bridge's: an area holds at most **10 lights**, and only
+**colour-capable** ones. Plugs and white-only bulbs have no entertainment
+service for the bridge to stream to, so they are listed as excluded rather than
+silently missing. Groups still cover those.
+
+You also need a pairing that included a streaming key. A console paired before
+this feature existed has to pair again; the panel tells you when that applies.
+Only one app can stream to an area at a time, so areas Hue Sync or a game has
+claimed are listed but greyed out.
+
+Pick the area and press **Start stream**.
 LightHue hands the area back to the Hue app when you stop, and on the way out
 if the container is stopped mid-stream.
 

@@ -1579,10 +1579,128 @@ async function loadStreamAreas() {
       streamArea.appendChild(o);
     });
     $('#btn-stream-start').disabled = !body.can_stream || !streamAreas.length;
+    updateAreaDeleteButton();
   } catch (e) {
     setStreamStatus(e.message, 'err');
   }
 }
+
+// ---------- Building an entertainment area ----------
+
+function selectedArea() {
+  return streamAreas.find(a => a.id === streamArea.value);
+}
+
+// Deleting addresses the configuration itself, which older firmware does not
+// expose — so the button is hidden rather than offered and then failing.
+function updateAreaDeleteButton() {
+  const area = selectedArea();
+  $('#btn-area-delete').classList.toggle('hidden', !(area && area.uuid));
+}
+
+async function openAreaBuilder() {
+  const builder = $('#area-builder');
+  const status = $('#area-status');
+  status.textContent = '';
+  status.className = 'status-line';
+  $('#area-name').value = '';
+  const list = $('#area-candidates');
+  list.innerHTML = '<span class="hint">Loading lights…</span>';
+  builder.classList.remove('hidden');
+  try {
+    const body = await api('/api/stream/candidates');
+    $('#area-max').textContent = body.max_lights;
+    list.innerHTML = '';
+    if (!body.candidates.length) {
+      list.innerHTML = '<span class="hint">No light on this bridge can be in an '
+        + 'entertainment area. They have to be colour-capable.</span>';
+    }
+    body.candidates.forEach(c => {
+      const label = document.createElement('label');
+      label.className = 'field checkbox-field';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.value = c.light_id;
+      box.className = 'area-pick';
+      const text = document.createElement('span');
+      text.textContent = c.name;
+      label.append(box, text);
+      list.appendChild(label);
+    });
+    // Named rather than silently absent: a light missing from this list with no
+    // explanation reads as a bug in the list.
+    const excluded = $('#area-excluded');
+    excluded.textContent = body.excluded.length
+      ? `Cannot join an area: ${body.excluded.map(e => e.name).join(', ')} — `
+        + 'plugs and white-only bulbs have nothing for the bridge to stream to.'
+      : '';
+  } catch (e) {
+    list.innerHTML = '';
+    status.textContent = e.message;
+    status.className = 'status-line err';
+  }
+}
+
+function closeAreaBuilder() {
+  $('#area-builder').classList.add('hidden');
+}
+
+async function createArea() {
+  const status = $('#area-status');
+  const name = $('#area-name').value.trim();
+  const lightIds = [...document.querySelectorAll('.area-pick:checked')].map(b => b.value);
+  if (!name) {
+    status.textContent = 'Give the area a name.';
+    status.className = 'status-line err';
+    return;
+  }
+  if (!lightIds.length) {
+    status.textContent = 'Pick at least one light.';
+    status.className = 'status-line err';
+    return;
+  }
+  status.textContent = 'Creating…';
+  status.className = 'status-line';
+  try {
+    const made = await api('/api/stream/areas', {
+      method: 'POST',
+      body: JSON.stringify({ name, light_ids: lightIds }),
+    });
+    closeAreaBuilder();
+    await loadStreamAreas();
+    // Select what was just made, so Start is the obvious next thing.
+    const fresh = streamAreas.find(a => a.uuid === made.id);
+    if (fresh) {
+      streamArea.value = fresh.id;
+      updateAreaDeleteButton();
+    }
+    setStreamStatus(`Created "${made.name}".`, 'ok');
+  } catch (e) {
+    status.textContent = e.message;
+    status.className = 'status-line err';
+  }
+}
+
+async function deleteArea() {
+  const area = selectedArea();
+  if (!area || !area.uuid) return;
+  if (!confirm(`Delete "${area.name}" from the bridge?\n\n`
+      + 'It disappears from the Hue app too, and anything else using it stops '
+      + 'being able to.')) return;
+  try {
+    await api(`/api/stream/areas/${encodeURIComponent(area.uuid)}`, { method: 'DELETE' });
+    await loadStreamAreas();
+    setStreamStatus(`Deleted "${area.name}".`, 'ok');
+  } catch (e) {
+    setStreamStatus(e.message, 'err');
+  }
+}
+
+$('#btn-area-new').addEventListener('click', openAreaBuilder);
+$('#btn-area-cancel').addEventListener('click', closeAreaBuilder);
+$('#btn-area-create').addEventListener('click', createArea);
+$('#btn-area-delete').addEventListener('click', deleteArea);
+streamArea.addEventListener('change', updateAreaDeleteButton);
 
 function drawStreamWaveform() {
   drawWaveform('stream', sequenceFor(streamPattern.value), $('#stream-waveform'));

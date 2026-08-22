@@ -1738,3 +1738,88 @@ def test_diagnostics_names_the_bridge_and_its_firmware(client, bridge):
 def test_diagnostics_survives_a_bridge_that_will_not_describe_itself(client):
     """An unconfigured console still has to render its diagnostics page."""
     assert client.get("/api/stream/diagnostics").json()["bridge"] == {}
+
+
+# ---------- Creating entertainment areas ----------
+
+def test_candidates_separate_lights_that_can_stream_from_those_that_cannot(client, bridge):
+    """The difference between an area and a group is which lights may join it.
+
+    An area is built from each light's entertainment service, so a plug or a
+    white-only bulb has nothing to contribute. Both lists are returned: a light
+    that silently vanished from the picker would look like a bug in the picker.
+    """
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    body = client.get("/api/stream/candidates").json()
+
+    assert [c["light_id"] for c in body["candidates"]] == ["2", "1"]  # by name
+    assert {c["light_id"] for c in body["excluded"]} == {"3", "4"}
+    assert body["max_lights"] == 10
+    # The service id is what the create call needs, so it has to come back too.
+    assert {c["service_rid"] for c in body["candidates"]} == {"ent-1", "ent-2"}
+
+
+def test_an_area_can_be_created_on_the_bridge(client, bridge):
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    r = client.post("/api/stream/areas",
+                    json={"name": "Front room", "light_ids": ["1", "2"]})
+    assert r.status_code == 200
+    assert r.json()["name"] == "Front room"
+
+    created = bridge["v2"]["configurations"][-1]["created"]
+    assert created["metadata"]["name"] == "Front room"
+    assert [sl["service"]["rid"]
+            for sl in created["locations"]["service_locations"]] == ["ent-1", "ent-2"]
+    # The bridge insists on positions, and two lights stacked at the origin draw
+    # as one dot in the Hue app.
+    xs = [sl["positions"][0]["x"] for sl in created["locations"]["service_locations"]]
+    assert xs == [-0.8, 0.8]
+
+
+def test_creating_an_area_refuses_a_light_that_cannot_render(client, bridge):
+    """Named outright rather than dropped, so the user is not left wondering
+    why the area they built came back a light short."""
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    r = client.post("/api/stream/areas",
+                    json={"name": "Nope", "light_ids": ["1", "3"]})
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert "3" in detail and "colour-capable" in detail
+    assert not any(c.get("created") for c in bridge["v2"]["configurations"])
+
+
+def test_creating_an_area_refuses_a_repeated_light(client, bridge):
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    r = client.post("/api/stream/areas",
+                    json={"name": "Twice", "light_ids": ["1", "1"]})
+    assert r.status_code == 422
+    assert "more than once" in r.json()["detail"]
+
+
+def test_an_area_cannot_hold_more_than_the_bridge_allows(client, bridge):
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    r = client.post("/api/stream/areas",
+                    json={"name": "Too many", "light_ids": [str(i) for i in range(11)]})
+    assert r.status_code == 422
+
+
+def test_an_area_can_be_deleted_and_is_addressed_by_its_v2_id(client, bridge):
+    """The v1 group number is a compatibility view; the configuration itself is
+    what gets deleted, so the listing has to hand the UI that id."""
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    listed = client.get("/api/stream/areas").json()["areas"]
+    area = next(a for a in listed if a["id"] == "6")
+    assert area["uuid"] == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+    assert client.delete(f"/api/stream/areas/{area['uuid']}").status_code == 200
+    assert not [c for c in bridge["v2"]["configurations"] if c["id"] == area["uuid"]]
+
+
+def test_an_area_is_not_deleted_out_from_under_a_running_stream(client, bridge,
+                                                               app_modules, monkeypatch):
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    monkeypatch.setattr(type(app_modules.stream_engine), "running",
+                        property(lambda self: True))
+    r = client.delete("/api/stream/areas/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    assert r.status_code == 409
+    assert "Stop the stream" in r.json()["detail"]

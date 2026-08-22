@@ -26,6 +26,29 @@ The bridge does **not** need to be on the same subnet as the console. Streaming
 is UDP where the rest of the API is HTTP, and it routes across a boundary like
 anything else.
 
+## Making an area
+
+Areas are created on the bridge, not in this console's config, so one made here
+appears in the Hue app and survives the container being replaced.
+
+`POST /clip/v2/resource/entertainment_configuration` takes a name, a
+configuration type, and a `service_locations` entry per light. Each entry
+references the light's **entertainment service** rather than the light itself —
+`GET /clip/v2/resource/entertainment` lists them, carrying `id_v1` to map back
+to a v1 light id and a `renderer` flag saying whether the light can be driven by
+a stream at all. That flag is the real difference between an area and a group:
+a plug or a white-only bulb has no service to contribute, and the bridge will
+refuse an area containing one.
+
+Positions are required even though nothing here uses them — this app drives
+every light in an area from the same pattern, so where a bulb sits in the room
+does not change what it is sent. They are spread along a line rather than
+stacked at the origin, because a stack draws as a single dot in the Hue app and
+makes an area created here look broken next to one made there.
+
+Deleting addresses the configuration by its v2 id, not the v1 group number; the
+group number is a compatibility view of the same object and disappears with it.
+
 ## Handing the area back
 
 While an area is streaming the bridge ignores everything else for those lights,

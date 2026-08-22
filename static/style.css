@@ -1,4 +1,4 @@
-/* Game Hue Flicker console — panel/field/button conventions shared with Starr,
+/* LightHue console — panel/field/button conventions shared with Starr,
    in this app's own ember palette. */
 
 :root {
@@ -350,6 +350,20 @@ input[type="color"] {
 .custom-form .btn { white-space: nowrap; }
 .custom-seq-field { flex: 2 1 260px; }
 .custom-framing { margin-top: 14px; }
+
+/* The area builder sits inside the stream panel, so it is marked off rather
+   than left to blend into the controls it appears above. */
+.area-builder {
+  margin-bottom: 16px; padding: 14px;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 6px;
+}
+.area-builder-head { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.area-builder .field { max-width: 280px; }
+.area-candidates {
+  display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 12px 0 8px;
+}
+.area-candidates .checkbox-field { min-width: 0; }
+.area-builder .action-row { margin-top: 12px; }
 .custom-framing .field { flex: 1 1 150px; }
 
 .custom-color-row {

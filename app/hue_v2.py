@@ -79,6 +79,51 @@ class HueV2Client:
         data = r.json().get("data", [])
         return data[0] if data else None
 
+    async def entertainment_services(self) -> list:
+        """The per-light entertainment services, which is what an area is built
+        from — a light's own id will not do."""
+        r = await _http().get(self._url("/entertainment"), headers=self._headers)
+        r.raise_for_status()
+        return r.json().get("data", [])
+
+    async def create_entertainment_configuration(
+            self, name: str, service_rids: list[str],
+            configuration_type: str = "3dspace") -> str | None:
+        """Make a new area on the bridge and return its id.
+
+        Positions are required even though nothing here uses them: this app
+        drives every light in an area from the same pattern, so where a bulb
+        sits in the room does not change what it is sent. They are spread along
+        a line rather than stacked at the origin so the area looks like
+        something sensible when the Hue app draws it.
+        """
+        body = {
+            "metadata": {"name": name},
+            "configuration_type": configuration_type,
+            "locations": {"service_locations": [
+                {"service": {"rid": rid, "rtype": "entertainment"},
+                 "positions": [position]}
+                for rid, position in zip(service_rids, even_positions(len(service_rids)), strict=False)
+            ]},
+        }
+        r = await _http().post(self._url("/entertainment_configuration"),
+                               headers=self._headers, json=body)
+        r.raise_for_status()
+        created = r.json().get("data", [])
+        return created[0].get("rid") if created else None
+
+    async def delete_entertainment_configuration(self, area_id: str) -> None:
+        r = await _http().delete(
+            self._url(f"/entertainment_configuration/{area_id}"),
+            headers=self._headers)
+        r.raise_for_status()
+
+    async def rename_entertainment_configuration(self, area_id: str, name: str) -> None:
+        r = await _http().put(
+            self._url(f"/entertainment_configuration/{area_id}"),
+            headers=self._headers, json={"metadata": {"name": name}})
+        r.raise_for_status()
+
     async def set_streaming(self, area_id: str, active: bool) -> dict:
         """Arm or disarm the stream. This is the call v1 cannot make."""
         r = await _http().put(
@@ -121,3 +166,36 @@ def streaming_state(configuration: dict | None) -> dict:
         "status": configuration.get("status"),
         "active_streamer": streamer.get("rid") if isinstance(streamer, dict) else streamer,
     }
+
+
+def v1_light_id(service: dict) -> str | None:
+    """The v1 light id an entertainment service belongs to, e.g. "/lights/7"."""
+    id_v1 = service.get("id_v1") or ""
+    return id_v1.rsplit("/", 1)[-1] or None
+
+
+def can_render(service: dict) -> bool:
+    """Whether this light can actually be driven by a stream.
+
+    A bulb without an entertainment service, or with one that cannot render,
+    is not a candidate for an area — which is most of what separates an area
+    from an ordinary group. Plugs and white-only bulbs fall out here.
+    """
+    return bool(service.get("renderer"))
+
+
+def even_positions(count: int) -> list[dict]:
+    """Spread `count` lights along a line, left to right.
+
+    The bridge wants a position for every light in an area. Stacking them all
+    at the origin is accepted but draws as a single dot in the Hue app, which
+    makes an area created here look broken next to one made there.
+    """
+    if count <= 0:
+        return []
+    if count == 1:
+        return [{"x": 0.0, "y": 0.0, "z": 0.0}]
+    span = 1.6                                  # -0.8 .. 0.8, inside the unit room
+    step = span / (count - 1)
+    return [{"x": round(-span / 2 + i * step, 4), "y": 0.0, "z": 0.0}
+            for i in range(count)]

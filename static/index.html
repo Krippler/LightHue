@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Game Hue Flicker</title>
+<title>LightHue</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -27,7 +27,7 @@
           </svg>
         </div>
         <div>
-          <h1>GAME HUE FLICKER</h1>
+          <h1>LIGHTHUE</h1>
           <p>Quake-style lightstyles for Philips Hue</p>
         </div>
       </div>
@@ -253,6 +253,7 @@
             </div>
             <div class="panel-head-actions">
               <span id="stream-state" class="dim">idle</span>
+              <button id="btn-area-new" class="btn btn-ghost btn-sm">New area&hellip;</button>
               <button id="btn-stream-refresh" class="btn btn-ghost btn-sm">Refresh areas</button>
             </div>
           </div>
@@ -260,10 +261,29 @@
             <p class="hint">The normal path sends one command per light and the bridge takes
             about ten a second in total, so seven bulbs land near 1 Hz each. Streaming sends
             one frame holding the whole area, so the speed stops being divided &mdash; up to
-            <em id="stream-max-hz">25</em> Hz across every light at once. Set the area up in
-            the Hue app first, under Entertainment areas.</p>
+            <em id="stream-max-hz">25</em> Hz across every light at once. Areas can be made
+            here or in the Hue app &mdash; either way they live on the bridge.</p>
 
             <div id="stream-unavailable" class="status-line err hidden"></div>
+
+            <div id="area-builder" class="area-builder hidden">
+              <div class="area-builder-head">
+                <strong>New entertainment area</strong>
+                <span class="hint">Created on the bridge, so it shows up in the Hue app
+                too. Up to <em id="area-max">10</em> colour-capable lights.</span>
+              </div>
+              <label class="field">
+                <span>Name</span>
+                <input id="area-name" type="text" maxlength="32" placeholder="TV area" />
+              </label>
+              <div id="area-candidates" class="area-candidates"></div>
+              <p id="area-excluded" class="hint"></p>
+              <div class="action-row">
+                <button id="btn-area-create" class="btn btn-primary btn-sm">Create area</button>
+                <button id="btn-area-cancel" class="btn btn-ghost btn-sm">Cancel</button>
+                <span id="area-status" class="status-line"></span>
+              </div>
+            </div>
 
             <div class="custom-form">
               <label class="field">
@@ -310,6 +330,7 @@
               <button id="btn-stream-stop" class="btn btn-danger btn-sm hidden">Stop stream</button>
               <button id="btn-stream-diagnostics" class="btn btn-ghost btn-sm"
                       title="What the bridge says about each area, and what the last start attempt did">Diagnostics</button>
+              <button id="btn-area-delete" class="btn btn-ghost">Delete area</button>
               <button id="btn-stream-release" class="btn btn-ghost btn-sm"
                       title="Hand the area back to the bridge — use this if a stream was left claimed and the lights answer to nothing">Release area</button>
             </div>

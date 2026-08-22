@@ -40,7 +40,14 @@ from .hue_stream import (
 from .hue_stream import (
     TRANSPORTS as STREAM_TRANSPORTS,
 )
-from .hue_v2 import HueV2Client, channel_ids, streaming_state, v1_group_id
+from .hue_v2 import (
+    HueV2Client,
+    can_render,
+    channel_ids,
+    streaming_state,
+    v1_group_id,
+    v1_light_id,
+)
 from .patterns import (
     BUILTIN_BY_ID,
     BUILTIN_PATTERNS,
@@ -757,6 +764,21 @@ async def list_bridge_groups():
     return {"groups": out, "seen": seen, "total": len(groups)}
 
 
+async def _v2_area_uuids() -> dict:
+    """v1 group id -> v2 entertainment configuration id, where one exists."""
+    cfg = config_store.load()
+    if not cfg.get("bridge_ip") or not cfg.get("api_key"):
+        return {}
+    try:
+        v2 = HueV2Client(cfg["bridge_ip"], cfg["api_key"])
+        configurations = await v2.entertainment_configurations()
+    except Exception:
+        logger.debug("Could not read v2 entertainment configurations", exc_info=True)
+        return {}
+    return {gid: c["id"] for c in configurations
+            if (gid := v1_group_id(c)) and c.get("id")}
+
+
 @app.get("/api/stream/areas")
 async def list_stream_areas():
     """Entertainment areas the bridge will stream to.
@@ -774,6 +796,11 @@ async def list_stream_areas():
         raise HTTPException(502, bridge_error(e, "read the entertainment areas")) from e
 
     cfg_api_key = config_store.load().get("api_key")
+    # The v2 id of each area, keyed by the v1 group it shows up as. Deleting or
+    # renaming an area addresses the configuration itself, and the group number
+    # is only a compatibility view of it. Absent on firmware that has no v2
+    # entertainment API, which is why this is looked up rather than assumed.
+    uuids = await _v2_area_uuids()
     out = []
     for gid, info in groups.items():
         if (info.get("type") or "") != ENTERTAINMENT_GROUP_TYPE:
@@ -786,6 +813,7 @@ async def list_stream_areas():
         claimed_by_us = bool(stream.get("active")) and owner == cfg_api_key
         out.append({
             "id": gid,
+            "uuid": uuids.get(gid),
             "name": info.get("name", f"Area {gid}"),
             "light_ids": light_ids,
             # The bridge caps an area at ten lights, so this should never trip;
@@ -1106,6 +1134,114 @@ async def _claim_area(client, area_id: str):
             "The bridge accepted the area but never reported it as streaming. "
             "Give it a moment and try again, or use Release area first.",
         )
+
+
+class AreaRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=32)
+    light_ids: list[str] = Field(..., min_length=1, max_length=MAX_AREA_LIGHTS)
+
+
+@app.get("/api/stream/candidates")
+async def stream_candidates():
+    """Lights that could go in an entertainment area.
+
+    Not every bulb can. An area is built from each light's *entertainment
+    service*, and a light without one — a plug, a white-only bulb — has nothing
+    to put in. That is the real difference between an area and a group, so the
+    lights that cannot join are returned too rather than quietly missing.
+    """
+    cfg = config_store.load()
+    client = get_client()
+    if client is None or not cfg.get("api_key"):
+        raise HTTPException(400, "Bridge not configured yet")
+    try:
+        v2 = HueV2Client(cfg["bridge_ip"], cfg["api_key"])
+        services = await v2.entertainment_services()
+        lights = await client.get_lights()
+    except Exception as e:
+        raise HTTPException(502, bridge_error(e, "read the lights")) from e
+
+    renderable = {}
+    for service in services:
+        light_id = v1_light_id(service)
+        if light_id and can_render(service):
+            renderable[light_id] = service["id"]
+
+    return {
+        "candidates": sorted(
+            ({"light_id": lid,
+              "name": (info.get("name") or f"Light {lid}"),
+              "service_rid": renderable[lid]}
+             for lid, info in lights.items() if lid in renderable),
+            key=lambda c: c["name"].casefold()),
+        "excluded": sorted(
+            ({"light_id": lid, "name": (info.get("name") or f"Light {lid}")}
+             for lid, info in lights.items() if lid not in renderable),
+            key=lambda c: c["name"].casefold()),
+        "max_lights": MAX_AREA_LIGHTS,
+    }
+
+
+@app.post("/api/stream/areas")
+async def create_stream_area(req: AreaRequest):
+    """Create an entertainment area on the bridge.
+
+    This writes to the user's Hue setup rather than to this console's config —
+    the area shows up in the Hue app and outlives this container — so it is
+    worth being deliberate about. Only lights that can actually render are
+    accepted, and the bridge's ten-light ceiling is checked here so the failure
+    names the problem instead of arriving as a validation error from the bridge.
+    """
+    cfg = config_store.load()
+    client = get_client()
+    if client is None or not cfg.get("api_key"):
+        raise HTTPException(400, "Bridge not configured yet")
+    try:
+        v2 = HueV2Client(cfg["bridge_ip"], cfg["api_key"])
+        services = await v2.entertainment_services()
+    except Exception as e:
+        raise HTTPException(502, bridge_error(e, "read the lights")) from e
+
+    renderable = {v1_light_id(s): s["id"] for s in services if can_render(s)}
+    wanted = [str(x) for x in req.light_ids]
+    if len(set(wanted)) != len(wanted):
+        raise HTTPException(422, "The same light is listed more than once")
+    missing = [lid for lid in wanted if lid not in renderable]
+    if missing:
+        raise HTTPException(
+            422,
+            f"{'These lights cannot' if len(missing) > 1 else 'This light cannot'} "
+            f"be in an entertainment area: {', '.join(missing)}. Only "
+            "colour-capable lights can — plugs and white-only bulbs have no "
+            "entertainment service for the bridge to stream to.")
+    try:
+        area_id = await v2.create_entertainment_configuration(
+            req.name, [renderable[lid] for lid in wanted])
+    except Exception as e:
+        raise HTTPException(502, bridge_error(e, "create the entertainment area")) from e
+    return {"ok": True, "id": area_id, "name": req.name, "light_ids": wanted}
+
+
+@app.delete("/api/stream/areas/{area_uuid}")
+async def delete_stream_area(area_uuid: str):
+    """Remove an entertainment area from the bridge.
+
+    Takes the v2 id rather than the v1 group number, because that is what
+    identifies the configuration itself — the group number is a compatibility
+    view of it.
+    """
+    cfg = config_store.load()
+    if not cfg.get("bridge_ip") or not cfg.get("api_key"):
+        raise HTTPException(400, "Bridge not configured yet")
+    if stream_engine.running:
+        raise HTTPException(
+            409, "Stop the stream before deleting an area.")
+    try:
+        v2 = HueV2Client(cfg["bridge_ip"], cfg["api_key"])
+        await v2.delete_entertainment_configuration(area_uuid)
+    except Exception as e:
+        raise HTTPException(502, bridge_error(e, "delete the entertainment area")) from e
+    return {"ok": True}
 
 
 @app.post("/api/stream/release")
