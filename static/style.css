@@ -314,7 +314,7 @@ input[type="color"] {
 /* With no groups yet the grid is an unexplained gap, so it collapses away and
    the tools below it lose their divider. */
 #groups-grid:empty { display: none; }
-#groups-grid:not(:empty) + .group-tools {
+#areas-grid:not(:empty) + .group-tools {
   margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);
 }
 
@@ -351,19 +351,6 @@ input[type="color"] {
 .custom-seq-field { flex: 2 1 260px; }
 .custom-framing { margin-top: 14px; }
 
-/* The area builder sits inside the stream panel, so it is marked off rather
-   than left to blend into the controls it appears above. */
-.area-builder {
-  margin-bottom: 16px; padding: 14px;
-  background: var(--panel2); border: 1px solid var(--border); border-radius: 6px;
-}
-.area-builder-head { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
-.area-builder .field { max-width: 280px; }
-.area-candidates {
-  display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 12px 0 8px;
-}
-.area-candidates .checkbox-field { min-width: 0; }
-.area-builder .action-row { margin-top: 12px; }
 .custom-framing .field { flex: 1 1 150px; }
 
 .custom-color-row {
@@ -467,7 +454,6 @@ input[type="color"] {
 .light-meta { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
 .reachable-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); display: inline-block; flex: 0 0 auto; }
 .reachable-dot.off { background: var(--dim); }
-.reachable-dot.group-dot { background: var(--warn); }
 .reachable-text { font-size: 10px; color: var(--muted); }
 
 .card-select { display: flex; align-items: center; padding-top: 3px; }
@@ -487,8 +473,16 @@ input[type="color"] {
 .btn-delete-group:hover { border-color: var(--err); color: var(--err); }
 
 /* Groups lead the grid, so they get a marker that reads at a glance. */
-.group-card { border-left: 3px solid var(--warn); }
-.group-card .light-name::before { content: "▣ "; color: var(--warn); }
+/* Areas are managed, not flickered, so their cards carry the marker the group
+   cards used to and drop the controls a light card has. */
+.area-card { border-left: 3px solid var(--warn); }
+.area-card .light-name::before { content: "▣ "; color: var(--warn); }
+.area-card.is-picked { border-left-color: var(--app); background: var(--panel2); }
+.area-card .reachable-text { margin-bottom: 10px; }
+.picked-area {
+  padding: 8px 10px; font-size: 12px;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 4px;
+}
 
 /* Signature element: the literal lightstyle waveform. */
 .waveform {

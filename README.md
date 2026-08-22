@@ -11,8 +11,8 @@ web UI that several people on your network can use at once.
 - Talks to your Hue Bridge directly over your own network. No Philips account.
 - Pick lights, pattern, speed, brightness range and colour — and change any of
   it while the lights are still running.
-- Group bulbs so they flicker in step, or copy the rooms and zones you already
-  set up in the Hue app.
+- Build entertainment areas on the bridge and stream a whole set at once, up to
+  25 Hz — far faster than driving lights one at a time.
 - Write your own patterns, with a live preview, and share them as a file.
 - Puts every bulb back how it was when the flicker stops.
 - Optional password to lock the console.
@@ -104,21 +104,40 @@ Under each swatch is a box for an exact colour. It takes `6000,225` (Hue's own
 hue and saturation, the exact form) or `#ff991d` / `#f80` (converted to the
 nearest hue/sat). The box always shows the numbers being sent.
 
-## Groups
+## Entertainment areas
 
-Tick the lights you want to run together in the **Groups** panel and give them
-a name. They get one card driving all of them, and members keep their own cards
-too.
+One command per light is all the ordinary path can do, and the bridge takes
+about ten a second in total. That budget is shared, so seven bulbs flicker at
+barely 1 Hz each.
 
-**Or copy one from the bridge.** *Use a room from the bridge* lists the Rooms
-and Zones the Hue app already knows and copies one over in a click.
+**An area is the way past that.** The bridge streams to it as one unit — a
+single frame carrying every light — so the speed stops being divided: up to
+25 Hz across the whole area, every light changing together.
 
-A group card shows `2/3 FLICKERING` when only some members are running, and
-offers **Start the rest** so you can bring stragglers into line.
+Tick the lights you want in **Lights & Plugs**, name them in the
+**Entertainment Areas** panel, and press **Save as area**. Or press **Use a
+room from the bridge** to tick the lights of a room you already made in the Hue
+app, then save that.
 
-Lights in a group stay in step even though the bridge can only be sent to one
-at a time. If you ask for more speed than the bridge budget can carry, the card
-shows the rate it's actually running at.
+Areas are created on the bridge, not in this console, so they show up in the
+Hue app too and survive the container being replaced. Each area gets a card
+with **Use for stream**, **Rename** and **Delete**.
+
+Two limits, both the bridge's: an area holds at most **10 lights**, and only
+**colour-capable** ones. Plugs and white-only bulbs have no entertainment
+service for the bridge to stream to, so saving an area containing one is
+refused with that light named. Drive those from their own cards in Lights &
+Plugs.
+
+You also need a pairing that included a streaming key. A console paired before
+this feature existed has to pair again; the panel tells you when that applies.
+Only one area streams at a time, so an area Hue Sync or a game has claimed says
+so on its card.
+
+Pick an area, then set the pattern and press **Start stream** in the
+**Entertainment Stream** panel below. If a stream won't start, **Diagnostics**
+says what the bridge is doing, and [docs/streaming.md](docs/streaming.md)
+covers how to read it.
 
 ## Custom patterns
 
@@ -134,38 +153,6 @@ are added as "Torchlight (2)", and a malformed file is refused whole.
 
 The file format is documented in [docs/pattern-packs.md](docs/pattern-packs.md)
 if you want to write one by hand.
-
-## Faster flicker
-
-The ordinary path sends one command per light, and the bridge takes about ten a
-second in total. That budget is shared, so seven bulbs flicker at barely 1 Hz
-each.
-
-**Entertainment streaming is the way past that.** One connection carries a
-frame holding the whole area, so the speed stops being divided — up to 25 Hz
-across every light at once, all changing together.
-
-**New area…** in the Entertainment Stream panel builds one: name it, tick the
-lights, and it is created on the bridge — so it shows up in the Hue app too, and
-outlives this container. **Delete area** removes it again. You can equally make
-one in the Hue app; either way it lives on the bridge.
-
-Two limits, both the bridge's: an area holds at most **10 lights**, and only
-**colour-capable** ones. Plugs and white-only bulbs have no entertainment
-service for the bridge to stream to, so they are listed as excluded rather than
-silently missing. Groups still cover those.
-
-You also need a pairing that included a streaming key. A console paired before
-this feature existed has to pair again; the panel tells you when that applies.
-Only one app can stream to an area at a time, so areas Hue Sync or a game has
-claimed are listed but greyed out.
-
-Pick the area and press **Start stream**.
-LightHue hands the area back to the Hue app when you stop, and on the way out
-if the container is stopped mid-stream.
-
-If a stream won't start, **Diagnostics** in that panel says what the bridge is
-doing, and [docs/streaming.md](docs/streaming.md) covers how to read it.
 
 ## Settings
 

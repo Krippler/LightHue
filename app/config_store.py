@@ -42,7 +42,6 @@ _DEFAULT = {
     # of a fault it may not have.
     "keys_paired": None,
     "custom_patterns": {},   # id -> {id, name, sequence}
-    "groups": {},            # id -> {id, name, light_ids}
     "snapshots": {},         # light_id -> bulb state captured before flickering
     "settings": dict(_DEFAULT_SETTINGS),
     "auth": None,            # None => console is open; else a password record
