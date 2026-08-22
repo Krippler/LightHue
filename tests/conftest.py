@@ -114,6 +114,12 @@ def bridge(app_modules, monkeypatch):
             import json
             state["puts"].append(json.loads(request.content))
             return httpx.Response(200, json=[{"success": {}}])
+        if path.endswith("/config"):
+            return httpx.Response(200, json={
+                "name": "Stub Bridge", "modelid": "BSB002",
+                "swversion": "1970010101", "apiversion": "1.68.0",
+                "bridgeid": "0000000000000000", "factorynew": False,
+            })
         if request.url.path == "/api":
             success = {"username": "stub-key"}
             # Firmware old enough not to issue a streaming key just omits it.

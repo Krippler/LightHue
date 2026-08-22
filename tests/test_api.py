@@ -1723,3 +1723,18 @@ def test_a_bridge_with_no_v2_view_still_uses_the_v1_flag(client, bridge, app_mod
     assert r.status_code == 200
     assert bridge["v2"]["armed"] == []
     assert ("6", True) in bridge["stream_calls"]
+
+
+def test_diagnostics_names_the_bridge_and_its_firmware(client, bridge):
+    """Streaming faults get reported to people who cannot see the hardware, and
+    "which bridge, running what" is the first thing any of them will ask."""
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    reported = client.get("/api/stream/diagnostics").json()["bridge"]
+    assert reported["modelid"] == "BSB002"
+    assert reported["swversion"] == "1970010101"
+    assert reported["apiversion"] == "1.68.0"
+
+
+def test_diagnostics_survives_a_bridge_that_will_not_describe_itself(client):
+    """An unconfigured console still has to render its diagnostics page."""
+    assert client.get("/api/stream/diagnostics").json()["bridge"] == {}

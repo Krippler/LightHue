@@ -510,3 +510,50 @@ _CONNECTORS = {
     "mbedtls": DtlsStream._connect_mbedtls,
     "minimal": DtlsStream._connect_minimal,
 }
+
+
+def openssl_handshake(host: str, identity: str, key_hex: str,
+                      port: int = STREAM_PORT, timeout: float = 12.0):
+    """Try the handshake with OpenSSL, as an opinion from outside this repo.
+
+    Both clients here are ours in the sense that matters — one hand-rolled, one
+    a library driven by our own configuration — so when they agree they may only
+    be agreeing about a mistake. OpenSSL shares no code with either, and diyHue
+    reaches real bridges with exactly this invocation.
+
+    Returns (verdict, detail): "connected", "no-reply", "alert", "missing" or
+    "error".
+    """
+    import shutil
+    import subprocess
+
+    if shutil.which("openssl") is None:
+        return "missing", "openssl is not installed in this image"
+    try:
+        done = subprocess.run(
+            ["openssl", "s_client", "-dtls1_2",
+             # OpenSSL 3 rates PSK suites below its default security floor and
+             # will not offer the one Hue uses without this.
+             "-cipher", "PSK-AES128-GCM-SHA256@SECLEVEL=0",
+             "-psk", key_hex, "-psk_identity", identity,
+             "-connect", f"{host}:{port}"],
+            stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout,
+            text=True,
+        )
+    except subprocess.TimeoutExpired:
+        return "no-reply", "openssl waited and never finished the handshake"
+    except OSError as e:
+        return "error", str(e)
+
+    out = (done.stdout or "") + (done.stderr or "")
+    if "Cipher    :" in out and "(NONE)" not in out:
+        line = next((ln.strip() for ln in out.splitlines()
+                     if ln.strip().startswith("Cipher    :")), "negotiated")
+        return "connected", f"openssl completed the handshake — {line}"
+    if "alert" in out.lower():
+        line = next((ln.strip() for ln in out.splitlines()
+                     if "alert" in ln.lower()), "an alert")
+        return "alert", f"the bridge objected outright: {line}"
+    if "read 0 bytes" in out:
+        return "no-reply", "openssl sent its ClientHello and read nothing back"
+    return "error", (out.strip().splitlines() or ["openssl said nothing useful"])[-1]
