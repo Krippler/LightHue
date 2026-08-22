@@ -61,6 +61,11 @@ The easiest route is the template in this repo:
 The image is published to `ghcr.io/krippler/lighthue:latest` and rebuilt on
 every push to `main`, so Unraid's update check works normally.
 
+Work branches publish under their own tag — `ghcr.io/krippler/lighthue:<branch>`,
+with `/` written as `-`. Point a container at one to test a fix on real hardware
+without putting it on `main` first, which matters most for the parts that can
+only be proven against a real bridge.
+
 **If bridge discovery or pairing fails**, set *Network Type* to **Host** on
 the container and try again. Some Unraid setups don't let the default bridge
 network reach the Hue Bridge or the discovery endpoint.

@@ -2,9 +2,15 @@ name: Publish image
 
 # Unraid installs from a registry rather than building locally, so every push
 # to main publishes an image its template can pull.
+#
+# Work branches publish too, under their own branch-named tag. Testing a fix
+# against real hardware otherwise means merging it to main first, which is a
+# bad trade: the change that needs proving is exactly the one that should not
+# be on the default branch yet. `latest` stays gated on the default branch
+# below, so nothing an ordinary install pulls is affected.
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "claude/**", "fix/**", "feat/**"]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -31,6 +37,7 @@ jobs:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
             type=ref,event=tag
             type=sha,format=short
 
