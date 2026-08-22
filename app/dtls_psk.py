@@ -189,7 +189,7 @@ class DtlsPskClient:
         self._sock.send(self._record(
             HANDSHAKE, self._handshake_message(CLIENT_HELLO, self._client_hello_body(cookie))))
 
-        server_random, done = None, False
+        server_random, chosen, done = None, None, False
         deadline = time.monotonic() + self.timeout
         while not done and time.monotonic() < deadline:
             try:
@@ -209,11 +209,20 @@ class DtlsPskClient:
                         self._handshake += raw
                     if msg_type == SERVER_HELLO:
                         server_random = body[2:34]
+                        chosen = server_hello_suite(body)
                     elif msg_type == SERVER_HELLO_DONE:
                         done = True
         if server_random is None:
             raise DtlsError(
                 "the bridge took our cookie and never sent a ServerHello")
+        if chosen != PSK_AES_128_GCM_SHA256:
+            # This client implements one record layer. Saying which suite the
+            # bridge picked is the difference between a fixable report and
+            # another round of guessing.
+            raise DtlsError(
+                f"the bridge chose cipher suite 0x{chosen.hex()}, and this client "
+                f"only speaks 0x{PSK_AES_128_GCM_SHA256.hex()}"
+            )
 
         master = prf(psk_premaster(self.psk), b"master secret",
                      self.client_random + server_random, 48)
@@ -285,6 +294,19 @@ class DtlsPskClient:
 
     def __exit__(self, *exc):
         self.close()
+
+
+def server_hello_suite(body: bytes) -> bytes | None:
+    """The cipher suite a ServerHello settled on.
+
+    ServerHello is version, random, then a variable-length session id, so the
+    suite cannot be read at a fixed offset — the id has to be stepped over.
+    """
+    if len(body) < 35:
+        return None
+    session_id_len = body[34]
+    start = 35 + session_id_len
+    return body[start:start + 2] if len(body) >= start + 2 else None
 
 
 def first_flight(identity: str = "lighthue") -> bytes:

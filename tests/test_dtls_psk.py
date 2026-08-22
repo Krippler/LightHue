@@ -263,3 +263,62 @@ def test_the_cookie_reply_does_not_reuse_a_record_sequence_number():
     # message_seq does restart at 1 for the second ClientHello (RFC 6347 4.2.2);
     # the two counters are separate and only one of them carries over.
     assert int.from_bytes(seen[1][17:19], "big") == 1
+
+
+def test_the_server_hello_suite_is_read_past_the_session_id():
+    """ServerHello puts a variable-length session id before the cipher suite, so
+    a fixed offset reads the wrong two bytes whenever the server resumes."""
+    from app.dtls_psk import server_hello_suite
+
+    def server_hello(session_id: bytes) -> bytes:
+        return (b"\xfe\xfd" + bytes(32) + bytes([len(session_id)]) + session_id
+                + b"\x00\xa8" + b"\x00")
+
+    assert server_hello_suite(server_hello(b"")) == b"\x00\xa8"
+    assert server_hello_suite(server_hello(b"\x01" * 32)) == b"\x00\xa8"
+    assert server_hello_suite(b"\xfe\xfd") is None
+
+
+def test_a_suite_this_client_cannot_speak_is_named_not_swallowed():
+    """One record layer is implemented here, so another suite has to fail — but
+    it fails saying which, because that is the whole content of the report."""
+    import socket
+    import threading
+
+    from app.dtls_psk import (
+        DTLS_1_2,
+        HANDSHAKE,
+        SERVER_HELLO,
+        SERVER_HELLO_DONE,
+        DtlsError,
+        DtlsPskClient,
+    )
+
+    def handshake_record(msg_type: int, body: bytes, seq: int) -> bytes:
+        message = (bytes([msg_type]) + len(body).to_bytes(3, "big")
+                   + seq.to_bytes(2, "big") + (0).to_bytes(3, "big")
+                   + len(body).to_bytes(3, "big") + body)
+        return (bytes([HANDSHAKE]) + DTLS_1_2 + (0).to_bytes(2, "big")
+                + seq.to_bytes(6, "big") + len(message).to_bytes(2, "big") + message)
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    server.bind(("127.0.0.1", 0))
+    server.settimeout(5)
+
+    def serve():
+        _, peer = server.recvfrom(4096)
+        server.sendto(_hello_verify(b"\xa5" * 32), peer)
+        server.recvfrom(4096)
+        # AES-256-GCM, which this client has no record layer for.
+        hello = b"\xfe\xfd" + bytes(32) + b"\x00" + b"\x00\xa9" + b"\x00"
+        server.sendto(handshake_record(SERVER_HELLO, hello, 0), peer)
+        server.sendto(handshake_record(SERVER_HELLO_DONE, b"", 1), peer)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+
+    client = DtlsPskClient(*server.getsockname(), "user", b"\x00" * 16, timeout=2)
+    with pytest.raises(DtlsError, match="0x00a9"):
+        client.connect()
+    thread.join(5)
+    server.close()
