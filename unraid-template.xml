@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <Container version="2">
-  <Name>GameHueFlicker</Name>
+  <Name>LightHue</Name>
   <Repository>ghcr.io/krippler/lighthue:latest</Repository>
   <Registry>https://github.com/Krippler/LightHue/pkgs/container/lighthue</Registry>
   <Branch>
@@ -80,11 +80,11 @@
   <Config
     Name="Config Storage"
     Target="/data"
-    Default="/mnt/user/appdata/game-hue-flicker"
+    Default="/mnt/user/appdata/LightHue"
     Mode="rw"
     Description="Holds config.json: your bridge pairing, saved custom patterns, console password and settings. Keep this mapped or you will have to re-pair with the bridge after every update."
     Type="Path"
     Display="always"
     Required="true"
-    Mask="false">/mnt/user/appdata/game-hue-flicker</Config>
+    Mask="false">/mnt/user/appdata/LightHue</Config>
 </Container>
