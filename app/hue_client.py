@@ -123,6 +123,17 @@ class HueClient:
         r.raise_for_status()
         return r.json()
 
+    async def get_config(self) -> dict:
+        """The bridge's own description of itself: model, firmware, API version.
+
+        Worth having in a bug report about streaming. Entertainment arrived with
+        the second-generation bridge and has moved under it since, so "which
+        bridge, running what" is the first question anyone else will ask.
+        """
+        r = await _http().get(self._url("config"), timeout=5)
+        r.raise_for_status()
+        return r.json()
+
     async def set_light_state(self, light_id: str, **state) -> dict:
         r = await _http().put(self._url("lights", light_id, "state"), json=state, timeout=3)
         r.raise_for_status()

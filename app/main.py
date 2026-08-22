@@ -32,6 +32,7 @@ from .hue_stream import (
     STREAM_PORT,
     local_address_for,
     looks_translated,
+    openssl_handshake,
     probe_handshake_stage,
     probe_stream_port,
     same_subnet_as_bridge,
@@ -899,6 +900,21 @@ def _client_hello_shape() -> dict:
     return {"bytes": len(flight), "hex": flight.hex()}
 
 
+async def _bridge_identity() -> dict:
+    client = get_client()
+    if client is None:
+        return {}
+    try:
+        config = await client.get_config()
+    except Exception:
+        logger.debug("Could not read the bridge's config", exc_info=True)
+        return {}
+    return {k: config.get(k) for k in
+            ("name", "modelid", "swversion", "apiversion", "bridgeid",
+             "starterkitid", "factorynew")
+            if config.get(k) is not None}
+
+
 def _pairing_provenance(cfg: dict) -> str:
     """Whether the two streaming credentials are known to belong together.
 
@@ -1128,6 +1144,9 @@ async def stream_diagnostics():
         # key as the PSK. Two halves of two pairings is a credential the bridge
         # has no reason to answer, and nothing else here would show it.
         "keys_from_same_pairing": _pairing_provenance(cfg),
+        # Which bridge, running what. Never captured until now, and the first
+        # thing anyone else looking at a streaming fault would ask for.
+        "bridge": await _bridge_identity(),
         "engine": stream_engine.status(),
         "last_attempt": _last_attempt or None,
         "stream_port": STREAM_PORT,
@@ -1358,115 +1377,136 @@ async def start_stream(req: StreamStartRequest):
         e = last_error
         _note("handshake-failed", detail=str(e))
         detail = str(e)
-        if "timed out" in detail or "timeout" in detail.lower():
-            # Probed while the area is still claimed, because the bridge only
-            # binds the port while it holds one. Probing after the release —
-            # which is what this used to do — measures a port that has already
-            # closed and calls a healthy network broken.
-            host, _ = parse_bridge_address(cfg["bridge_ip"])
-            # Claim it again first. The bridge stops listening about ten seconds
-            # after a claim nobody connects to, and by the time the attempts
-            # above have run out that window is gone — probing then measures a
-            # closed port and reports "silent" for a bridge that was answering
-            # perfectly well a moment earlier.
-            try:
-                await _arm_area(client, req.area_id, configuration)
-            except Exception:
-                logger.debug("Could not re-arm %s before probing", req.area_id,
-                             exc_info=True)
-            # Carried as far as the credentials. Stopping at the first reply
-            # could not tell a bridge that rejects our key from one that rejects
-            # our ClientHello — the identity is not sent until the fifth
-            # message of the flight.
-            stage, how = await asyncio.to_thread(probe_handshake_stage, host, STREAM_PORT)
-            _note("handshake-stage-while-claimed", stage=stage, detail=how)
-            if stage == "server-hello":
+        # Every handshake failure gets the deeper look, not just the ones whose
+        # message happens to say "timed out". Gating on that string meant that
+        # making an error message more precise silently switched this off, and
+        # the most useful diagnostic in here stopped appearing at all.
+        host, _ = parse_bridge_address(cfg["bridge_ip"])
+        # Claim it again first. The bridge stops listening about ten seconds
+        # after a claim nobody connects to, and by the time the attempts
+        # above have run out that window is gone — probing then measures a
+        # closed port and reports "silent" for a bridge that was answering
+        # perfectly well a moment earlier.
+        try:
+            await _arm_area(client, req.area_id, configuration)
+        except Exception:
+            logger.debug("Could not re-arm %s before probing", req.area_id,
+                         exc_info=True)
+        # Carried as far as the credentials. Stopping at the first reply
+        # could not tell a bridge that rejects our key from one that rejects
+        # our ClientHello — the identity is not sent until the fifth
+        # message of the flight.
+        stage, how = await asyncio.to_thread(probe_handshake_stage, host, STREAM_PORT)
+        _note("handshake-stage-while-claimed", stage=stage, detail=how)
+        # And a third implementation, sharing no code with either of ours.
+        # Two clients agreeing may only mean they share a mistake.
+        ssl_verdict, ssl_detail = await asyncio.to_thread(
+            openssl_handshake, host, cfg["api_key"], cfg["client_key"],
+            STREAM_PORT)
+        _note("openssl", verdict=ssl_verdict, detail=ssl_detail)
+        if ssl_verdict == "connected":
+            detail += (
+                " — but OpenSSL completed the same handshake against the same "
+                "claim, so the fault is in this app rather than the bridge or "
+                f"the network ({ssl_detail})."
+            )
+            await _release_area(req.area_id)
+            raise HTTPException(502, detail) from e
+        if ssl_verdict == "alert":
+            detail += (
+                f" — and OpenSSL got an answer worth reading: {ssl_detail}. That "
+                "is the bridge saying what it objects to, rather than dropping "
+                "the flight in silence."
+            )
+            await _release_area(req.area_id)
+            raise HTTPException(502, detail) from e
+        if stage == "server-hello":
+            detail += (
+                f" — but a bare handshake to UDP {STREAM_PORT} gets all the way to "
+                "ServerHello while the bridge holds the area. So the path is fine, "
+                "the port is open, and the bridge accepts our offer: what it will not "
+                "accept is the streaming key. That key is only issued alongside the "
+                "API key it belongs to, at pairing time, so a mismatched pair can only "
+                "be fixed by pairing again — Change bridge, press the link button, Pair."
+            )
+        elif stage in ("hello-verify-only", "alert", "no-hello-verify", "unexpected",
+                       "handshake-other"):
+            detail += (
+                f" — the bridge is listening on UDP {STREAM_PORT} and answers, but "
+                f"will not get past our ClientHello ({how}). The path works in both "
+                "directions or the cookie could not have arrived, and the key is not "
+                "offered until several messages later, so neither is the problem. "
+                "What is left is the entertainment session behind the port: "
+                "answering a cookie costs a DTLS server no session state at all, "
+                "and finishing the handshake needs somewhere to put one. A bridge "
+                "whose entertainment service is wedged — which a run of aborted "
+                "sessions will do — behaves exactly like this. Power-cycle the "
+                "bridge; nothing else clears that from the outside."
+            )
+        elif stage == "refused":
+            detail += (
+                f" — and UDP {STREAM_PORT} is shut even while the bridge says it is "
+                "holding the area. The path is fine (the refusal had to reach us), so "
+                "the bridge took the v1 claim without arming the stream behind it."
+            )
+        else:
+            local = local_address_for(host)
+            detail += (
+                f" — and nothing comes back on UDP {STREAM_PORT} at all ({how}), "
+                "while HTTP to the same bridge works."
+            )
+            if local and looks_translated(local):
                 detail += (
-                    f" — but a bare handshake to UDP {STREAM_PORT} gets all the way to "
-                    "ServerHello while the bridge holds the area. So the path is fine, "
-                    "the port is open, and the bridge accepts our offer: what it will not "
-                    "accept is the streaming key. That key is only issued alongside the "
-                    "API key it belongs to, at pairing time, so a mismatched pair can only "
-                    "be fixed by pairing again — Change bridge, press the link button, Pair."
+                    f" This is a container address ({local}), translated to the "
+                    "host's before the bridge ever sees it — so whether it shares "
+                    "the bridge's network cannot be told from here. Switch the "
+                    "container to Host networking: that removes the translation, "
+                    "and if the host is on the bridge's network the client then "
+                    "genuinely is too."
                 )
-            elif stage in ("hello-verify-only", "alert", "no-hello-verify", "unexpected",
-                           "handshake-other"):
+            elif local and not same_subnet_as_bridge(local, host):
                 detail += (
-                    f" — the bridge is listening on UDP {STREAM_PORT} and answers, but "
-                    f"will not get past our ClientHello ({how}). The path works in both "
-                    "directions or the cookie could not have arrived, and the key is not "
-                    "offered until several messages later, so neither is the problem. "
-                    "What is left is the entertainment session behind the port: "
-                    "answering a cookie costs a DTLS server no session state at all, "
-                    "and finishing the handshake needs somewhere to put one. A bridge "
-                    "whose entertainment service is wedged — which a run of aborted "
-                    "sessions will do — behaves exactly like this. Power-cycle the "
-                    "bridge; nothing else clears that from the outside."
+                    f" This machine reaches the bridge as {local}, which is not on "
+                    f"the bridge's own network ({host}). Streaming is the one part of "
+                    "the Hue API that wants the client on the same network as the "
+                    "bridge — REST routes anywhere, which is why pairing, rooms and "
+                    "the per-light flicker all work across the hop and only the "
+                    "stream does not. Run the console on the bridge's subnet, or "
+                    "move the bridge."
                 )
-            elif stage == "refused":
+            elif _pairing_provenance(cfg) != "yes":
                 detail += (
-                    f" — and UDP {STREAM_PORT} is shut even while the bridge says it is "
-                    "holding the area. The path is fine (the refusal had to reach us), so "
-                    "the bridge took the v1 claim without arming the stream behind it."
+                    " Everything the console can see is in order, so the next "
+                    "thing to rule out is the credential itself: the handshake "
+                    "offers the API key as its identity and the streaming key as "
+                    "the secret, and this console cannot show that the two were "
+                    "issued together. Press the bridge's link button and pair "
+                    "again — that takes a minute and either fixes this or removes "
+                    "it from the list. If it changes nothing, capture the wire "
+                    "next: `docker exec -it <container> sh "
+                    "/srv/scripts/capture_stream.sh`."
+                )
+            elif not _arm_looked_real():
+                detail += (
+                    " The bridge accepted the call to start the area and then went "
+                    "on reporting it as not streaming, so nothing was ever armed "
+                    "behind the port. Check that this console's key still owns the "
+                    "area — the Hue app takes it back when it streams to it — and "
+                    "try Release area, then Start."
                 )
             else:
-                local = local_address_for(host)
                 detail += (
-                    f" — and nothing comes back on UDP {STREAM_PORT} at all ({how}), "
-                    "while HTTP to the same bridge works."
+                    f" This machine is already on the bridge's network as {local}, "
+                    "with nothing translating the address, and the bridge reports "
+                    "the area as armed. So the path and the claim are both ruled "
+                    "out, and guessing further from here is not worth your time: "
+                    "run `docker exec -it <container> sh "
+                    "/srv/scripts/capture_stream.sh` — it captures the wire and "
+                    "drives the handshake inside the capture, so nothing has to be "
+                    "timed by hand. Whether our packets leave, whether anything "
+                    "comes back, and whether an ICMP refusal names a firewall "
+                    "splits this four ways in one look."
                 )
-                if local and looks_translated(local):
-                    detail += (
-                        f" This is a container address ({local}), translated to the "
-                        "host's before the bridge ever sees it — so whether it shares "
-                        "the bridge's network cannot be told from here. Switch the "
-                        "container to Host networking: that removes the translation, "
-                        "and if the host is on the bridge's network the client then "
-                        "genuinely is too."
-                    )
-                elif local and not same_subnet_as_bridge(local, host):
-                    detail += (
-                        f" This machine reaches the bridge as {local}, which is not on "
-                        f"the bridge's own network ({host}). Streaming is the one part of "
-                        "the Hue API that wants the client on the same network as the "
-                        "bridge — REST routes anywhere, which is why pairing, rooms and "
-                        "the per-light flicker all work across the hop and only the "
-                        "stream does not. Run the console on the bridge's subnet, or "
-                        "move the bridge."
-                    )
-                elif _pairing_provenance(cfg) != "yes":
-                    detail += (
-                        " Everything the console can see is in order, so the next "
-                        "thing to rule out is the credential itself: the handshake "
-                        "offers the API key as its identity and the streaming key as "
-                        "the secret, and this console cannot show that the two were "
-                        "issued together. Press the bridge's link button and pair "
-                        "again — that takes a minute and either fixes this or removes "
-                        "it from the list. If it changes nothing, capture the wire "
-                        "next: `docker exec -it <container> sh "
-                        "/srv/scripts/capture_stream.sh`."
-                    )
-                elif not _arm_looked_real():
-                    detail += (
-                        " The bridge accepted the call to start the area and then went "
-                        "on reporting it as not streaming, so nothing was ever armed "
-                        "behind the port. Check that this console's key still owns the "
-                        "area — the Hue app takes it back when it streams to it — and "
-                        "try Release area, then Start."
-                    )
-                else:
-                    detail += (
-                        f" This machine is already on the bridge's network as {local}, "
-                        "with nothing translating the address, and the bridge reports "
-                        "the area as armed. So the path and the claim are both ruled "
-                        "out, and guessing further from here is not worth your time: "
-                        "run `docker exec -it <container> sh "
-                        "/srv/scripts/capture_stream.sh` — it captures the wire and "
-                        "drives the handshake inside the capture, so nothing has to be "
-                        "timed by hand. Whether our packets leave, whether anything "
-                        "comes back, and whether an ICMP refusal names a firewall "
-                        "splits this four ways in one look."
-                    )
         # Never leave the area held by a stream that isn't running.
         if not await _release_area(req.area_id):
             _note("release-failed")
