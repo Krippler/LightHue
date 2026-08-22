@@ -175,17 +175,31 @@ class DtlsPskClient:
             raise DtlsError("the bridge never sent a HelloVerifyRequest")
 
         # The cookie exchange is excluded from the Finished hash: both hellos
-        # are replaced by the second one alone (RFC 6347 4.2.1).
+        # are replaced by the second one alone (RFC 6347 4.2.1), and the second
+        # ClientHello carries message_seq 1 (4.2.2).
+        #
+        # The record sequence number is emphatically NOT reset with them. It
+        # counts records within an epoch, and the server keeps an anti-replay
+        # window over it: a record arriving on a number already seen in epoch 0
+        # is dropped as a replay, with no alert and no reply. Resending the
+        # cookie at record 0 therefore looked exactly like a bridge that
+        # answers the first ClientHello and then goes silent forever.
         self._handshake = bytearray()
         self._msg_seq = 1
-        self._send_seq = 0
         self._sock.send(self._record(
             HANDSHAKE, self._handshake_message(CLIENT_HELLO, self._client_hello_body(cookie))))
 
         server_random, done = None, False
         deadline = time.monotonic() + self.timeout
         while not done and time.monotonic() < deadline:
-            for content_type, payload in self._split_records(self._read()):
+            try:
+                datagram = self._read()
+            except TimeoutError:
+                # Falls through to the ServerHello check below, so the reason
+                # this failed is stated rather than surfacing as a bare socket
+                # timeout that names neither the flight nor the expectation.
+                break
+            for content_type, payload in self._split_records(datagram):
                 if content_type == ALERT:
                     raise DtlsError(f"the bridge sent alert {payload[1] if len(payload) > 1 else '?'}")
                 if content_type != HANDSHAKE:
@@ -198,7 +212,8 @@ class DtlsPskClient:
                     elif msg_type == SERVER_HELLO_DONE:
                         done = True
         if server_random is None:
-            raise DtlsError("the bridge never sent a ServerHello")
+            raise DtlsError(
+                "the bridge took our cookie and never sent a ServerHello")
 
         master = prf(psk_premaster(self.psk), b"master secret",
                      self.client_random + server_random, 48)

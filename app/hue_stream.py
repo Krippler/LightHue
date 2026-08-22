@@ -194,6 +194,12 @@ def probe_handshake_stage(host: str, port: int = STREAM_PORT,
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(timeout)
+    # Which flight we are waiting on when the clock runs out. Without this the
+    # timeout handler below cannot tell "the bridge never said anything" from
+    # "the bridge answered, took our cookie, and then stopped" — and those two
+    # want completely different investigations. Reporting both as silence sent
+    # this hunt after the network for hours while the bridge was replying.
+    answered_first = False
     try:
         sock.connect((host, port))
         sock.send(_client_hello())
@@ -202,6 +208,7 @@ def probe_handshake_stage(host: str, port: int = STREAM_PORT,
         if cookie is None:
             kind = f"0x{first[0]:02x}" if first else "nothing"
             return "no-hello-verify", f"first reply was {kind}, not a HelloVerifyRequest"
+        answered_first = True
 
         sock.send(_client_hello(cookie=cookie, message_seq=1))
         second = sock.recv(4096)
@@ -220,6 +227,12 @@ def probe_handshake_stage(host: str, port: int = STREAM_PORT,
             )
         return "handshake-other", f"handshake message 0x{second[13]:02x}"
     except TimeoutError:
+        if answered_first:
+            return "hello-verify-only", (
+                "the bridge answered our first ClientHello with a cookie and then "
+                "ignored the ClientHello carrying it back — so it is listening, and "
+                "objecting to our second flight rather than to the path or the key"
+            )
         return "silent", "nothing came back"
     except ConnectionRefusedError:
         return "refused", "the port is shut (ICMP port unreachable), so the path is fine"
