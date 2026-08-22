@@ -117,7 +117,7 @@ async def lifespan(_app: FastAPI):
     await hue_v2.aclose()
 
 
-app = FastAPI(title="Game Hue Flicker", lifespan=lifespan)
+app = FastAPI(title="LightHue", lifespan=lifespan)
 app.add_middleware(ConsoleAuthMiddleware)
 
 

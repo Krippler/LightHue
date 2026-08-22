@@ -38,6 +38,14 @@
     The console reads each bulb's colour and brightness before it starts, and puts
     it back when the flicker stops - even if the container was restarted mid-run.&#13;
     &#13;
+    For an entertainment area set up in the Hue app, it can stream instead. The
+    ordinary path spends one HTTP command per light out of a budget of about ten a
+    second, so seven bulbs flicker at barely 1 Hz each; streaming sends one frame
+    holding the whole area, so the speed stops being divided and every light changes
+    together at up to 25 Hz. Streaming needs a pairing that included a streaming
+    key, so a console set up before this feature has to pair again - the panel says
+    so when that applies.&#13;
+    &#13;
     Everything is configured in the web UI, including the optional console password
     and the bridge send-rate cap - there are no environment variables to set here.&#13;
     &#13;

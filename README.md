@@ -1,4 +1,4 @@
-# Game Hue Flicker Console
+# LightHue
 
 Drives Philips Hue lights with the flicker patterns of twenty classic games —
 Blood, Descent, Deus Ex, DOOM, Doom 3, Duke Nukem 3D, Half-Life, Half-Life 2,
@@ -327,120 +327,7 @@ frame holding every light in the area, so a frame costs the same whether it
 holds one bulb or ten, and the speed stops being divided — up to 25 Hz across
 the whole area at once, every light changing on the same frame.
 
-### If the bridge is on an isolated VLAN
-
-Keeping IoT gear off the main network is worth keeping, so it is worth being
-precise about what this actually asks for. A macvlan or ipvlan Docker network
-does **not** put the server on the bridge's VLAN. The host keeps its own
-address and gains no reachability from that network; what gets an address there
-is one container — a single process whose entire job is talking to the bridge.
-Its exposure is its own listening port, not the server's shares.
-
-Not zero risk: the NIC then carries tagged frames for that VLAN, and a
-container escape would land on it. But it is a long way from putting the server
-itself on the IoT network, and there are narrower options:
-
-* **A dedicated NIC.** If the server has a spare port, make it an access port on
-  the bridge's VLAN and hang the Docker network off that interface alone. The
-  main NIC never carries the tagged traffic at all.
-* **A separate small host.** A Pi or a VM on the bridge's VLAN running the
-  console, with nothing else on it. The server stays entirely out of it.
-* **A firewall rule for UDP 2100 only.** Cheap, but see below — the evidence
-  suggests it will not help.
-* **Do without streaming.** The per-light path works across the boundary and is
-  what everything below the entertainment section describes.
-
-A firewall rule is worth understanding before spending time on it. When the
-port is shut, the bridge's ICMP port-unreachable comes back across the boundary
-every time — so the firewall is already passing return traffic for that flow.
-That points at the bridge declining an off-subnet source rather than at
-anything dropping packets in between, and a rule cannot change the bridge's
-mind.
-
-**Before any of this, test it.** Move the bridge to the main network for ten
-minutes, point the console at its new address, and press Start. It is
-reversible, needs no VLAN or firewall changes, and answers the question outright.
-
-Moving a bridge does not mean pairing again. The key belongs to the bridge, not
-to its address, so under **Change bridge → Existing key** you can enter the new
-address and leave the key blank: the stored API key and streaming key are kept.
-The Hue app is also less affected than it looks — local discovery is mDNS and
-will not cross a VLAN, but a bridge linked to a Hue account stays controllable
-through Philips' cloud from anywhere.
-
-### Which side to move
-
-Move the console, not the bridge. The requirement is that the streaming client
-shares a network with the bridge, and it does not care which network that is —
-so the cheap change is the one that leaves the Hue setup alone.
-
-Bulbs are not a consideration either way: they talk Zigbee, have no IP address
-and no VLAN, and neither notice nor care which Ethernet port the bridge is on.
-The Hue app is the one that would notice. It finds the bridge by mDNS, which
-does not cross a VLAN boundary without a reflector, so moving the bridge away
-from the phones would hand them the problem the console has now.
-
-### Putting the console on the bridge's network
-
-If the bridge sits on its own VLAN — an IoT network, say — the console has to
-join it for streaming to work. Everything else routes across the boundary
-happily, so this only bites the one feature.
-
-On Unraid, the way to do that is a Docker network on the bridge's VLAN rather
-than the default bridge or host networking:
-
-```bash
-docker network create -d ipvlan \
-    --subnet=192.168.50.0/24 --gateway=192.168.50.1 \
-    -o parent=bond0.50 hue-vlan
-```
-
-then set the container's network to `hue-vlan`.
-
-The parent has to be a real interface *on that VLAN*. Check first:
-
-```bash
-ip -4 addr | grep 192.168.50.
-```
-
-Note that with ordinary bridge networking the container's own address is
-`172.x` and gets translated to the host's on the way out, so it never matches
-the bridge's network however things are arranged — Diagnostics says
-`behind_container_nat` rather than pretending to compare. **Host networking** is
-the simplest way to make the client genuinely share the bridge's network when
-the host already does, and it is worth trying before any of what follows.
-
-Nothing there means the VLAN is not reaching the server, and no Docker network
-can conjure it: frames would still leave untagged on the parent's own VLAN,
-giving the container an address on a network it cannot actually reach. Trunk
-the VLAN to the server and add it under Settings → Network Settings first, so
-a `bond0.50` (or equivalent) exists to hang the Docker network off.
-
-Use `-d macvlan` instead of `ipvlan` if Unraid is not in ipvlan mode; a `vhost0`
-interface alongside `bond0` means it is.
-
-To test before rearranging anything: if the host does have an address on the
-bridge's network, `scripts/probe_stream.py --from <that-address>` speaks from it
-directly and answers the question without moving the container.
-
-**The client has to be on the bridge's own network.** This is the one part of
-the Hue API with that constraint, and it is easy to miss because nothing else
-has it: discovery, pairing, rooms and the ordinary per-light flicker all route
-across subnets happily. A console on `192.168.10.x` talking to a bridge on
-`192.168.50.x` will do everything except stream, and the failure looks like a
-handshake timeout rather than anything to do with routing. Diagnostics reports
-whether the two are on the same network.
-
-**The DTLS client.** Streaming opens a DTLS 1.2 connection secured with a
-pre-shared key, and the console carries its own minimal client for it. That is
-not invented-here: python-mbedtls offers, in its ClientHello, an SCSV
-pseudo-suite beside the real one plus signature_algorithms, encrypt_then_mac,
-extended_master_secret and session_ticket, and exposes no way to turn any of it
-off. Bridges have been seen answering a bare ClientHello and ignoring that one.
-So the console offers a single cipher suite and no extensions, and falls back to
-mbedtls if that fails. Diagnostics reports which one got through.
-
-Three other things it needs:
+### What it needs
 
 1. **An entertainment area**, set up in the Hue app under *Entertainment
    areas*. The bridge will only stream to one it already knows about, it holds
@@ -452,10 +339,18 @@ Three other things it needs:
 3. **Nothing else streaming to the same area.** Hue Sync and games claim the
    area exclusively; areas already taken are listed but greyed out.
 
+The bridge does *not* need to be on the same subnet as the console. Streaming
+is UDP where the rest of the API is HTTP, and it routes across a boundary like
+anything else.
+
+### Handing the area back
+
 While an area is streaming the bridge ignores everything else for those lights,
 including the Hue app, so the console hands the area back when you press Stop,
 when the sender stops for any reason at all, and on the way out if the container
-is stopped mid-stream.
+is stopped mid-stream. The release is checked rather than assumed: a bridge that
+accepts the call and keeps holding the area would otherwise leave those lights
+answering to nothing, with nothing on screen saying why.
 
 Streaming leaves each bulb on whatever the last frame held, so the console
 reads the area's lights before it claims the area and puts them back after it
@@ -463,74 +358,105 @@ releases it — the same snapshot the normal path uses, and in that order,
 because a bridge that is streaming to an area ignores anything else sent to
 those lights.
 
-Stopping sends the bridge a DTLS close_notify before dropping the socket. That
-is not a nicety: the bridge allows one entertainment session and keeps it on
-its books until it is told the last one ended, so a stream that closes quietly
-leaves a ghost session that blocks the next handshake until the bridge times it
-out on its own. Streaming once and then never again, with no other symptom, is
-what that looks like.
+Stopping sends the bridge a DTLS close_notify before dropping the socket. The
+bridge allows one entertainment session and keeps it on its books until it is
+told the last one ended, so a stream that closes quietly can leave a ghost
+session behind.
 
 On startup the console hands back any entertainment area the bridge still
 records as claimed by its own API key. That covers the case nothing else does:
 a container killed, redeployed or crashed mid-stream leaves the claim behind,
 and until something clears it those lights answer to nothing at all.
+**Release area** clears one by hand, including a claim left by something else,
+which beats restarting the bridge.
 
-**If a stream is left claimed** — a killed container, a dropped network — the
-bridge keeps holding the area, and from the outside that looks like it simply
-ignoring the streaming port: the area is accepted and then the handshake times
-out. Starting a stream clears a claim this console left behind before making
-its own, so that usually sorts itself out. **Release area** clears one by hand,
-including a claim left by something else, which beats restarting the bridge.
-**Diagnostics** shows what the bridge says about each area, whether UDP reaches
-the streaming port, and what the last start attempt actually did, step by step.
+### The DTLS client
 
-That UDP line matters more than it looks. A handshake that times out means the
-bridge said nothing, and three quite different things cause that. A bare DTLS
-ClientHello, sent *while the area is claimed*, tells them apart:
+Streaming opens a DTLS 1.2 connection secured with a pre-shared key. The
+console carries two clients and tries them one per attempt, each against a
+freshly armed area:
+
+* **`minimal`** — hand-rolled, and the one that leads. It retransmits a flight
+  that goes unanswered.
+* **`mbedtls`** — python-mbedtls, as a fallback.
+
+That order is the whole thing, and it was expensive to learn. DTLS runs over a
+protocol that loses datagrams, so resending an unanswered flight is the client's
+job. At least one bridge in the wild drops the *first* ClientHello carrying a
+cookie and answers the second, which makes retransmission not politeness but the
+handshake itself. python-mbedtls drives a blocking socket, so its own
+retransmission timer never gets to run — it sends a flight once and sits in
+`recv` until the socket gives up. A client that does not resend stops dead at
+exactly that point, and the symptom is a stream that works sometimes.
+
+Three details in the framing matter, and all three are easy to get wrong:
+
+* A retransmit keeps its handshake `message_seq`, because it is the same
+  message, but needs a **new record sequence number** — the server's anti-replay
+  window silently drops a record number it has already seen. The two counters
+  pull in opposite directions.
+* The record layer carries **DTLS 1.0** until a version is agreed, with 1.2
+  requested inside the ClientHello. That split is what RFC 6347 asks for and
+  what OpenSSL and mbedtls both put on the wire.
+* The cookie exchange is excluded from the Finished hash: both hellos are
+  replaced by the second one alone.
+
+Diagnostics reports which client got through, as `transport`.
+
+### When a stream will not start
+
+**Diagnostics** shows what the bridge says about each area, what the last start
+attempt did step by step, the bridge's own model and firmware, and — when a
+start fails — a deeper look taken while the area is still claimed.
+
+That deeper look sends a bare ClientHello and reports how far it gets. The PSK
+identity is not sent until the fifth message of the handshake, so everything
+before that is identical whether the key is right or hopeless: a probe that
+stops at the first reply cannot tell a rejected key from a rejected offer.
 
 | how far it gets | what it means |
 |---|---|
 | **server-hello** | The bridge accepted the offer and would have gone on to check a key. Path fine, port open — so the streaming key is the problem. Pair again for a matching key and API key. |
-| **hello-verify-only** / **alert** | It answers but rejects our ClientHello. That is the offer, not the key: the key is not sent until several messages later. |
-| **refused** (ICMP port unreachable) | The path is fine — the refusal itself had to reach you — but the port is shut. A bridge that says it holds the area and still refuses took the v1 claim without arming the stream behind it. |
-| **silent** | Nothing arrived, or nothing came back. The only one that is a network problem. |
+| **hello-verify-only** | It answered the first ClientHello with a cookie and ignored the one carrying it back. The path works in both directions or the cookie could not have arrived, and the key is not offered this early. Usually the second flight needing a resend. |
+| **alert** | The bridge named its objection outright. That is the offer, not the key. |
+| **refused** (ICMP port unreachable) | The path is fine — the refusal itself had to reach you — but the port is shut. The bridge took the claim without arming the stream behind it. |
+| **silent** | Nothing came back at all. The only one that is a network problem. |
 
-The probe has to go as far as ServerHello because the PSK identity is not sent
-until the fifth message of the handshake. Everything before that is identical
-whether the key is right or hopeless, so a probe that stops at the first reply
-cannot tell a rejected key from a rejected offer.
+An ICMP refusal is *proof of reachability*, not evidence of blockage. It also
+means the probe has to run while the area is claimed — the bridge only binds the
+port while it holds one, so probing after the release measures a closed port and
+calls a healthy network broken.
 
-Note the middle row: an ICMP refusal is *proof of reachability*, not evidence
-of blockage. It also means the probe has to run while the area is claimed — the
-bridge only binds the port while it holds one, so probing after the release
-measures a closed port and calls a healthy network broken.
+Alongside it the console runs **OpenSSL**, which shares no code with either
+client here and reaches Hue bridges with one command. Two clients agreeing may
+only mean they share a mistake; a third implementation disagreeing settles which
+side the fault is on. If OpenSSL connects where the console does not, the error
+says so outright and stops blaming the bridge.
 
-`scripts/probe_stream.py` does the same standalone, and goes one better: it
-claims an area, tries the real handshake, and if that fails re-claims and tries
-a hand-rolled one offering a single cipher suite and no extensions. Same bridge,
-same claim, seconds apart. If the hand-rolled one gets through where the library
-does not, the bridge is willing and the client is the problem — which nothing
-else here can establish.
+### Diagnosing from a shell
 
-It is one file with no dependencies beyond the standard library, so it can be
+`scripts/probe_stream.py` does the same standalone. It claims an area, tries the
+library handshake, then the hand-rolled one, then OpenSSL, and says which got
+how far. One file with no dependencies beyond the standard library, so it can be
 copied anywhere that can see the bridge:
 
 ```bash
-scp scripts/probe_stream.py someone@192.168.50.50:/tmp/
-python3 /tmp/probe_stream.py 192.168.50.31 <api-key> <client-key>
+scp scripts/probe_stream.py someone@192.168.1.50:/tmp/
+python3 /tmp/probe_stream.py 192.168.1.23 <api-key> <client-key>
 ```
 
-Working from a machine on the bridge's own network and failing from elsewhere
-is the single most useful thing to know, and that test is worthless if the tool
-needs a checkout to run. It also ships in the image, so it runs where the
-console does:
+It also ships in the image, where `--config` reads the bridge address and both
+keys from the console's own config rather than putting a 40-character key into
+shell history:
 
 ```bash
 docker exec -it <container> python3 /srv/scripts/probe_stream.py --config /data/config.json
 ```
 
 For a failure that only happens sometimes, `--repeat` runs the same attempt on
-a loop and reports the shape of it rather than one sample:
+a loop and reports the shape of it rather than one sample. Evenly spaced
+successes mean state carried from one attempt to the next; scattered ones mean
+loss, and those want completely different fixes.
 
 ```bash
 docker exec -it <container> python3 /srv/scripts/probe_stream.py \
@@ -553,21 +479,12 @@ different ways — no packets at all (something local dropped it), an ICMP refus
 bridge is receiving and staying silent), or a reply that arrives while the
 handshake still fails (the reply is being dropped on the way in).
 
-Evenly spaced successes mean state carried from one attempt to the next.
-Scattered ones mean loss. Those want completely different fixes, and one
-attempt cannot tell them apart.
-
-`--config` reads the bridge address and both keys from the console's own config,
-which beats copying a 40-character key onto a command line and into shell
-history. Passing them explicitly still works.
-
-Only the library handshake needs `python-mbedtls`; the hand-rolled one is
-standard library alone, so the script still says something useful when it is
-run somewhere the dependency is missing.
+`tcpdump` and `openssl` are in the image for exactly this. A NAS very likely has
+neither, and asking someone to install packet-capture tools on their server to
+debug a light is a poor trade.
 
 Streaming has no transition setting: every frame is sent, so there is nothing
 to interpolate between.
-
 ## Settings
 
 Open **Settings** in the bar above the panels.
@@ -578,6 +495,15 @@ which is the default. The limiter serializes updates rather than dropping
 them, so with enough lights × Hz the *effective* per-light update rate falls
 below what you asked for — several lights at 10 Hz will each visibly slow
 down. That's the trade for not overwhelming the bridge.
+
+**When flicker stops.** Reads each bulb's colour and brightness before it
+starts and puts it back on stop, even after a container restart. On by default.
+
+**Stream settle.** How long to wait between handing an entertainment area to
+the stream and opening the connection. The bridge answers on the streaming port
+before the session behind it is ready, and some bridges want a moment. Default
+1500 ms; drop it to 0 if your bridge does not need it, since it is dead time on
+every start.
 
 **Console password.** Off by default: anyone who can reach the port can drive
 your lights. Set a password and every API route and the WebSocket start
@@ -603,16 +529,28 @@ are remembered per-browser; **Reset layout** puts the order back.
 app/
   main.py            FastAPI routes + WebSocket
   auth.py            Optional console password + gating middleware
-  hue_client.py      Hue Bridge HTTP client (discover/pair/lights/state)
+  hue_client.py      Hue Bridge HTTP client, v1 (discover/pair/lights/state)
+  hue_v2.py          Hue v2 API, only as far as entertainment configurations
   flicker_engine.py  Per-light async flicker loops + rate limiter
+  stream_engine.py   One entertainment area over one socket, at a fixed rate
+  hue_stream.py      HueStream framing, the DTLS transport, and the probes
+  dtls_psk.py        A DTLS 1.2 PSK client, hand-rolled, that retransmits
   patterns.py        Built-in flicker patterns, by game
   packs.py           Shareable pattern-pack file format
   config_store.py    Persisted JSON config (bridge creds, patterns, settings)
 static/
   index.html, style.css, app.js   The control UI
+scripts/
+  probe_stream.py    Standalone handshake probe — stdlib only, runs anywhere
+  capture_stream.sh  Packet capture wrapped around one handshake attempt
 tests/                            pytest suite
 unraid-template.xml               Unraid Community Applications template
 ```
+
+`app/dtls_psk.py` and the probe carry deliberately duplicated copies of the
+handshake framing — the probe has to run on a machine with no checkout and no
+dependencies, so it cannot import the app. A test asserts the two produce
+byte-identical ClientHellos, which is what keeps the duplication honest.
 
 ## If the UI looks stale
 
