@@ -455,7 +455,11 @@ class DtlsStream:
             sock.do_handshake()
         except Exception as e:
             sock.close()
-            raise StreamError(f"timed out or refused: {e}") from e
+            # Name the exception class. "timed out or refused" was a label this
+            # code applied to every failure alike, so an alert, a cipher
+            # mismatch and a socket that never got a reply all arrived looking
+            # like a network problem — and got investigated as one.
+            raise StreamError(f"{type(e).__name__}: {e}") from e
         return sock
 
     def send(self, frame: bytes):

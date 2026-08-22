@@ -822,16 +822,17 @@ async def _area_or_400(area_id: str) -> dict:
     return info
 
 
-async def _release_area(area_id: str):
+async def _release_area(area_id: str) -> bool:
     """Hand the area back, whatever else went wrong, by whichever route armed it.
 
     While the bridge has an area in streaming mode nothing else can drive those
     lights — not this console, not the Hue app — so failing to release one
-    leaves the user's lights stuck until they restart the bridge.
+    leaves the user's lights stuck until they restart the bridge. Returns
+    whether the bridge actually let go.
     """
     client = get_client()
     if client is None:
-        return
+        return False
     configuration = await _v2_configuration(area_id)
     if configuration is not None:
         await _arm_v2(configuration, False)
@@ -839,6 +840,24 @@ async def _release_area(area_id: str):
         await client.set_stream(area_id, False)
     except Exception:
         logger.exception("Could not hand entertainment area %s back", area_id)
+
+    # Check it actually let go. Firing both routes and trusting the response was
+    # the same mistake the arming path made: the call succeeds, the area stays
+    # held, and the lights stay stuck until the bridge is restarted — with
+    # nothing anywhere saying so.
+    if await _await_stream_flag(client, area_id, False, timeout=3.0):
+        return True
+    logger.warning("Area %s is still claimed after being released; trying once more",
+                   area_id)
+    try:
+        await client.set_stream(area_id, False)
+    except Exception:
+        logger.exception("Could not hand entertainment area %s back", area_id)
+    released = await _await_stream_flag(client, area_id, False, timeout=3.0)
+    if not released:
+        logger.error("Area %s is stranded: the bridge still reports it as streaming",
+                     area_id)
+    return released
 
 
 # What the last start attempt actually did, step by step. Streaming failures
@@ -1150,11 +1169,11 @@ async def stream_diagnostics():
         }
         out["udp_to_stream_port"] = {
             "state": state, "detail": how,
-            # Read this with the claim in mind: the bridge only binds the port
-            # while it holds an area, so "refused" here, with nothing claimed,
-            # is the healthy answer and says the path works.
-            "note": "probed with no area claimed" if not stream_engine.running else
-                    "probed while streaming",
+            # Filled in below, once the bridge has been asked what it is
+            # actually holding. Deriving it from our own engine was wrong: an
+            # area left claimed by a failed attempt is exactly the case worth
+            # naming, and the engine knows nothing about it.
+            "note": None,
         }
     except Exception as e:
         out["udp_to_stream_port"] = {"reachable": None, "detail": str(e)}
@@ -1177,7 +1196,39 @@ async def stream_diagnostics():
         for gid, info in groups.items()
         if (info.get("type") or "") == ENTERTAINMENT_GROUP_TYPE
     }
+    if isinstance(out.get("udp_to_stream_port"), dict):
+        out["udp_to_stream_port"]["note"] = _probe_note(out["areas"],
+                                                        cfg.get("api_key"))
     return out
+
+
+def _probe_note(areas: dict, api_key: str | None) -> str:
+    """What the port probe means, given what the bridge is holding.
+
+    The bridge only binds UDP 2100 while it holds an area, so the same answer
+    means opposite things either side of a claim: refused with nothing claimed
+    says the path is healthy, refused with an area claimed says the bridge took
+    the claim without arming anything.
+
+    Who holds it matters as much as whether anyone does. An area this console
+    claimed and never released is stranded and worth fixing; the same area held
+    by Hue Sync or a game is working exactly as intended, and calling that a
+    fault would send someone chasing their own television.
+    """
+    ours, theirs = [], []
+    for gid, area in areas.items():
+        stream = area.get("stream") or {}
+        if not stream.get("active"):
+            continue
+        (ours if stream.get("owner") == api_key else theirs).append(gid)
+
+    if ours:
+        return (f"probed while this console is holding area {', '.join(ours)} — if no "
+                "stream is running, that area is stranded and Release area will free it")
+    if theirs:
+        return (f"probed while something else is streaming to area {', '.join(theirs)} "
+                "— the port is bound for that session, not for us")
+    return "probed with no area claimed, so a refusal here is the healthy answer"
 
 
 @app.post("/api/stream/start")
@@ -1402,7 +1453,14 @@ async def start_stream(req: StreamStartRequest):
                         "splits this four ways in one look."
                     )
         # Never leave the area held by a stream that isn't running.
-        await _release_area(req.area_id)
+        if not await _release_area(req.area_id):
+            _note("release-failed")
+            detail += (
+                f" The bridge is also still holding area {req.area_id} after being "
+                "told to let go, which blocks everything else from driving those "
+                "lights — the Hue app included. Use Release area, and restart the "
+                "bridge if that does not clear it."
+            )
         raise HTTPException(502, detail) from e
 
     _note("streaming")
