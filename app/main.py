@@ -1376,10 +1376,9 @@ async def start_stream(req: StreamStartRequest):
                         "the secret, and this console cannot show that the two were "
                         "issued together. Press the bridge's link button and pair "
                         "again — that takes a minute and either fixes this or removes "
-                        "it from the list. If it changes nothing, the capture below "
-                        "is the next step."
-                        f" Run `tcpdump -ni any -vv 'udp port {STREAM_PORT} or icmp'` "
-                        "on the host and press Start again."
+                        "it from the list. If it changes nothing, capture the wire "
+                        "next: `docker exec -it <container> sh "
+                        "/srv/scripts/capture_stream.sh`."
                     )
                 elif not _arm_looked_real():
                     detail += (
@@ -1395,11 +1394,12 @@ async def start_stream(req: StreamStartRequest):
                         "with nothing translating the address, and the bridge reports "
                         "the area as armed. So the path and the claim are both ruled "
                         "out, and guessing further from here is not worth your time: "
-                        "run `tcpdump -ni any -vv 'udp port "
-                        f"{STREAM_PORT} or icmp'` on the host and press Start again. "
-                        "Whether our packets leave, whether anything comes back, and "
-                        "whether an ICMP refusal names a firewall splits this four ways "
-                        "in one look."
+                        "run `docker exec -it <container> sh "
+                        "/srv/scripts/capture_stream.sh` — it captures the wire and "
+                        "drives the handshake inside the capture, so nothing has to be "
+                        "timed by hand. Whether our packets leave, whether anything "
+                        "comes back, and whether an ICMP refusal names a firewall "
+                        "splits this four ways in one look."
                     )
         # Never leave the area held by a stream that isn't running.
         await _release_area(req.area_id)

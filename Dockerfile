@@ -2,6 +2,15 @@ FROM python:3.11-slim
 
 WORKDIR /srv
 
+# tcpdump is here for one reason: when a stream times out, the only question
+# left is whether our datagrams reach the wire and whether anything answers.
+# With host networking the container shares the host's stack, so capturing from
+# in here sees exactly what the host would — and that beats asking whoever is
+# debugging to install tools on their NAS.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tcpdump \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

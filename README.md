@@ -61,6 +61,11 @@ The easiest route is the template in this repo:
 The image is published to `ghcr.io/krippler/lighthue:latest` and rebuilt on
 every push to `main`, so Unraid's update check works normally.
 
+Work branches publish under their own tag — `ghcr.io/krippler/lighthue:<branch>`,
+with `/` written as `-`. Point a container at one to test a fix on real hardware
+without putting it on `main` first, which matters most for the parts that can
+only be proven against a real bridge.
+
 **If bridge discovery or pairing fails**, set *Network Type* to **Host** on
 the container and try again. Some Unraid setups don't let the default bridge
 network reach the Hue Bridge or the discovery endpoint.
@@ -521,16 +526,32 @@ needs a checkout to run. It also ships in the image, so it runs where the
 console does:
 
 ```bash
-docker exec -it lighthue python3 /srv/scripts/probe_stream.py --config /data/config.json
+docker exec -it <container> python3 /srv/scripts/probe_stream.py --config /data/config.json
 ```
 
 For a failure that only happens sometimes, `--repeat` runs the same attempt on
 a loop and reports the shape of it rather than one sample:
 
 ```bash
-docker exec -it lighthue python3 /srv/scripts/probe_stream.py \
+docker exec -it <container> python3 /srv/scripts/probe_stream.py \
     --config /data/config.json --repeat 20 --interval 20
 ```
+
+When the probe says nothing came back, the next question is whether anything
+left. `capture_stream.sh` answers it in one command — it starts a packet
+capture, runs the probe inside it, and prints what was on the wire:
+
+```bash
+docker exec -it <container> sh /srv/scripts/capture_stream.sh
+```
+
+Driving both from one place matters more than it sounds: a capture started by
+hand in another window can miss the attempt entirely, and a capture that missed
+it looks exactly like an attempt that sent nothing. Four outcomes, pointing four
+different ways — no packets at all (something local dropped it), an ICMP refusal
+(a firewall, and the message names the hop), ours out with nothing back (the
+bridge is receiving and staying silent), or a reply that arrives while the
+handshake still fails (the reply is being dropped on the way in).
 
 Evenly spaced successes mean state carried from one attempt to the next.
 Scattered ones mean loss. Those want completely different fixes, and one
