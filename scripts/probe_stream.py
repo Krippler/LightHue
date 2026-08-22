@@ -48,6 +48,10 @@ VERDICT = {
   so either the bridge never arms the stream behind a v1 claim, or UDP {port} is
   not making the round trip from {local}.
 
+  Check the stage line above before believing that. Both clients timing out is
+  not the same as nothing coming back: if the stage says hello-verify-only, the
+  bridge is answering and the paragraphs below are about the wrong problem.
+
   If the line above says this machine is not on the bridge's own network, start
   there. Streaming is the one part of the Hue API that wants the client on the
   same network as the bridge; REST routes anywhere, which is why everything
@@ -91,9 +95,26 @@ EXPLAIN = {
   arming the stream behind it.
 """,
     "hello-verify-only": """
-  The bridge sent its cookie and then went quiet, so it is rejecting our
-  ClientHello rather than our key — the key is never offered this early. That
-  usually means firmware that wants the v2 entertainment API to start a stream.
+  The bridge answered our first ClientHello with a cookie in about two
+  milliseconds, then dropped the ClientHello carrying that cookie back.
+
+  Read what that rules out. The path works in both directions, or the cookie
+  would never have arrived. The key is not involved: a PSK identity is not sent
+  until the fifth message of the flight, several steps after this. And it is
+  not the offer either, if mbedtls fails here too — it sends twenty cipher
+  suites and a full set of extensions where the bare client sends one suite and
+  none, and a bridge that objected to the offer could not object to both.
+
+  What is left is the entertainment session behind the port. A DTLS server can
+  answer a HelloVerifyRequest without any session state at all — that is the
+  point of a cookie, to cost the server nothing until the client proves it can
+  receive. Completing the handshake needs somewhere to put the session. A
+  bridge whose entertainment service is wedged, which many aborted sessions
+  will do, looks exactly like this: the socket layer is polite and the service
+  behind it is not there.
+
+  Power-cycle the bridge. Thirty seconds, and it is the only thing that clears
+  that state from the outside.
 """,
     "alert": """
   The bridge rejected our ClientHello outright ({how}). That is the offer, not
@@ -182,6 +203,10 @@ def handshake_stage(host, port=STREAM_PORT, timeout=4.0):
     fifth message, so everything up to ServerHello is the same whatever the
     key — which is what makes this useful without one."""
     sock = _udp_socket(timeout)
+    # Which flight the clock ran out on. Catching TimeoutError around the whole
+    # exchange reported a bridge that answered and then stopped as one that
+    # never spoke at all, and those point in opposite directions.
+    answered_first = False
     try:
         sock.connect((host, port))
         sock.send(client_hello())
@@ -190,6 +215,7 @@ def handshake_stage(host, port=STREAM_PORT, timeout=4.0):
         if cookie is None:
             kind = f"0x{first[0]:02x}" if first else "nothing"
             return "no-hello-verify", f"first reply was {kind}, not a HelloVerifyRequest"
+        answered_first = True
         sock.send(client_hello(cookie=cookie, message_seq=1))
         second = sock.recv(4096)
         if not second:
@@ -201,6 +227,11 @@ def handshake_stage(host, port=STREAM_PORT, timeout=4.0):
             return "server-hello", "the bridge accepted our ClientHello and answered ServerHello"
         return "unexpected", f"reply was 0x{second[0]:02x}"
     except TimeoutError:
+        if answered_first:
+            return "hello-verify-only", (
+                "answered our first ClientHello with a cookie, then ignored the "
+                "ClientHello carrying it back"
+            )
         return "silent", "nothing came back"
     except ConnectionRefusedError:
         return "refused", "the port is shut (ICMP port unreachable), so the path is fine"
