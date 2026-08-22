@@ -12,6 +12,15 @@ _CONFIG_DIR = os.path.dirname(CONFIG_PATH)
 _DEFAULT_SETTINGS = {
     "max_commands_per_second": 10.0,
     "restore_on_stop": True,
+    # How long to let the bridge settle between arming an entertainment area
+    # and speaking to it. Arming brings up two things at different speeds: the
+    # DTLS socket, which answers a cookie the moment it is bound, and the
+    # session behind it. Handshaking into that gap gets a HelloVerifyRequest
+    # and then silence, because there is nowhere yet to put the session.
+    #
+    # Adjustable because the right value is a property of one bridge on one
+    # network, and nobody can guess it from here.
+    "stream_settle_ms": 1500,
 }
 
 _DEFAULT = {

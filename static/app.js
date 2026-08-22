@@ -1345,6 +1345,12 @@ const rateInput = $('#rate-input');
 const rateValue = $('#rate-value');
 rateInput.addEventListener('input', () => { rateValue.textContent = rateInput.value; });
 
+const settleInput = $('#settle-input');
+const settleValue = $('#settle-value');
+settleInput.addEventListener('input', () => {
+  settleValue.textContent = settleInput.value;
+});
+
 const restoreToggle = $('#restore-toggle');
 
 async function loadSettings() {
@@ -1352,6 +1358,8 @@ async function loadSettings() {
   rateInput.value = settings.max_commands_per_second;
   rateValue.textContent = settings.max_commands_per_second;
   restoreToggle.checked = settings.restore_on_stop;
+  settleInput.value = settings.stream_settle_ms;
+  settleValue.textContent = settings.stream_settle_ms;
 }
 
 async function saveSettings() {
@@ -1360,6 +1368,7 @@ async function saveSettings() {
     body: JSON.stringify({
       max_commands_per_second: Number(rateInput.value),
       restore_on_stop: restoreToggle.checked,
+      stream_settle_ms: Number(settleInput.value),
     }),
   });
 }
@@ -1383,6 +1392,21 @@ $('#btn-save-rate').addEventListener('click', async () => {
   try {
     await saveSettings();
     statusEl.textContent = `Send rate capped at ${rateInput.value}/sec.`;
+    statusEl.className = 'status-line ok';
+  } catch (e) {
+    statusEl.textContent = e.message;
+    statusEl.className = 'status-line err';
+  }
+});
+
+$('#btn-save-settle').addEventListener('click', async () => {
+  const statusEl = $('#settle-status');
+  try {
+    await saveSettings();
+    const ms = Number(settleInput.value);
+    statusEl.textContent = ms
+      ? `Waiting ${ms}ms after arming before connecting.`
+      : 'Connecting the moment the area is armed.';
     statusEl.className = 'status-line ok';
   } catch (e) {
     statusEl.textContent = e.message;
