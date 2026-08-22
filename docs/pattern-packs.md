@@ -6,7 +6,7 @@ format is deliberately simple so a pack can be written by hand.
 
 ```json
 {
-  "format": "game-hue-flicker/patterns",
+  "format": "LightHue/patterns",
   "version": 1,
   "name": "Doom 3 style flicker",
   "author": "someone",
@@ -58,6 +58,6 @@ credentials, nothing console-specific — so they are safe to pass around.
 
 ## A note on the format id
 
-`game-hue-flicker/patterns` is the project's original name. It stays as it is:
+`LightHue/patterns` is the project's original name. It stays as it is:
 it is written into every pack anyone has already exported, and changing it
 would make those files fail to import.
