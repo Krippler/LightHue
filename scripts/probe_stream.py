@@ -12,7 +12,7 @@ Run it in both places when a stream times out from the container:
     python3 scripts/probe_stream.py 192.168.1.23 <api-key> <client-key>
 
     # inside the container
-    docker exec -it lighthue python3 /srv/scripts/probe_stream.py ...
+    docker exec -it <container> python3 /srv/scripts/probe_stream.py ...
 
 Working on the host and failing in the container means container networking is
 eating the UDP, and Host networking is the fix. Failing in both means the
@@ -54,13 +54,15 @@ VERDICT = {
   except the stream has worked.
 
   If the network is already ruled out, stop reasoning about it and watch the
-  wire. On the host, in another shell:
+  wire. Do not go hunting for tcpdump on the host — a NAS very likely has none,
+  which is why this image carries one. From a checkout-free shell:
 
-      tcpdump -ni any -vv 'udp port {port} or icmp'
+      docker exec -it <container> sh /srv/scripts/capture_stream.sh
 
-  then run this again. Keep the icmp half of that filter: an unreachable or
-  admin-prohibited reply names a firewall outright, and a filter on udp alone
-  throws that away. Four outcomes, pointing four different ways:
+  That starts the capture, runs this probe inside it, and prints what was on
+  the wire. With host networking the container shares the host's stack, so what
+  it sees is what the host would see. Four outcomes, pointing four different
+  ways:
 
     * nothing leaves at all      -> the socket never sent; a local firewall or
                                     routing rule is dropping it before the wire

@@ -6,10 +6,25 @@
 # attempt that sent nothing. This drives the handshake itself, so the capture
 # always brackets exactly one attempt.
 #
-#   docker exec -it lighthue sh /srv/scripts/capture_stream.sh
+#   docker exec -it "$(docker ps --filter ancestor=lighthue -q)" \
+#       sh /srv/scripts/capture_stream.sh
+#
+# Or just name your own container — this image gets deployed under whatever
+# name suits, so do not go looking for one called "lighthue":
+#
+#   docker ps --format '{{.Names}}\t{{.Image}}'
+#   docker exec -it <that-name> sh /srv/scripts/capture_stream.sh
 #
 # Everything it needs is in /data/config.json. Pass extra arguments and they go
 # to probe_stream.py — --area 201 to try a different area, for instance.
+#
+# Needs an image built after this script was added. Against an older container,
+# run the capture on the host and drive the probe with docker exec instead:
+#
+#   tcpdump -ni any -s0 -U -w /tmp/hue.pcap 'udp port 2100 or icmp' &
+#   sleep 2
+#   docker exec <name> python3 /srv/scripts/probe_stream.py --config /data/config.json
+#   sleep 1; kill %1; tcpdump -nr /tmp/hue.pcap -vv
 set -eu
 
 PORT="${STREAM_PORT:-2100}"
