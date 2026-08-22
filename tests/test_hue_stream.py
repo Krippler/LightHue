@@ -253,7 +253,10 @@ def test_the_client_hello_is_a_well_formed_dtls_record():
     from app.hue_stream import _client_hello
     hello = _client_hello()
     assert hello[0] == 0x16                       # handshake record
-    assert hello[1:3] == b"\xfe\xfd"              # DTLS 1.2
+    # DTLS 1.0 at the record layer with 1.2 requested inside, which is what
+    # RFC 6347 asks for before a version is agreed.
+    assert hello[1:3] == b"\xfe\xff"
+    assert hello[25:27] == b"\xfe\xfd"
     assert hello[3:5] == b"\x00\x00"              # epoch 0
     body_len = int.from_bytes(hello[11:13], "big")
     assert len(hello) == 13 + body_len            # length field agrees
@@ -315,14 +318,15 @@ def test_closing_says_goodbye_whichever_client_got_through(stub_bridge):
     assert stream._sock is None
 
 
-def test_the_better_tested_client_leads(stub_bridge):
-    """mbedtls is the reference implementation and the one bridges answer; the
-    hand-rolled client is the fallback for a bridge that wants a smaller offer."""
+def test_the_retransmitting_client_leads(stub_bridge):
+    """The hand-rolled client resends a lost flight; python-mbedtls, on a
+    blocking socket, cannot — and that is what separated OpenSSL, which reaches
+    this bridge, from mbedtls, which does not."""
     stream = DtlsStream(stub_bridge["host"], stub_bridge["identity"], stub_bridge["key"],
                         port=stub_bridge["port"])
     stream.connect()
     try:
-        assert stream.transport == "mbedtls"
+        assert stream.transport == "minimal"
     finally:
         stream.close()
 
