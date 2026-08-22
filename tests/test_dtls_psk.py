@@ -190,7 +190,9 @@ def test_the_sample_first_flight_is_the_real_opening_datagram():
 
     flight = first_flight("some-application-key")
     assert flight[0] == HANDSHAKE
-    assert flight[1:3] == b"\xfe\xfd"                  # DTLS 1.2
+    # DTLS 1.0 at the record layer, 1.2 in the hello body: the split RFC 6347
+    # asks for before a version is agreed, and what OpenSSL puts on the wire.
+    assert flight[1:3] == b"\xfe\xff"
     assert flight[3:5] == b"\x00\x00"                  # epoch 0
     assert flight[5:11] == b"\x00" * 6                 # first record of the flight
     body = flight[13:]
@@ -322,3 +324,43 @@ def test_a_suite_this_client_cannot_speak_is_named_not_swallowed():
         client.connect()
     thread.join(5)
     server.close()
+
+
+def test_a_dropped_flight_is_sent_again():
+    """DTLS runs over a protocol that loses things, so resending is the client's
+    job — and this bridge drops the first ClientHello carrying a cookie and
+    answers the second. A client that sends each flight once stops exactly
+    there, which is how this failed while OpenSSL walked through it.
+    """
+    import socket
+    import threading
+
+    from app.dtls_psk import DtlsError, DtlsPskClient
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    server.bind(("127.0.0.1", 0))
+    server.settimeout(10)
+    seen = []
+
+    def serve():
+        datagram, peer = server.recvfrom(4096)
+        seen.append(datagram)
+        server.sendto(_hello_verify(b"\xa5" * 32), peer)
+        # Ignore the first cookie'd hello, exactly as the bridge does.
+        seen.append(server.recvfrom(4096)[0])
+        seen.append(server.recvfrom(4096)[0])
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+
+    client = DtlsPskClient(*server.getsockname(), "user", b"\x00" * 16, timeout=6)
+    with pytest.raises(DtlsError):
+        client.connect()          # no ServerHello ever comes; the resend is the point
+    thread.join(10)
+    server.close()
+
+    assert len(seen) == 3, "the cookie'd ClientHello was never resent"
+    # Same handshake message both times — it is the same message.
+    assert seen[1][13:] == seen[2][13:]
+    # New record sequence number, or the server drops the resend as a replay.
+    assert _record_seq(seen[2]) > _record_seq(seen[1])

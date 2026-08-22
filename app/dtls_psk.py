@@ -41,6 +41,7 @@ CLIENT_KEY_EXCHANGE = 16
 FINISHED = 20
 
 DTLS_1_2 = b"\xfe\xfd"
+DTLS_1_0 = b"\xfe\xff"      # the record-layer version until one is negotiated
 PSK_AES_128_GCM_SHA256 = b"\x00\xa8"
 
 VERIFY_DATA_LEN = 12
@@ -76,6 +77,8 @@ class DtlsPskClient:
         self.timeout = timeout
         self._sock = None
         self._epoch = 0
+        # Whether a ServerHello has settled the version the record layer claims.
+        self._negotiated = False
         self._send_seq = 0
         self._msg_seq = 0
         self._handshake = bytearray()   # every handshake message, for Finished
@@ -85,7 +88,14 @@ class DtlsPskClient:
     # ---------- records ----------
 
     def _record(self, content_type: int, payload: bytes) -> bytes:
-        header = struct.pack(">BH", content_type, int.from_bytes(DTLS_1_2, "big"))
+        # The record layer carries DTLS 1.0 until a version is agreed, while the
+        # ClientHello inside it asks for 1.2. That split is what RFC 6347 asks
+        # for and what both OpenSSL and mbedtls put on the wire; sending 1.2 in
+        # the record header was this client talking to itself. Keyed on the
+        # ServerHello rather than the epoch, because ChangeCipherSpec goes out
+        # in epoch 0 and by then a version has been agreed.
+        version = DTLS_1_2 if self._negotiated else DTLS_1_0
+        header = struct.pack(">BH", content_type, int.from_bytes(version, "big"))
         header += struct.pack(">H", self._epoch)
         header += self._send_seq.to_bytes(6, "big")
         header += struct.pack(">H", len(payload))
@@ -150,29 +160,60 @@ class DtlsPskClient:
             i += 12 + length
         return out
 
+    def _flight(self, message: bytes, wants, deadline: float,
+                first_wait: float = 1.0) -> dict:
+        """Send a handshake message and keep sending it until an answer arrives.
+
+        DTLS runs over a protocol that loses things, so retransmission is the
+        client's job, and it is not optional politeness — the Hue bridge drops
+        the first ClientHello carrying a cookie and answers the second. Without
+        this the handshake ends at exactly that point, which is precisely how it
+        failed here while OpenSSL, which retransmits, walked through it.
+
+        The message is framed once and re-wrapped for each attempt: a retransmit
+        keeps its handshake message_seq, because it is the same message, but
+        needs a fresh record sequence number, because the server's anti-replay
+        window will drop a number it has already seen.
+        """
+        found, wait = {}, first_wait
+        while True:
+            self._sock.send(self._record(HANDSHAKE, message))
+            self._sock.settimeout(min(wait, max(0.05, deadline - time.monotonic())))
+            try:
+                datagram = self._read()
+            except TimeoutError:
+                if time.monotonic() >= deadline:
+                    return found
+                wait = min(wait * 2, 4.0)     # RFC 6347's doubling backoff
+                continue
+            for content_type, payload in self._split_records(datagram):
+                if content_type == ALERT:
+                    raise DtlsError(
+                        f"the bridge sent alert {payload[1] if len(payload) > 1 else '?'}")
+                if content_type != HANDSHAKE:
+                    continue
+                for msg_type, raw, body in self._split_handshakes(payload):
+                    found[msg_type] = (raw, body)
+            if any(w in found for w in wants):
+                return found
+            if time.monotonic() >= deadline:
+                return found
+
     def connect(self):
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.settimeout(self.timeout)
         self._sock.connect((self.host, self.port))
         self.client_random = struct.pack(">I", int(time.time())) + os.urandom(28)
+        deadline = time.monotonic() + self.timeout
 
         # Flight 1: ClientHello with no cookie. The reply is a
         # HelloVerifyRequest carrying one, which has to come back in flight 2.
-        self._sock.send(self._record(HANDSHAKE,
-                                     self._handshake_message(CLIENT_HELLO,
-                                                             self._client_hello_body(b""))))
-        cookie = None
-        for _ in range(3):
-            for content_type, payload in self._split_records(self._read()):
-                if content_type != HANDSHAKE:
-                    continue
-                for msg_type, _raw, body in self._split_handshakes(payload):
-                    if msg_type == HELLO_VERIFY_REQUEST:
-                        cookie = body[3:3 + body[2]]
-            if cookie is not None:
-                break
-        if cookie is None:
+        hello = self._handshake_message(CLIENT_HELLO, self._client_hello_body(b""))
+        found = self._flight(hello, (HELLO_VERIFY_REQUEST,), deadline)
+        if HELLO_VERIFY_REQUEST not in found:
             raise DtlsError("the bridge never sent a HelloVerifyRequest")
+        _raw, body = found[HELLO_VERIFY_REQUEST]
+        cookie = body[3:3 + body[2]]
 
         # The cookie exchange is excluded from the Finished hash: both hellos
         # are replaced by the second one alone (RFC 6347 4.2.1), and the second
@@ -181,37 +222,22 @@ class DtlsPskClient:
         # The record sequence number is emphatically NOT reset with them. It
         # counts records within an epoch, and the server keeps an anti-replay
         # window over it: a record arriving on a number already seen in epoch 0
-        # is dropped as a replay, with no alert and no reply. Resending the
-        # cookie at record 0 therefore looked exactly like a bridge that
-        # answers the first ClientHello and then goes silent forever.
+        # is dropped as a replay, with no alert and no reply.
         self._handshake = bytearray()
         self._msg_seq = 1
-        self._sock.send(self._record(
-            HANDSHAKE, self._handshake_message(CLIENT_HELLO, self._client_hello_body(cookie))))
+        hello = self._handshake_message(CLIENT_HELLO, self._client_hello_body(cookie))
+        found = self._flight(hello, (SERVER_HELLO_DONE,), deadline)
+        for msg_type in (SERVER_HELLO, SERVER_KEY_EXCHANGE, SERVER_HELLO_DONE):
+            if msg_type in found:
+                self._handshake += found[msg_type][0]
 
-        server_random, chosen, done = None, None, False
-        deadline = time.monotonic() + self.timeout
-        while not done and time.monotonic() < deadline:
-            try:
-                datagram = self._read()
-            except TimeoutError:
-                # Falls through to the ServerHello check below, so the reason
-                # this failed is stated rather than surfacing as a bare socket
-                # timeout that names neither the flight nor the expectation.
-                break
-            for content_type, payload in self._split_records(datagram):
-                if content_type == ALERT:
-                    raise DtlsError(f"the bridge sent alert {payload[1] if len(payload) > 1 else '?'}")
-                if content_type != HANDSHAKE:
-                    continue
-                for msg_type, raw, body in self._split_handshakes(payload):
-                    if msg_type in (SERVER_HELLO, SERVER_KEY_EXCHANGE, SERVER_HELLO_DONE):
-                        self._handshake += raw
-                    if msg_type == SERVER_HELLO:
-                        server_random = body[2:34]
-                        chosen = server_hello_suite(body)
-                    elif msg_type == SERVER_HELLO_DONE:
-                        done = True
+        server_random = chosen = None
+        if SERVER_HELLO in found:
+            hello_body = found[SERVER_HELLO][1]
+            server_random = hello_body[2:34]
+            chosen = server_hello_suite(hello_body)
+            self._negotiated = True
+        self._sock.settimeout(self.timeout)
         if server_random is None:
             raise DtlsError(
                 "the bridge took our cookie and never sent a ServerHello")

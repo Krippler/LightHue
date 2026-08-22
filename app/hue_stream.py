@@ -186,7 +186,11 @@ def _client_hello(cookie: bytes = b"", message_seq: int = 0) -> bytes:
 
     record = bytearray()
     record += b"\x16"                        # ContentType: handshake
-    record += b"\xfe\xfd"                    # DTLS 1.2
+    # DTLS 1.0 in the record layer, 1.2 inside the hello. That is what RFC 6347
+    # asks for before a version is agreed, and what OpenSSL and mbedtls both
+    # send — so a probe claiming 1.2 here was not testing what the real clients
+    # do.
+    record += b"\xfe\xff"
     record += b"\x00\x00"                    # epoch
     record += message_seq.to_bytes(6, "big")   # record sequence number
     record += len(handshake).to_bytes(2, "big")
@@ -359,9 +363,12 @@ def probe_stream_port(host: str, port: int = STREAM_PORT,
         sock.close()
 
 
-# Tried in this order when no single transport is named. mbedtls leads because
-# it is the better-tested of the two and the one this bridge has answered.
-TRANSPORTS = ("mbedtls", "minimal")
+# Tried in this order when no single transport is named. The hand-rolled client
+# leads because it retransmits a lost flight, which is the thing that separated
+# OpenSSL — which connects to this bridge — from mbedtls, which does not.
+# python-mbedtls drives a blocking socket, so its own retransmission timer never
+# gets to run: it sends a flight once and sits in recv until the socket gives up.
+TRANSPORTS = ("minimal", "mbedtls")
 
 
 class DtlsStream:

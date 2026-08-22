@@ -171,7 +171,9 @@ def client_hello(cookie: bytes = b"", message_seq: int = 0) -> bytes:
 
     record = bytearray()
     record += b"\x16"                        # handshake
-    record += b"\xfe\xfd"
+    # DTLS 1.0 in the record layer, 1.2 inside the hello — what RFC 6347 asks
+    # for before a version is agreed, and what OpenSSL and mbedtls both send.
+    record += b"\xfe\xff"
     record += b"\x00\x00"                    # epoch
     record += message_seq.to_bytes(6, "big")
     record += len(handshake).to_bytes(2, "big")
