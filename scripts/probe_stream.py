@@ -116,6 +116,12 @@ EXPLAIN = {
   Power-cycle the bridge. Thirty seconds, and it is the only thing that clears
   that state from the outside.
 """,
+    "openssl-only": """
+  OpenSSL completed the handshake where both clients here failed. That puts the
+  fault squarely in this repo rather than in the bridge or the network, and it
+  hands over a working reference to diff against: run the same command under a
+  packet capture and compare its ClientHello with ours byte for byte.
+""",
     "alert": """
   The bridge rejected our ClientHello outright ({how}). That is the offer, not
   the key: the key is not sent until several messages later.
@@ -196,6 +202,53 @@ def _udp_socket(timeout):
         # tested rather than whichever one the routing table prefers.
         sock.bind((SOURCE, 0))
     return sock
+
+
+def openssl_handshake(host, identity, key_hex, port=STREAM_PORT, timeout=10.0):
+    """Ask OpenSSL to do the handshake, as a third opinion.
+
+    This repo has two DTLS clients and both are ours in the sense that matters:
+    one is hand-rolled here, the other is driven by our own configuration of a
+    library. OpenSSL is neither, and diyHue -- which talks to real bridges for a
+    living -- reaches them with exactly this command. If all three fail the same
+    way, the client side has run out of places to hide a bug.
+
+    Returns (verdict, detail). Verdict is "connected", "no-reply", "alert",
+    "missing" or "error".
+    """
+    import shutil
+    import subprocess
+
+    if shutil.which("openssl") is None:
+        return "missing", "openssl is not installed here"
+    cmd = [
+        "openssl", "s_client", "-dtls1_2",
+        # SECLEVEL=0 because OpenSSL 3 rates PSK suites below its default floor
+        # and will otherwise refuse to offer the one suite Hue uses.
+        "-cipher", "PSK-AES128-GCM-SHA256@SECLEVEL=0",
+        "-psk", key_hex, "-psk_identity", identity,
+        "-connect", f"{host}:{port}",
+    ]
+    try:
+        done = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True,
+                              timeout=timeout, text=True)
+    except subprocess.TimeoutExpired:
+        return "no-reply", "openssl sat waiting and never finished the handshake"
+    except OSError as e:
+        return "error", str(e)
+
+    out = (done.stdout or "") + (done.stderr or "")
+    if "Cipher    :" in out and "(NONE)" not in out:
+        cipher = next((line.strip() for line in out.splitlines()
+                       if line.strip().startswith("Cipher    :")), "negotiated")
+        return "connected", f"openssl completed the handshake — {cipher}"
+    if "alert" in out.lower():
+        alert = next((line.strip() for line in out.splitlines()
+                      if "alert" in line.lower()), "an alert")
+        return "alert", f"the bridge rejected it outright: {alert}"
+    if "read 0 bytes" in out:
+        return "no-reply", "openssl wrote its ClientHello and read nothing back"
+    return "error", (out.strip().splitlines() or ["openssl said nothing useful"])[-1]
 
 
 def handshake_stage(host, port=STREAM_PORT, timeout=4.0):
@@ -541,8 +594,24 @@ def main() -> int:
             stage, how = handshake_stage(host, STREAM_PORT, timeout=args.timeout)
             reached = stage == "server-hello"
             say(reached, f"hand-rolled handshake: {stage} — {how}")
-            print(VERDICT["library" if reached else "nothing"].format(
-                port=STREAM_PORT, local=local[0], how=how))
+
+            # A third implementation, written by neither of us. Two clients
+            # failing together is suggestive; three, one of them OpenSSL, is
+            # about as close to proof as this side of the wire gets.
+            with suppress(Exception):
+                rest(args.bridge, args.api_key, f"/groups/{area_id}", "PUT",
+                     {"stream": {"active": True}})
+            verdict, detail = openssl_handshake(host, args.api_key, args.client_key,
+                                                STREAM_PORT, timeout=args.timeout + 4)
+            say(verdict == "connected", f"openssl s_client: {verdict} — {detail}")
+            if verdict == "connected":
+                print(VERDICT["openssl-only"].format(port=STREAM_PORT))
+            elif stage == "hello-verify-only" or verdict == "no-reply":
+                print(VERDICT["hello-verify-only"].format(
+                    port=STREAM_PORT, local=local[0], how=how))
+            else:
+                print(VERDICT["library" if reached else "nothing"].format(
+                    port=STREAM_PORT, local=local[0], how=how))
     finally:
         try:
             rest(args.bridge, args.api_key, f"/groups/{area_id}", "PUT",
