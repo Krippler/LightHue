@@ -1383,10 +1383,15 @@ async def start_stream(req: StreamStartRequest):
                            "handshake-other"):
                 detail += (
                     f" — the bridge is listening on UDP {STREAM_PORT} and answers, but "
-                    f"will not get past our ClientHello ({how}). That is the bridge "
-                    "objecting to the offer itself rather than to the key, which usually "
-                    "means its firmware wants the v2 entertainment API to start the "
-                    "stream."
+                    f"will not get past our ClientHello ({how}). The path works in both "
+                    "directions or the cookie could not have arrived, and the key is not "
+                    "offered until several messages later, so neither is the problem. "
+                    "What is left is the entertainment session behind the port: "
+                    "answering a cookie costs a DTLS server no session state at all, "
+                    "and finishing the handshake needs somewhere to put one. A bridge "
+                    "whose entertainment service is wedged — which a run of aborted "
+                    "sessions will do — behaves exactly like this. Power-cycle the "
+                    "bridge; nothing else clears that from the outside."
                 )
             elif stage == "refused":
                 detail += (

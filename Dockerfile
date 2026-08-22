@@ -4,11 +4,13 @@ WORKDIR /srv
 
 # tcpdump is here for one reason: when a stream times out, the only question
 # left is whether our datagrams reach the wire and whether anything answers.
+# openssl rides along as a third opinion on the handshake — an implementation
+# neither this repo nor its library wrote, so agreeing with it means something.
 # With host networking the container shares the host's stack, so capturing from
 # in here sees exactly what the host would — and that beats asking whoever is
 # debugging to install tools on their NAS.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tcpdump \
+ && apt-get install -y --no-install-recommends tcpdump openssl \
  && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

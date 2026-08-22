@@ -436,3 +436,48 @@ def test_a_container_address_is_not_mistaken_for_a_subnet_mismatch():
     assert looks_translated("192.168.10.37") is False
     assert looks_translated("10.0.0.5") is False
     assert looks_translated("not-an-ip") is False
+
+
+def test_a_timeout_after_the_cookie_is_not_reported_as_silence(monkeypatch):
+    """Two states that point opposite ways, told apart.
+
+    "Nothing came back" sends you at the network. "It answered and then stopped"
+    sends you at the bridge. Reporting the second as the first cost a long
+    evening, so it is pinned here.
+    """
+    import socket as socket_module
+
+    import app.hue_stream as hue_stream
+
+    class Replies:
+        def __init__(self, first):
+            self.first, self.sent = first, 0
+
+        def settimeout(self, _t): pass
+        def connect(self, _a): pass
+        def close(self): pass
+
+        def send(self, payload):
+            self.sent += 1
+            return len(payload)
+
+        def recv(self, _n):
+            if self.sent == 1 and self.first is not None:
+                return self.first
+            raise TimeoutError("timed out")
+
+    cookie = b"\xa5" * 32
+    body = b"\xfe\xfd" + bytes([len(cookie)]) + cookie
+    verify = (b"\x16\xfe\xfd\x00\x00" + (0).to_bytes(6, "big")
+              + (12 + len(body)).to_bytes(2, "big")
+              + b"\x03" + len(body).to_bytes(3, "big") + b"\x00\x00"
+              + b"\x00\x00\x00" + len(body).to_bytes(3, "big") + body)
+
+    monkeypatch.setattr(socket_module, "socket", lambda *a, **kw: Replies(verify))
+    stage, how = hue_stream.probe_handshake_stage("10.0.0.7")
+    assert stage == "hello-verify-only"
+    assert "ignored" in how
+
+    monkeypatch.setattr(socket_module, "socket", lambda *a, **kw: Replies(None))
+    stage, _ = hue_stream.probe_handshake_stage("10.0.0.7")
+    assert stage == "silent"

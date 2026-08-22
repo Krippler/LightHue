@@ -48,6 +48,10 @@ VERDICT = {
   so either the bridge never arms the stream behind a v1 claim, or UDP {port} is
   not making the round trip from {local}.
 
+  Check the stage line above before believing that. Both clients timing out is
+  not the same as nothing coming back: if the stage says hello-verify-only, the
+  bridge is answering and the paragraphs below are about the wrong problem.
+
   If the line above says this machine is not on the bridge's own network, start
   there. Streaming is the one part of the Hue API that wants the client on the
   same network as the bridge; REST routes anywhere, which is why everything
@@ -91,9 +95,32 @@ EXPLAIN = {
   arming the stream behind it.
 """,
     "hello-verify-only": """
-  The bridge sent its cookie and then went quiet, so it is rejecting our
-  ClientHello rather than our key — the key is never offered this early. That
-  usually means firmware that wants the v2 entertainment API to start a stream.
+  The bridge answered our first ClientHello with a cookie in about two
+  milliseconds, then dropped the ClientHello carrying that cookie back.
+
+  Read what that rules out. The path works in both directions, or the cookie
+  would never have arrived. The key is not involved: a PSK identity is not sent
+  until the fifth message of the flight, several steps after this. And it is
+  not the offer either, if mbedtls fails here too — it sends twenty cipher
+  suites and a full set of extensions where the bare client sends one suite and
+  none, and a bridge that objected to the offer could not object to both.
+
+  What is left is the entertainment session behind the port. A DTLS server can
+  answer a HelloVerifyRequest without any session state at all — that is the
+  point of a cookie, to cost the server nothing until the client proves it can
+  receive. Completing the handshake needs somewhere to put the session. A
+  bridge whose entertainment service is wedged, which many aborted sessions
+  will do, looks exactly like this: the socket layer is polite and the service
+  behind it is not there.
+
+  Power-cycle the bridge. Thirty seconds, and it is the only thing that clears
+  that state from the outside.
+""",
+    "openssl-only": """
+  OpenSSL completed the handshake where both clients here failed. That puts the
+  fault squarely in this repo rather than in the bridge or the network, and it
+  hands over a working reference to diff against: run the same command under a
+  packet capture and compare its ClientHello with ours byte for byte.
 """,
     "alert": """
   The bridge rejected our ClientHello outright ({how}). That is the offer, not
@@ -177,11 +204,62 @@ def _udp_socket(timeout):
     return sock
 
 
+def openssl_handshake(host, identity, key_hex, port=STREAM_PORT, timeout=10.0):
+    """Ask OpenSSL to do the handshake, as a third opinion.
+
+    This repo has two DTLS clients and both are ours in the sense that matters:
+    one is hand-rolled here, the other is driven by our own configuration of a
+    library. OpenSSL is neither, and diyHue -- which talks to real bridges for a
+    living -- reaches them with exactly this command. If all three fail the same
+    way, the client side has run out of places to hide a bug.
+
+    Returns (verdict, detail). Verdict is "connected", "no-reply", "alert",
+    "missing" or "error".
+    """
+    import shutil
+    import subprocess
+
+    if shutil.which("openssl") is None:
+        return "missing", "openssl is not installed here"
+    cmd = [
+        "openssl", "s_client", "-dtls1_2",
+        # SECLEVEL=0 because OpenSSL 3 rates PSK suites below its default floor
+        # and will otherwise refuse to offer the one suite Hue uses.
+        "-cipher", "PSK-AES128-GCM-SHA256@SECLEVEL=0",
+        "-psk", key_hex, "-psk_identity", identity,
+        "-connect", f"{host}:{port}",
+    ]
+    try:
+        done = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True,
+                              timeout=timeout, text=True)
+    except subprocess.TimeoutExpired:
+        return "no-reply", "openssl sat waiting and never finished the handshake"
+    except OSError as e:
+        return "error", str(e)
+
+    out = (done.stdout or "") + (done.stderr or "")
+    if "Cipher    :" in out and "(NONE)" not in out:
+        cipher = next((line.strip() for line in out.splitlines()
+                       if line.strip().startswith("Cipher    :")), "negotiated")
+        return "connected", f"openssl completed the handshake — {cipher}"
+    if "alert" in out.lower():
+        alert = next((line.strip() for line in out.splitlines()
+                      if "alert" in line.lower()), "an alert")
+        return "alert", f"the bridge rejected it outright: {alert}"
+    if "read 0 bytes" in out:
+        return "no-reply", "openssl wrote its ClientHello and read nothing back"
+    return "error", (out.strip().splitlines() or ["openssl said nothing useful"])[-1]
+
+
 def handshake_stage(host, port=STREAM_PORT, timeout=4.0):
     """How far a bare handshake gets. The PSK identity is not sent until the
     fifth message, so everything up to ServerHello is the same whatever the
     key — which is what makes this useful without one."""
     sock = _udp_socket(timeout)
+    # Which flight the clock ran out on. Catching TimeoutError around the whole
+    # exchange reported a bridge that answered and then stopped as one that
+    # never spoke at all, and those point in opposite directions.
+    answered_first = False
     try:
         sock.connect((host, port))
         sock.send(client_hello())
@@ -190,6 +268,7 @@ def handshake_stage(host, port=STREAM_PORT, timeout=4.0):
         if cookie is None:
             kind = f"0x{first[0]:02x}" if first else "nothing"
             return "no-hello-verify", f"first reply was {kind}, not a HelloVerifyRequest"
+        answered_first = True
         sock.send(client_hello(cookie=cookie, message_seq=1))
         second = sock.recv(4096)
         if not second:
@@ -201,6 +280,11 @@ def handshake_stage(host, port=STREAM_PORT, timeout=4.0):
             return "server-hello", "the bridge accepted our ClientHello and answered ServerHello"
         return "unexpected", f"reply was 0x{second[0]:02x}"
     except TimeoutError:
+        if answered_first:
+            return "hello-verify-only", (
+                "answered our first ClientHello with a cookie, then ignored the "
+                "ClientHello carrying it back"
+            )
         return "silent", "nothing came back"
     except ConnectionRefusedError:
         return "refused", "the port is shut (ICMP port unreachable), so the path is fine"
@@ -510,8 +594,24 @@ def main() -> int:
             stage, how = handshake_stage(host, STREAM_PORT, timeout=args.timeout)
             reached = stage == "server-hello"
             say(reached, f"hand-rolled handshake: {stage} — {how}")
-            print(VERDICT["library" if reached else "nothing"].format(
-                port=STREAM_PORT, local=local[0], how=how))
+
+            # A third implementation, written by neither of us. Two clients
+            # failing together is suggestive; three, one of them OpenSSL, is
+            # about as close to proof as this side of the wire gets.
+            with suppress(Exception):
+                rest(args.bridge, args.api_key, f"/groups/{area_id}", "PUT",
+                     {"stream": {"active": True}})
+            verdict, detail = openssl_handshake(host, args.api_key, args.client_key,
+                                                STREAM_PORT, timeout=args.timeout + 4)
+            say(verdict == "connected", f"openssl s_client: {verdict} — {detail}")
+            if verdict == "connected":
+                print(VERDICT["openssl-only"].format(port=STREAM_PORT))
+            elif stage == "hello-verify-only" or verdict == "no-reply":
+                print(VERDICT["hello-verify-only"].format(
+                    port=STREAM_PORT, local=local[0], how=how))
+            else:
+                print(VERDICT["library" if reached else "nothing"].format(
+                    port=STREAM_PORT, local=local[0], how=how))
     finally:
         try:
             rest(args.bridge, args.api_key, f"/groups/{area_id}", "PUT",
