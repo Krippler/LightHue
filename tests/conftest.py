@@ -77,8 +77,22 @@ def bridge(app_modules, monkeypatch):
         "channels": [{"channel_id": 0}, {"channel_id": 1}, {"channel_id": 2}],
     }]}
 
+    # Per-light entertainment services. Light 3 is white-only and light 4 is a
+    # plug in spirit: neither can render, which is what keeps them out of an
+    # area and is the whole difference between an area and a group.
+    state["v2"]["entertainment"] = [
+        {"id": "ent-1", "id_v1": "/lights/1", "renderer": True},
+        {"id": "ent-2", "id_v1": "/lights/2", "renderer": True},
+        {"id": "ent-3", "id_v1": "/lights/3", "renderer": False},
+    ]
+
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
+        if path.endswith("/clip/v2/resource/entertainment"):
+            if request.headers.get("hue-application-key") is None:
+                return httpx.Response(401, json={"errors": [{"description": "no key"}]})
+            return httpx.Response(200, json={"data": state["v2"]["entertainment"],
+                                             "errors": []})
         if "/clip/v2/resource/entertainment_configuration" in path:
             if request.headers.get("hue-application-key") is None:
                 return httpx.Response(401, json={"errors": [{"description": "no key"}]})
@@ -86,9 +100,35 @@ def bridge(app_modules, monkeypatch):
             configurations = state["v2"]["configurations"]
             if wanted != "entertainment_configuration":
                 configurations = [c for c in configurations if c["id"] == wanted]
+            if request.method == "POST":
+                import json
+                body = json.loads(request.content)
+                created = {
+                    "id": f"new-area-{len(state['v2']['configurations'])}",
+                    "id_v1": f"/groups/{90 + len(state['v2']['configurations'])}",
+                    "name": body["metadata"]["name"],
+                    "status": "inactive",
+                    "channels": [],
+                    "created": body,
+                }
+                state["v2"]["configurations"].append(created)
+                return httpx.Response(200, json={
+                    "data": [{"rid": created["id"], "rtype": "entertainment_configuration"}],
+                    "errors": []})
+            if request.method == "DELETE":
+                state["v2"]["configurations"] = [
+                    c for c in state["v2"]["configurations"] if c["id"] != wanted]
+                return httpx.Response(200, json={
+                    "data": [{"rid": wanted, "rtype": "entertainment_configuration"}],
+                    "errors": []})
             if request.method == "PUT":
                 import json
-                action = json.loads(request.content).get("action")
+                body = json.loads(request.content)
+                if "metadata" in body:
+                    for configuration in configurations:
+                        configuration["name"] = body["metadata"]["name"]
+                    return httpx.Response(200, json={"data": [], "errors": []})
+                action = body.get("action")
                 state["v2"]["armed"].append(action)
                 # The bridge reports the stream as up only once it is; the app
                 # reads this back rather than trusting the 200.
