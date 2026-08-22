@@ -100,7 +100,7 @@ class StreamEngine:
             "transport": getattr(self, "_transport", None),
             # Which HueStream framing is going out: v2 addresses channels
             # within an entertainment configuration, v1 addresses light ids.
-            "protocol": 2 if (state and state.get("area_uuid")) else (1 if state else None),
+            "protocol": getattr(self, "_protocol", None),
             "error": self._error,
             # Unlike the REST path there is nothing to divide: every light in
             # the area is in the same frame.
@@ -162,6 +162,12 @@ class StreamEngine:
                 "channels": list(channels) if channels else None,
             }
         self._transport = stream.transport
+        # Kept beside the transport rather than derived from the live state, so
+        # the two survive a stop together. Reading one from state meant that
+        # after a run the report showed which client had connected and how many
+        # frames went out, but not which framing carried them — the one part of
+        # a finished run that nothing else records.
+        self._protocol = 2 if area_uuid else 1
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._run, args=(stream,), name="hue-stream", daemon=True)

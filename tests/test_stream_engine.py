@@ -319,3 +319,40 @@ def test_an_area_with_no_v2_identity_still_sends_v1_frames(stub_bridge):
     frames = [f for _, f in stub_bridge["frames"]]
     assert frames and frames[0][9] == 1
     assert len(frames[0]) == 16 + 9 * 2
+
+
+def test_the_framing_is_still_reported_after_the_stream_stops(monkeypatch):
+    """A finished run should say which framing carried it.
+
+    transport and frames_sent already survive a stop; protocol was derived from
+    the live state and so went blank with it, leaving a report that named the
+    client and the frame count but not the protocol — the one thing about a
+    finished run that nothing else records.
+    """
+    import app.stream_engine as stream_engine
+
+    class Fake:
+        transport = "minimal"
+        def send(self, _frame): pass
+        def close(self): pass
+
+    monkeypatch.setattr(stream_engine, "DtlsStream",
+                        lambda *a, **kw: type("S", (Fake,), {
+                            "connect": lambda self, **kw: None})())
+
+    engine = stream_engine.StreamEngine()
+    engine.start("10.0.0.7", "user", "00" * 16, "6", ["1"], "mn", "p",
+                 10, 1, 254, None, None,
+                 area_uuid="aaaa-bbbb", channels=[0, 1])
+    assert engine.status()["protocol"] == 2
+    engine.stop()
+    after = engine.status()
+    assert after["running"] is False
+    assert after["transport"] == "minimal"
+    assert after["protocol"] == 2, "the framing went blank when the stream did"
+
+    # And a v1 area reports v1, before and after.
+    engine.start("10.0.0.7", "user", "00" * 16, "6", ["1"], "mn", "p",
+                 10, 1, 254, None, None)
+    engine.stop()
+    assert engine.status()["protocol"] == 1
