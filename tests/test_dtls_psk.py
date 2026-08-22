@@ -202,3 +202,64 @@ def test_the_sample_first_flight_is_the_real_opening_datagram():
     # No cookie yet: the bridge answers the first ClientHello with one.
     assert body[12 + 2 + 32] == 0                      # empty session id
     assert body[12 + 2 + 32 + 1] == 0                  # empty cookie
+
+
+def _hello_verify(cookie: bytes) -> bytes:
+    """A HelloVerifyRequest, framed the way the bridge frames one."""
+    from app.dtls_psk import DTLS_1_2, HANDSHAKE, HELLO_VERIFY_REQUEST
+    body = DTLS_1_2 + bytes([len(cookie)]) + cookie
+    handshake = (bytes([HELLO_VERIFY_REQUEST]) + len(body).to_bytes(3, "big")
+                 + (0).to_bytes(2, "big") + (0).to_bytes(3, "big")
+                 + len(body).to_bytes(3, "big") + body)
+    return (bytes([HANDSHAKE]) + DTLS_1_2 + (0).to_bytes(2, "big")
+            + (0).to_bytes(6, "big") + len(handshake).to_bytes(2, "big") + handshake)
+
+
+def _record_seq(datagram: bytes) -> int:
+    return int.from_bytes(datagram[5:11], "big")
+
+
+def test_the_cookie_reply_does_not_reuse_a_record_sequence_number():
+    """A repeated record number in one epoch is a replay, and gets dropped.
+
+    The server keeps an anti-replay window over the record sequence number, so
+    resending at a number already used in epoch 0 means the second ClientHello
+    is discarded with no alert and no reply — indistinguishable, from the
+    client, from a server that answered the first hello and then died.
+
+    Checked on the bytes rather than against a library server: an mbedtls stub
+    re-accepts for the cookie exchange and so never sees the reuse at all,
+    which is exactly how this survived a suite that already handshakes for real.
+    """
+    import socket
+    import threading
+
+    from app.dtls_psk import DtlsError, DtlsPskClient
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    server.bind(("127.0.0.1", 0))
+    server.settimeout(5)
+    seen = []
+
+    def serve():
+        datagram, peer = server.recvfrom(4096)
+        seen.append(datagram)
+        server.sendto(_hello_verify(b"\xa5" * 32), peer)
+        datagram, _ = server.recvfrom(4096)
+        seen.append(datagram)          # and then say nothing, as the bridge did
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+
+    client = DtlsPskClient(*server.getsockname(), "user", b"\x00" * 16, timeout=1.5)
+    with pytest.raises(DtlsError, match="never sent a ServerHello"):
+        client.connect()               # no ServerHello ever comes; that is fine
+    thread.join(5)
+    server.close()
+
+    assert len(seen) == 2, "the client never sent the cookie back"
+    assert _record_seq(seen[0]) == 0
+    assert _record_seq(seen[1]) == 1, "flight 2 reused flight 1's record number"
+    # message_seq does restart at 1 for the second ClientHello (RFC 6347 4.2.2);
+    # the two counters are separate and only one of them carries over.
+    assert int.from_bytes(seen[1][17:19], "big") == 1
