@@ -49,7 +49,37 @@ MAX_STREAM_HZ = 25.0
 MAX_AREA_LIGHTS = 10
 
 # DTLS 1.2 with a pre-shared key is the only thing the bridge will talk.
-DTLS_CIPHERS = ("TLS-PSK-WITH-AES-128-GCM-SHA256",)
+# Hue documents TLS_PSK_WITH_AES_128_GCM_SHA256, so it leads. The rest are
+# offered behind it because pinning the list to one suite turns "this bridge
+# wants something else" into a ClientHello the bridge drops without a word —
+# it answers the cheap, stateless HelloVerifyRequest first and only processes
+# the offer properly on the flight that carries the cookie back. Silence there
+# reads as a dead network, which is a long way from the truth.
+#
+# RSA-PSK is left out on purpose: it wants a server certificate, which is not
+# what is happening on port 2100.
+DTLS_CIPHERS = (
+    "TLS-PSK-WITH-AES-128-GCM-SHA256",
+    "TLS-PSK-WITH-AES-256-GCM-SHA384",
+    "TLS-PSK-WITH-AES-128-CBC-SHA256",
+    "TLS-PSK-WITH-AES-256-CBC-SHA384",
+    "TLS-PSK-WITH-AES-128-CBC-SHA",
+    "TLS-PSK-WITH-AES-256-CBC-SHA",
+    "TLS-PSK-WITH-AES-128-CCM",
+    "TLS-PSK-WITH-AES-128-CCM-8",
+    "TLS-PSK-WITH-AES-256-CCM",
+    "TLS-PSK-WITH-AES-256-CCM-8",
+    "TLS-PSK-WITH-CHACHA20-POLY1305-SHA256",
+    "TLS-ECDHE-PSK-WITH-AES-128-CBC-SHA256",
+    "TLS-ECDHE-PSK-WITH-AES-256-CBC-SHA384",
+    "TLS-ECDHE-PSK-WITH-AES-128-CBC-SHA",
+    "TLS-ECDHE-PSK-WITH-AES-256-CBC-SHA",
+    "TLS-ECDHE-PSK-WITH-CHACHA20-POLY1305-SHA256",
+    "TLS-DHE-PSK-WITH-AES-128-GCM-SHA256",
+    "TLS-DHE-PSK-WITH-AES-256-GCM-SHA384",
+    "TLS-DHE-PSK-WITH-AES-128-CBC-SHA256",
+    "TLS-DHE-PSK-WITH-AES-256-CBC-SHA384",
+)
 
 
 def _header(version: int, sequence: int, colour_space: int) -> bytearray:
