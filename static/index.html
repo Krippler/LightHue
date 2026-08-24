@@ -246,7 +246,7 @@
           </div>
         </section>
 
-        <section class="panel collapsible dash-card" data-section="stream">
+        <section class="panel collapsible dash-card dash-half" data-section="stream">
           <div class="panel-head">
             <div class="panel-title">
               <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
@@ -291,6 +291,11 @@
                 <span>Max brightness <em id="stream-maxbri-value">254</em></span>
                 <input id="stream-maxbri" type="range" min="1" max="254" step="1" value="254" />
               </label>
+              <label class="field">
+                <span>Transition <em id="stream-trans-value">0</em> ms</span>
+                <input id="stream-trans" type="range" min="0" max="1000" step="100" value="0"
+                       title="Eased across frames here — a stream frame carries no transition of its own" />
+              </label>
               <div class="field-row custom-color-row">
                 <label class="field checkbox-field">
                   <input type="checkbox" id="stream-color-enable" />
@@ -320,7 +325,7 @@
           </div>
         </section>
 
-        <section class="panel collapsible is-collapsed dash-card" data-section="custom">
+        <section class="panel collapsible dash-card dash-half" data-section="custom">
           <div class="panel-head">
             <div class="panel-title">
               <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
@@ -349,6 +354,7 @@
                        spellcheck="false" autocomplete="off" />
               </label>
               <button id="btn-save-pattern" class="btn btn-primary btn-sm">Save pattern</button>
+              <button id="btn-cancel-edit" class="btn btn-ghost btn-sm hidden">Cancel</button>
             </div>
 
             <div class="custom-form custom-framing">

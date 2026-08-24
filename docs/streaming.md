@@ -206,5 +206,14 @@ handshake framing — the probe has to run on a machine with no checkout and no
 dependencies, so it cannot import the app. A test asserts the two produce
 byte-identical ClientHellos, which is what keeps the duplication honest.
 
-Streaming has no transition setting: every frame is sent, so there is nothing to
-interpolate between.
+## Transitions
+
+A HueStream frame is a colour and nothing else, so there is no field to ask the
+bridge for a ramp the way the REST path does with `transitiontime`. The stream
+panel still has a transition control; the easing is done here instead, by
+interpolating across frames rather than stepping between pattern letters.
+
+It ends up finer than the bridge's own: `transitiontime` moves in 100 ms steps,
+where this has a frame every 40 ms. A ramp longer than a pattern letter is on
+screen is clamped to the step, since otherwise the level asked for would never
+be reached.

@@ -361,6 +361,9 @@ class StreamStartRequest(BaseModel):
     hz: float | None = Field(None, gt=0, le=MAX_STREAM_HZ)
     min_bri: int | None = Field(None, ge=1, le=254)
     max_bri: int | None = Field(None, ge=1, le=254)
+    # Interpolated here rather than by the bridge: a HueStream frame is a colour
+    # and nothing else, so there is nowhere to ask for a ramp.
+    transition_ms: int | None = Field(None, ge=0, le=60000)
     hue: int | None = Field(None, ge=0, le=65535)
     sat: int | None = Field(None, ge=0, le=254)
 
@@ -382,6 +385,7 @@ class StreamUpdateRequest(BaseModel):
     hz: float | None = Field(None, gt=0, le=MAX_STREAM_HZ)
     min_bri: int | None = Field(None, ge=1, le=254)
     max_bri: int | None = Field(None, ge=1, le=254)
+    transition_ms: int | None = Field(None, ge=0, le=60000)
     hue: int | None = Field(None, ge=0, le=65535)
     sat: int | None = Field(None, ge=0, le=254)
     pattern_id: str | None = None
@@ -626,6 +630,39 @@ async def create_pattern(req: CustomPatternRequest):
     }
     config_store.save(cfg)
     return cfg["custom_patterns"][pid]
+
+
+@app.put("/api/patterns/{pattern_id}")
+async def replace_pattern(pattern_id: str, req: CustomPatternRequest):
+    """Edit a custom pattern in place, keeping its id.
+
+    Keeping the id matters: light cards, the stream panel and any saved
+    selection all refer to a pattern by it, so a save that minted a new one
+    would leave every one of them pointing at something that no longer exists.
+    """
+    if pattern_id in BUILTIN_BY_ID:
+        raise HTTPException(400, "Built-in game patterns can't be edited")
+    seq = "".join(req.sequence.split()).lower()
+    if not seq or any(c not in "abcdefghijklmnopqrstuvwxyz" for c in seq):
+        raise HTTPException(400, "Sequence must only contain letters a-z")
+    cfg = config_store.load()
+    if pattern_id not in cfg["custom_patterns"]:
+        raise HTTPException(404, f"Unknown pattern_id: {pattern_id}")
+    # A running loop holds its own copy of the sequence, so editing under it
+    # would leave lights flickering something the UI no longer describes.
+    in_use = [lid for lid, st in engine.status().items()
+              if st.get("running") and st.get("pattern_id") == pattern_id]
+    if in_use:
+        raise HTTPException(
+            409,
+            f"That pattern is running on {len(in_use)} light(s) — stop them first",
+        )
+    cfg["custom_patterns"][pattern_id] = {
+        "id": pattern_id, "name": req.name.strip(), "sequence": seq,
+        **{f: getattr(req, f) for f in FRAMING_FIELDS},
+    }
+    config_store.save(cfg)
+    return cfg["custom_patterns"][pattern_id]
 
 
 @app.delete("/api/patterns/{pattern_id}")
@@ -1436,8 +1473,6 @@ async def start_stream(req: StreamStartRequest):
             if field in req.model_fields_set:
                 framing[field] = getattr(req, field)
             continue
-        if field == "transition_ms":
-            continue        # the stream has no transitions: every frame is sent
         supplied = getattr(req, field, None)
         if supplied is not None:
             framing[field] = supplied
@@ -1510,6 +1545,7 @@ async def start_stream(req: StreamStartRequest):
                 req.area_id, light_ids, pattern["sequence"], req.pattern_id,
                 min(framing["hz"], MAX_STREAM_HZ),
                 framing["min_bri"], framing["max_bri"], framing["hue"], framing["sat"],
+                transition_ms=framing["transition_ms"],
                 connect_timeout=6.0,
                 area_uuid=(configuration or {}).get("id"),
                 channels=channel_ids(configuration) if configuration else None,

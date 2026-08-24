@@ -356,3 +356,55 @@ def test_the_framing_is_still_reported_after_the_stream_stops(monkeypatch):
                  10, 1, 254, None, None)
     engine.stop()
     assert engine.status()["protocol"] == 1
+
+
+def test_a_transition_eases_between_letters_instead_of_stepping():
+    """HueStream carries no transition field — a frame is a colour and nothing
+    else — so the ramp the REST path asks the bridge for is done here.
+
+    Finer than the bridge's, too: it interpolates in 100ms steps where this has
+    a frame every 40ms.
+    """
+    from app.stream_engine import level_at
+
+    # 'az' at 10 Hz: dark for 100ms, then full for 100ms.
+    hard = [level_at("az", 10, 0, t) for t in (0.10, 0.12, 0.15, 0.19)]
+    assert hard == [1.0, 1.0, 1.0, 1.0], "with no transition it should step"
+
+    ramped = [level_at("az", 10, 0, t, 60) for t in (0.10, 0.12, 0.15, 0.19)]
+    assert ramped[0] == 0.0                      # starts from the letter before
+    assert ramped == sorted(ramped)              # and climbs
+    assert ramped[-1] == 1.0                     # arriving before the letter ends
+    assert 0.0 < ramped[1] < 1.0
+
+
+def test_a_transition_longer_than_the_step_still_arrives():
+    """Asking for a ramp longer than a letter is on screen would otherwise mean
+    never reaching the level the pattern asked for."""
+    from app.stream_engine import level_at
+
+    # 100ms per letter, 500ms requested. Halfway through the letter the level
+    # should be halfway up, which only holds if the ramp was clamped to the
+    # step: over the requested 500ms it would have reached about a fifth.
+    assert level_at("az", 10, 0, 0.15, 500) == pytest.approx(0.5, abs=0.01)
+    # And it arrives as the letter ends rather than stalling short of the level.
+    assert level_at("az", 10, 0, 0.1999, 500) == pytest.approx(1.0, abs=0.01)
+
+
+def test_the_engine_carries_the_transition_into_its_state(monkeypatch):
+    import app.stream_engine as stream_engine
+
+    class Fake:
+        transport = "minimal"
+        def connect(self, **kw): pass
+        def send(self, _frame): pass
+        def close(self): pass
+
+    monkeypatch.setattr(stream_engine, "DtlsStream", lambda *a, **kw: Fake())
+    engine = stream_engine.StreamEngine()
+    engine.start("10.0.0.7", "user", "00" * 16, "6", ["1"], "mn", "p",
+                 10, 1, 254, None, None, transition_ms=250)
+    try:
+        assert engine.status()["settings"]["transition_ms"] == 250
+    finally:
+        engine.stop()

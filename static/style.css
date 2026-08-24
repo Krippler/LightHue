@@ -384,8 +384,37 @@ input[type="color"] {
   border-radius: 3px; padding: 2px 7px; cursor: pointer; line-height: 1.4;
 }
 .custom-chip .chip-del:hover { border-color: var(--err); color: var(--err); }
+.custom-chip .chip-edit {
+  font-family: var(--font-mono); background: transparent;
+  border: 1px solid var(--border); color: var(--muted);
+  border-radius: 3px; padding: 2px 7px; cursor: pointer; line-height: 1.4;
+}
+.custom-chip .chip-edit:hover { border-color: var(--app); color: var(--app); }
+/* Which chip the form is currently writing back to. Without this the form
+   silently overwrites a saved pattern with no sign of which one. */
+.custom-chip.is-editing { border-color: var(--app); background: var(--panel2); }
 
 /* ---------- Panel order ---------- */
+
+/* Panels sit in a two-column grid so a pair of narrow ones can share a row
+   instead of each taking the full width. Everything is full-width by default
+   and opts in with .dash-half, which keeps a panel that genuinely needs the
+   room — the light grid — from being squeezed into half of it.
+
+   Grid placement follows DOM order, so drag-to-reorder keeps working: the
+   panels are still just reordered in the document. */
+.dash {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px; align-items: start;
+}
+.dash > .dash-card { grid-column: 1 / -1; margin-bottom: 0; }
+.dash > .dash-card.dash-half { grid-column: span 1; }
+
+/* One column once half of one stops being usable. */
+@media (max-width: 1100px) {
+  .dash { grid-template-columns: minmax(0, 1fr); }
+  .dash > .dash-card.dash-half { grid-column: 1 / -1; }
+}
 
 .dash-card > .panel-head { position: relative; padding-left: 32px; }
 .drag-handle {

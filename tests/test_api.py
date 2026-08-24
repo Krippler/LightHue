@@ -1767,3 +1767,69 @@ def test_local_groups_are_gone(client, bridge):
     assert client.post("/api/groups", json={"name": "x", "light_ids": ["1"]}).status_code == 404
     # And nothing writes a groups key back into the config.
     assert "groups" not in client.get("/api/stream/diagnostics").json()
+
+
+# ---------- Editing a custom pattern ----------
+
+def make_pattern(client, **kw):
+    body = {"name": "Torchlight", "sequence": "mmnnaamm", "hz": 10,
+            "min_bri": 1, "max_bri": 254, "transition_ms": 0, **kw}
+    return client.post("/api/patterns", json=body).json()
+
+
+def test_a_custom_pattern_can_be_edited_in_place(client):
+    """The id has to survive an edit.
+
+    Light cards, the stream panel and any saved selection all refer to a
+    pattern by its id, so a save that minted a new one would leave every one of
+    them pointing at something that no longer exists.
+    """
+    made = make_pattern(client, name="Before", hue=6000, sat=225)
+    r = client.put(f"/api/patterns/{made['id']}", json={
+        "name": "After", "sequence": "zzaa", "hz": 12,
+        "min_bri": 20, "max_bri": 200, "transition_ms": 300,
+    })
+    assert r.status_code == 200
+    updated = r.json()
+    assert updated["id"] == made["id"]
+    assert (updated["name"], updated["sequence"], updated["hz"]) == ("After", "zzaa", 12)
+    assert updated["transition_ms"] == 300
+    # Colour omitted on the edit means the pattern no longer names one.
+    assert updated["hue"] is None and updated["sat"] is None
+
+    listed = client.get("/api/patterns").json()["custom"]
+    assert [p["id"] for p in listed] == [made["id"]], "the edit should not add a second"
+
+
+def test_editing_a_pattern_normalises_the_sequence_like_creating_one(client):
+    made = make_pattern(client)
+    r = client.put(f"/api/patterns/{made['id']}",
+                   json={"name": "Spaced", "sequence": " M M a A "})
+    assert r.status_code == 200
+    assert r.json()["sequence"] == "mmaa"
+
+
+def test_editing_rejects_what_creating_rejects(client):
+    made = make_pattern(client)
+    bad = client.put(f"/api/patterns/{made['id']}",
+                     json={"name": "Bad", "sequence": "mm!!"})
+    assert bad.status_code == 400
+    assert client.put("/api/patterns/custom_nope",
+                      json={"name": "x", "sequence": "mm"}).status_code == 404
+    builtin = client.get("/api/patterns").json()["builtin"][0]["id"]
+    assert client.put(f"/api/patterns/{builtin}",
+                      json={"name": "x", "sequence": "mm"}).status_code == 400
+
+
+def test_a_pattern_running_on_a_light_cannot_be_edited_under_it(client, bridge):
+    """A running loop holds its own copy of the sequence, so an edit would leave
+    lights flickering something the UI no longer describes."""
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    made = make_pattern(client)
+    client.post("/api/flicker/start",
+                json={"light_ids": ["1"], "pattern_id": made["id"]})
+    r = client.put(f"/api/patterns/{made['id']}",
+                   json={"name": "Nope", "sequence": "aabb"})
+    assert r.status_code == 409
+    assert "stop them first" in r.json()["detail"]
+    assert client.get("/api/patterns").json()["custom"][0]["sequence"] == "mmnnaamm"

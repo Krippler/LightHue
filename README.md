@@ -145,6 +145,11 @@ Write your own `a`–`z` lightstyle strings in the **Custom Lightstyles** panel,
 with a live waveform preview and their own speed, brightness range, transition
 and colour. `a` is darkest through `z` brightest, one letter per frame.
 
+The pencil on a saved pattern loads it back into the form to edit; **Update
+pattern** writes over it, keeping the same pattern so every light already set
+to it follows the change. A pattern that is currently running has to be stopped
+before it can be edited.
+
 **Export to file** downloads everything you've written; **Import from file**
 loads one someone sent you. Exported files hold only names and sequences — no
 bridge details, no credentials — so they're safe to pass around. Importing
