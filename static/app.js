@@ -428,7 +428,7 @@ function buildCard(entity) {
 
   // The swatch is always live: picking a color means you want it, so it ticks
   // the box for you rather than being greyed out until you find the box.
-  colorInput.addEventListener('input', () => {
+  onColourPicked(colorInput, () => {
     const hs = rgbToHueSat(hexToRgb(colorInput.value));
     setCardColor(card, hs.hue, hs.sat);
     if (!colorEnable.checked) colorEnable.checked = true;
@@ -826,7 +826,7 @@ function setCustomColor(hue, sat) {
   customColorCode.value = `${hue},${sat}`;
 }
 
-customColor.addEventListener('input', () => {
+onColourPicked(customColor, () => {
   const hs = rgbToHueSat(hexToRgb(customColor.value));
   setCustomColor(hs.hue, hs.sat);
   $('#custom-color-enable').checked = true;
@@ -1126,6 +1126,21 @@ function syncControls(card, key, st) {
 }
 
 // ---------- Color helpers (hex -> Hue's hue/sat space) ----------
+
+// A colour swatch has to answer both events. Which one an <input type="color">
+// fires is up to the browser: some send `input` live as the picker moves and
+// `change` when it closes, others send only `change`. Listening to `input`
+// alone meant that on those browsers picking a colour updated the swatch and
+// nothing else — in particular it never ticked "Set colour", which is what
+// decides whether the colour is sent at all. The colour was then dropped on
+// save with no error, which reads exactly like the picker being broken.
+//
+// Both fire on the browsers that send both, so the handler has to be safe to
+// run twice. All three are: they recompute from the swatch's current value.
+function onColourPicked(input, handler) {
+  input.addEventListener('input', handler);
+  input.addEventListener('change', handler);
+}
 
 function hexToRgb(hex) {
   const v = hex.replace('#', '');
@@ -1706,7 +1721,7 @@ function pushStreamLive() {
 });
 
 streamPattern.addEventListener('change', () => { applyStreamFraming(); pushStreamLive(); });
-streamColor.addEventListener('input', () => {
+onColourPicked(streamColor, () => {
   const hs = rgbToHueSat(hexToRgb(streamColor.value));
   setStreamColor(hs.hue, hs.sat);
   if (!streamColorEnable.checked) streamColorEnable.checked = true;
