@@ -428,7 +428,7 @@ function buildCard(entity) {
 
   // The swatch is always live: picking a color means you want it, so it ticks
   // the box for you rather than being greyed out until you find the box.
-  colorInput.addEventListener('input', () => {
+  onColourPicked(colorInput, () => {
     const hs = rgbToHueSat(hexToRgb(colorInput.value));
     setCardColor(card, hs.hue, hs.sat);
     if (!colorEnable.checked) colorEnable.checked = true;
@@ -813,6 +813,10 @@ const customColor = $('#custom-color');
 const customColorCode = $('#custom-color-code');
 let customHue = null;
 let customSat = null;
+// The id the form is editing, or null when it is composing a new pattern.
+// Kept as an id rather than a copy so a Save writes back to the same pattern
+// every card and the stream panel already refer to.
+let editingPatternId = null;
 
 function setCustomColor(hue, sat) {
   customHue = hue;
@@ -826,7 +830,7 @@ function setCustomColor(hue, sat) {
   customColorCode.value = `${hue},${sat}`;
 }
 
-customColor.addEventListener('input', () => {
+onColourPicked(customColor, () => {
   const hs = rgbToHueSat(hexToRgb(customColor.value));
   setCustomColor(hs.hue, hs.sat);
   $('#custom-color-enable').checked = true;
@@ -873,6 +877,56 @@ customSeq.addEventListener('input', () => {
   renderBars($('#custom-preview'), /^[a-z]*$/.test(seq) ? seq : '');
 });
 
+// ---------- Editing a saved pattern ----------
+
+function setEditingState(pattern) {
+  editingPatternId = pattern ? pattern.id : null;
+  $('#btn-save-pattern').textContent = pattern ? 'Update pattern' : 'Save pattern';
+  $('#btn-cancel-edit').classList.toggle('hidden', !pattern);
+  $$('.custom-chip').forEach(chip => {
+    chip.classList.toggle('is-editing', !!pattern && chip.dataset.patternId === pattern.id);
+  });
+}
+
+function loadPatternIntoForm(pattern) {
+  customName.value = pattern.name;
+  customSeq.value = pattern.sequence;
+  const f = framingFor(pattern.id);
+  const set = (sel, labelSel, value) => {
+    $(sel).value = value;
+    $(labelSel).textContent = value;
+  };
+  set('#custom-hz', '#custom-hz-value', f.hz);
+  set('#custom-minbri', '#custom-minbri-value', f.min_bri);
+  set('#custom-maxbri', '#custom-maxbri-value', f.max_bri);
+  set('#custom-trans', '#custom-trans-value', f.transition_ms);
+  if (f.hue !== null && f.sat !== null) {
+    setCustomColor(f.hue, f.sat);
+    $('#custom-color-enable').checked = true;
+  } else {
+    setCustomColor(null, null);
+    $('#custom-color-enable').checked = false;
+  }
+  renderBars($('#custom-preview'), pattern.sequence);
+  setEditingState(pattern);
+  setCustomStatus(`Editing "${pattern.name}". Update saves over it.`, '');
+  customName.focus();
+}
+
+function clearCustomForm() {
+  customName.value = '';
+  customSeq.value = '';
+  setCustomColor(null, null);
+  $('#custom-color-enable').checked = false;
+  renderBars($('#custom-preview'), '');
+  setEditingState(null);
+}
+
+$('#btn-cancel-edit').addEventListener('click', () => {
+  clearCustomForm();
+  setCustomStatus('Edit cancelled.', '');
+});
+
 $('#btn-save-pattern').addEventListener('click', async () => {
   const name = customName.value.trim();
   const sequence = normalizeSequence(customSeq.value);
@@ -892,18 +946,17 @@ $('#btn-save-pattern').addEventListener('click', async () => {
   if (!name) return setCustomStatus('Give the pattern a name.', 'err');
   if (!sequence) return setCustomStatus('Write a sequence first.', 'err');
   if (!/^[a-z]+$/.test(sequence)) return setCustomStatus('Sequence must only contain letters a-z.', 'err');
+  const editing = editingPatternId;
   try {
-    await api('/api/patterns', {
-      method: 'POST',
+    await api(editing ? `/api/patterns/${encodeURIComponent(editing)}` : '/api/patterns', {
+      method: editing ? 'PUT' : 'POST',
       body: JSON.stringify({ name, sequence, ...framing }),
     });
-    customName.value = '';
-    customSeq.value = '';
-    setCustomColor(null, null);
-    $('#custom-color-enable').checked = false;
-    renderBars($('#custom-preview'), '');
+    clearCustomForm();
     const seconds = (sequence.length / framing.hz).toFixed(1);
-    setCustomStatus(`Saved "${name}" at ${framing.hz} Hz — a ${seconds}s cycle.`, 'ok');
+    setCustomStatus(
+      `${editing ? 'Updated' : 'Saved'} "${name}" at ${framing.hz} Hz — a ${seconds}s cycle.`,
+      'ok');
     await loadPatternsAndLights();
   } catch (e) {
     setCustomStatus(e.message, 'err');
@@ -922,6 +975,7 @@ function renderCustomList() {
   PATTERNS.custom.forEach(p => {
     const chip = document.createElement('div');
     chip.className = 'custom-chip';
+    chip.dataset.patternId = p.id;
 
     const nameEl = document.createElement('span');
     nameEl.className = 'chip-name';
@@ -940,6 +994,13 @@ function renderCustomList() {
       chip.appendChild(dot);
     }
 
+    const edit = document.createElement('button');
+    edit.className = 'chip-edit';
+    edit.type = 'button';
+    edit.textContent = '\u270e';
+    edit.title = `Edit "${p.name}"`;
+    edit.addEventListener('click', () => loadPatternIntoForm(p));
+
     const del = document.createElement('button');
     del.className = 'chip-del';
     del.type = 'button';
@@ -955,7 +1016,8 @@ function renderCustomList() {
       }
     });
 
-    chip.append(nameEl, seqEl, del);
+    chip.append(nameEl, seqEl, edit, del);
+    chip.classList.toggle('is-editing', p.id === editingPatternId);
     list.appendChild(chip);
   });
 }
@@ -1126,6 +1188,21 @@ function syncControls(card, key, st) {
 }
 
 // ---------- Color helpers (hex -> Hue's hue/sat space) ----------
+
+// A colour swatch has to answer both events. Which one an <input type="color">
+// fires is up to the browser: some send `input` live as the picker moves and
+// `change` when it closes, others send only `change`. Listening to `input`
+// alone meant that on those browsers picking a colour updated the swatch and
+// nothing else — in particular it never ticked "Set colour", which is what
+// decides whether the colour is sent at all. The colour was then dropped on
+// save with no error, which reads exactly like the picker being broken.
+//
+// Both fire on the browsers that send both, so the handler has to be safe to
+// run twice. All three are: they recompute from the swatch's current value.
+function onColourPicked(input, handler) {
+  input.addEventListener('input', handler);
+  input.addEventListener('change', handler);
+}
 
 function hexToRgb(hex) {
   const v = hex.replace('#', '');
@@ -1470,6 +1547,7 @@ const streamPattern = $('#stream-pattern');
 const streamHz = $('#stream-hz');
 const streamMinBri = $('#stream-minbri');
 const streamMaxBri = $('#stream-maxbri');
+const streamTrans = $('#stream-trans');
 const streamColorEnable = $('#stream-color-enable');
 const streamColor = $('#stream-color');
 const streamColorCode = $('#stream-color-code');
@@ -1490,6 +1568,7 @@ function streamSettings() {
     hz: Number(streamHz.value),
     min_bri: Number(streamMinBri.value),
     max_bri: Number(streamMaxBri.value),
+    transition_ms: Number(streamTrans.value),
     hue: colour && colour.hue,
     sat: colour && colour.sat,
   };
@@ -1664,6 +1743,7 @@ function applyStreamFraming() {
   };
   set(streamHz, '#stream-hz-value', framing.hz);
   set(streamMinBri, '#stream-minbri-value', framing.min_bri);
+  set(streamTrans, '#stream-trans-value', framing.transition_ms);
   set(streamMaxBri, '#stream-maxbri-value', framing.max_bri);
   if (framing.hue !== null && framing.sat !== null) {
     streamColorEnable.checked = true;
@@ -1690,7 +1770,8 @@ function pushStreamLive() {
 }
 
 [[streamHz, '#stream-hz-value'], [streamMinBri, '#stream-minbri-value'],
- [streamMaxBri, '#stream-maxbri-value']].forEach(([input, label]) => {
+ [streamMaxBri, '#stream-maxbri-value'],
+ [streamTrans, '#stream-trans-value']].forEach(([input, label]) => {
   input.addEventListener('input', () => {
     $(label).textContent = input.value;
     if (input === streamMinBri && Number(streamMaxBri.value) < Number(input.value)) {
@@ -1706,7 +1787,7 @@ function pushStreamLive() {
 });
 
 streamPattern.addEventListener('change', () => { applyStreamFraming(); pushStreamLive(); });
-streamColor.addEventListener('input', () => {
+onColourPicked(streamColor, () => {
   const hs = rgbToHueSat(hexToRgb(streamColor.value));
   setStreamColor(hs.hue, hs.sat);
   if (!streamColorEnable.checked) streamColorEnable.checked = true;

@@ -29,7 +29,8 @@ from .patterns import level_for_char
 
 logger = logging.getLogger("game_hue_flicker.stream")
 
-LIVE_FIELDS = ("sequence", "pattern_id", "hz", "min_bri", "max_bri", "hue", "sat")
+LIVE_FIELDS = ("sequence", "pattern_id", "hz", "min_bri", "max_bri", "hue", "sat",
+               "transition_ms")
 
 # How often a frame goes on the wire. Also the ceiling on a pattern's speed:
 # you cannot show frames you do not send.
@@ -41,21 +42,42 @@ FRAME_INTERVAL = 1.0 / FRAME_RATE_HZ
 GIVE_UP_AFTER_FAILURES = 40
 
 
-def level_at(sequence: str, hz: float, epoch: float, now: float) -> float:
+def level_at(sequence: str, hz: float, epoch: float, now: float,
+             transition_ms: float = 0) -> float:
     """Where the pattern is at `now`, as 0..1.
 
     Derived from the epoch rather than counted per frame, for the same reason
     the REST path does it: every light is answering the same clock, so they
     land on the same letter at the same moment.
+
+    HueStream carries no transition field — there is nowhere to put one, since
+    a frame is a colour and nothing else. So the ramp the REST path asks the
+    bridge to perform is done here instead, by easing across the letters rather
+    than stepping between them. Same effect, and finer: the bridge interpolates
+    in 100ms steps where this has a frame every 40ms.
     """
     seq = sequence or "m"
     interval = 1.0 / max(0.1, min(hz, FRAME_RATE_HZ))
-    index = int(max(0.0, now - epoch) / interval)
-    return level_for_char(seq[index % len(seq)])
+    elapsed = max(0.0, now - epoch)
+    index = int(elapsed / interval)
+    level = level_for_char(seq[index % len(seq)])
+    if transition_ms <= 0:
+        return level
+
+    # Ramp from the letter before this one, over the shorter of the requested
+    # transition and the time a letter is actually on screen. Asking for a
+    # longer ramp than the step would mean never arriving at the level.
+    ramp = min(transition_ms / 1000.0, interval)
+    into = elapsed - index * interval
+    if into >= ramp:
+        return level
+    previous = level_for_char(seq[(index - 1) % len(seq)])
+    return previous + (level - previous) * (into / ramp)
 
 
 def rgb_for(state: dict, now: float) -> tuple[int, int, int]:
-    level = level_at(state["sequence"], state["hz"], state["epoch"], now)
+    level = level_at(state["sequence"], state["hz"], state["epoch"], now,
+                     state.get("transition_ms") or 0)
     lo, hi = state["min_bri"], state["max_bri"]
     bri = int(round(lo + level * (hi - lo)))
     return hue_sat_bri_to_rgb16(state.get("hue"), state.get("sat"), max(1, min(254, bri)))
@@ -130,7 +152,8 @@ class StreamEngine:
     def start(self, bridge_ip: str, username: str, client_key: str,
               area_id: str, light_ids: list[str], sequence: str, pattern_id: str,
               hz: float, min_bri: int, max_bri: int,
-              hue: int | None, sat: int | None, connect_timeout: float = 6.0,
+              hue: int | None, sat: int | None, transition_ms: int = 0,
+              connect_timeout: float = 6.0,
               area_uuid: str | None = None, channels: list[int] | None = None,
               transport: str | None = None):
         """Open the stream and start sending. The caller activates the area
@@ -154,6 +177,8 @@ class StreamEngine:
                 "max_bri": int(max_bri),
                 "hue": hue,
                 "sat": sat,
+                # Interpolated across frames here; HueStream has no field for it.
+                "transition_ms": int(transition_ms or 0),
                 "epoch": time.monotonic(),
                 # Set when the area is a v2 entertainment configuration. Its
                 # frames address channels within the area rather than light ids,
