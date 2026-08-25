@@ -28,8 +28,10 @@ anything else.
 
 ## Making an area
 
-The Entertainment Areas panel builds them: tick lights in Lights & Plugs, name
-the set, save. Areas are created on the bridge, not in this console's config, so
+The Entertainment panel builds them: tick lights in Lights & Plugs, name the
+set, save. Managing areas and driving one live in the same panel, because they
+are the same subject — the cards pick which area the controls beneath them
+apply to. Areas are created on the bridge, not in this console's config, so
 one made here appears in the Hue app and survives the container being replaced,
 and renaming or deleting one here does the same there.
 

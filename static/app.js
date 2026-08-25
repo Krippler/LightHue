@@ -534,9 +534,12 @@ function setGroupStatus(text, kind = '') {
 
 function renderSelection() {
   const n = selected.size;
+  // Blank rather than "No lights selected": this now shares a panel header
+  // with the stream's own status, and a permanent chip saying nothing is
+  // happening just crowds the one that says something is.
   $('#selection-count').textContent = n
     ? `${n} light${n === 1 ? '' : 's'} selected`
-    : 'No lights selected';
+    : '';
   $('#btn-save-area').disabled = n === 0;
   $('#btn-clear-selection').disabled = n === 0;
 }
