@@ -156,6 +156,42 @@ h3 {
 .hint em { color: var(--warn); font-style: normal; }
 .panel-head-actions .hint { margin-bottom: 0; }
 
+/* ---------- Inline help ----------
+   Explanation that only some readers need, parked on a marker beside the thing
+   it explains rather than spending a paragraph of the panel on it. Shown on
+   hover and on keyboard focus, and carried as the marker's accessible name so
+   it is not hover-only. Tips open downward: .panel clips its overflow, and
+   every marker has panel body beneath it to open over. */
+.info {
+  display: inline-flex; align-items: center; justify-content: center;
+  position: relative; flex: 0 0 auto; vertical-align: middle;
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 1px solid var(--border-hi); background: none;
+  color: var(--muted); font-family: var(--font-mono); font-size: 9px;
+  line-height: 1; letter-spacing: 0; text-transform: none;
+  cursor: help; padding: 0;
+}
+.info:hover, .info:focus-visible {
+  color: var(--app); border-color: var(--app); outline: none;
+}
+.info::after {
+  content: attr(data-tip);
+  position: absolute; top: calc(100% + 7px); left: -7px;
+  width: max-content; max-width: 260px;
+  padding: 8px 10px;
+  background: var(--panel2); border: 1px solid var(--border-hi);
+  border-radius: 4px; box-shadow: 0 6px 18px rgba(0, 0, 0, .55);
+  color: var(--text); font-size: 11px; line-height: 1.55;
+  letter-spacing: 0; text-transform: none; text-align: left;
+  white-space: normal; font-weight: 400;
+  opacity: 0; visibility: hidden; transition: opacity .12s ease;
+  pointer-events: none; z-index: 40;
+}
+.info:hover::after, .info:focus-visible::after { opacity: 1; visibility: visible; }
+/* Tips whose wording depends on the bridge are filled in after it answers. */
+.info:not([data-tip])::after { content: none; }
+.panel-title .info { color: var(--muted); }
+
 .dim { color: var(--muted); font-size: 11px; }
 .dim.err { color: var(--err); }
 
@@ -306,6 +342,9 @@ input[type="color"] {
 
 .settings-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px;
+  /* Each column is as tall as its own contents. Stretched to the tallest, a
+     .field's flex:1 would swallow the difference and strand the save button. */
+  align-items: start;
 }
 .settings-grid .setup-col { gap: 12px; }
 

@@ -867,6 +867,9 @@ async def list_stream_areas():
         # get one is to pair again.
         "can_stream": bool(cfg.get("client_key")),
         "max_stream_hz": MAX_STREAM_HZ,
+        # The UI quotes both ceilings in its help text, and this is the one
+        # call it always makes before drawing the entertainment panel.
+        "max_lights": MAX_AREA_LIGHTS,
     }
 
 
