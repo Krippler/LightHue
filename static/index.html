@@ -195,18 +195,23 @@
 
         <div id="dash" class="dash">
 
-        <section class="panel collapsible dash-card" data-section="areas">
+
+
+        <section class="panel collapsible dash-card dash-half" data-section="stream">
           <div class="panel-head">
             <div class="panel-title">
               <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
                    aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
-              Entertainment Areas
+              Entertainment
             </div>
             <div class="panel-head-actions">
-              <span id="selection-count" class="dim">No lights selected</span>
+              <span id="selection-count" class="dim"></span>
+              <span id="stream-state" class="dim">idle</span>
+              <button id="btn-stream-refresh" class="btn btn-ghost btn-sm">Refresh areas</button>
             </div>
           </div>
           <div class="panel-body">
+
             <div id="areas-grid" class="lights-grid"></div>
             <div class="group-tools">
             <p class="hint">An area is a set of lights the bridge streams to as one, at full
@@ -227,51 +232,20 @@
             <div id="area-status" class="status-line"></div>
             <div id="bridge-groups" class="bridge-groups hidden"></div>
             </div>
-          </div>
-        </section>
 
-        <section class="panel collapsible dash-card" data-section="lights">
-          <div class="panel-head">
-            <div class="panel-title">
-              <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
-                   aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
-              Lights &amp; Plugs
-            </div>
-            <div class="panel-head-actions">
-              <span id="light-count-label" class="dim"></span>
-            </div>
-          </div>
-          <div class="panel-body">
-            <div id="lights-grid" class="lights-grid"></div>
-          </div>
-        </section>
+            <hr class="panel-rule" />
 
-        <section class="panel collapsible dash-card dash-half" data-section="stream">
-          <div class="panel-head">
-            <div class="panel-title">
-              <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
-                   aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
-              Entertainment Stream
-            </div>
-            <div class="panel-head-actions">
-              <span id="stream-state" class="dim">idle</span>
-              <button id="btn-stream-refresh" class="btn btn-ghost btn-sm">Refresh areas</button>
-            </div>
-          </div>
-          <div class="panel-body">
             <p class="hint">The normal path sends one command per light and the bridge takes
             about ten a second in total, so seven bulbs land near 1 Hz each. Streaming sends
             one frame holding the whole area, so the speed stops being divided &mdash; up to
-            <em id="stream-max-hz">25</em> Hz across every light at once. Pick which area to
-            drive in the Entertainment Areas panel above.</p>
+            <em id="stream-max-hz">25</em> Hz across every light at once.</p>
 
             <div id="stream-unavailable" class="status-line err hidden"></div>
 
+            <p class="picked-line">Streaming to
+              <strong id="stream-area-name" class="picked-area">no area picked</strong></p>
+
             <div class="custom-form">
-              <label class="field">
-                <span>Area</span>
-                <div id="stream-area-name" class="picked-area">No area picked</div>
-              </label>
               <label class="field custom-seq-field">
                 <span>Pattern</span>
                 <select id="stream-pattern"></select>
@@ -392,6 +366,22 @@
             <div id="custom-status" class="status-line"></div>
             <div id="custom-list" class="custom-list"></div>
             <div id="share-status" class="status-line"></div>
+          </div>
+        </section>
+
+        <section class="panel collapsible dash-card" data-section="lights">
+          <div class="panel-head">
+            <div class="panel-title">
+              <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
+                   aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+              Lights &amp; Plugs
+            </div>
+            <div class="panel-head-actions">
+              <span id="light-count-label" class="dim"></span>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div id="lights-grid" class="lights-grid"></div>
           </div>
         </section>
 

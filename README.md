@@ -114,10 +114,10 @@ barely 1 Hz each.
 single frame carrying every light — so the speed stops being divided: up to
 25 Hz across the whole area, every light changing together.
 
-Tick the lights you want in **Lights & Plugs**, name them in the
-**Entertainment Areas** panel, and press **Save as area**. Or press **Use a
-room from the bridge** to tick the lights of a room you already made in the Hue
-app, then save that.
+Tick the lights you want in **Lights & Plugs**, name them at the top of the
+**Entertainment** panel, and press **Save as area**. Or press **Use a room from
+the bridge** to tick the lights of a room you already made in the Hue app, then
+save that.
 
 Areas are created on the bridge, not in this console, so they show up in the
 Hue app too and survive the container being replaced. Each area gets a card
@@ -134,10 +134,10 @@ this feature existed has to pair again; the panel tells you when that applies.
 Only one area streams at a time, so an area Hue Sync or a game has claimed says
 so on its card.
 
-Pick an area, then set the pattern and press **Start stream** in the
-**Entertainment Stream** panel below. If a stream won't start, **Diagnostics**
-says what the bridge is doing, and [docs/streaming.md](docs/streaming.md)
-covers how to read it.
+**Use for stream** on an area card picks it; the controls below it in the same
+panel set the pattern, speed, brightness, transition and colour, and **Start
+stream** runs it. If a stream won't start, **Diagnostics** says what the bridge
+is doing, and [docs/streaming.md](docs/streaming.md) covers how to read it.
 
 ## Custom patterns
 
