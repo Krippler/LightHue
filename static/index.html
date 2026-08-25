@@ -120,18 +120,15 @@
 
         <section id="settings-panel" class="panel hidden">
           <div class="panel-head">
-            <div class="panel-title">Settings</div>
-            <div class="panel-head-actions">
-              <span class="hint">Stored in the console&rsquo;s own config &mdash; nothing to change in Docker.</span>
+            <div class="panel-title">Settings
+              <span class="info" tabindex="0" role="button" aria-label="Everything here is stored in the console&#39;s own config. Nothing needs changing in Docker." data-tip="Everything here is stored in the console&#39;s own config. Nothing needs changing in Docker.">?</span>
             </div>
           </div>
           <div class="panel-body">
             <div class="settings-grid">
 
               <div class="setup-col">
-                <h3>Bridge send rate</h3>
-                <p class="hint">Ceiling across every flickering light. Philips advises no more
-                than ~10/sec sustained.</p>
+                <h3>Bridge send rate <span class="info" tabindex="0" role="button" aria-label="A ceiling across every flickering light at once, not per light. Philips advises no more than about 10 a second sustained." data-tip="A ceiling across every flickering light at once, not per light. Philips advises no more than about 10 a second sustained.">?</span></h3>
                 <label class="field">
                   <span>Max <em id="rate-value">10</em> commands / sec</span>
                   <input id="rate-input" type="range" min="1" max="30" step="1" value="10" />
@@ -143,9 +140,7 @@
               </div>
 
               <div class="setup-col">
-                <h3>When flicker stops</h3>
-                <p class="hint">Reads each bulb&rsquo;s colour and brightness before it starts, and
-                puts it back on stop &mdash; even after a container restart.</p>
+                <h3>When flicker stops <span class="info" tabindex="0" role="button" aria-label="Reads each bulb&#39;s colour and brightness before a flicker starts and puts it back on stop, even if the container restarts in between." data-tip="Reads each bulb&#39;s colour and brightness before a flicker starts and puts it back on stop, even if the container restarts in between.">?</span></h3>
                 <label class="field checkbox-field">
                   <input type="checkbox" id="restore-toggle" />
                   <span>Restore lights to how they were</span>
@@ -154,11 +149,7 @@
               </div>
 
               <div class="setup-col">
-                <h3>Stream settle</h3>
-                <p class="hint">Pause between handing an area to the stream and opening the
-                connection. The bridge answers on the streaming port before the session behind
-                it is ready; connecting into that gap fails with no error worth reading.
-                Raise it if the stream only starts sometimes.</p>
+                <h3>Stream settle <span class="info" tabindex="0" role="button" aria-label="A pause between handing an area to the stream and opening the connection. The bridge answers on the streaming port before the session behind it is ready, and connecting into that gap fails. Raise this if streams only start sometimes." data-tip="A pause between handing an area to the stream and opening the connection. The bridge answers on the streaming port before the session behind it is ready, and connecting into that gap fails. Raise this if streams only start sometimes.">?</span></h3>
                 <label class="field">
                   <span>Wait <em id="settle-value">1500</em> ms before connecting</span>
                   <input id="settle-input" type="range" min="0" max="5000" step="100"
@@ -214,13 +205,9 @@
 
             <div id="areas-list" class="areas-list"></div>
             <div class="group-tools">
-            <p class="hint">An area is a set of lights the bridge streams to as one, at full
-            speed. Tick the lights in Lights &amp; Plugs below, or copy a room from the Hue app,
-            then save. Areas live on the bridge, so they show up in the Hue app too &mdash; up to
-            <em id="area-max">10</em> colour-capable lights each.</p>
             <div class="group-form">
               <label class="field">
-                <span>Area name</span>
+                <span>Area name <span class="info" id="area-tip" tabindex="0" role="button">?</span></span>
                 <input id="area-name" type="text" placeholder="TV area" maxlength="32" />
               </label>
               <div class="action-row">
@@ -234,11 +221,6 @@
             </div>
 
             <hr class="panel-rule" />
-
-            <p class="hint">The normal path sends one command per light and the bridge takes
-            about ten a second in total, so seven bulbs land near 1 Hz each. Streaming sends
-            one frame holding the whole area, so the speed stops being divided &mdash; up to
-            <em id="stream-max-hz">25</em> Hz across every light at once.</p>
 
             <div id="stream-unavailable" class="status-line err hidden"></div>
 
@@ -254,7 +236,7 @@
 
             <div class="custom-form custom-framing">
               <label class="field">
-                <span>Speed <em id="stream-hz-value">10</em> Hz</span>
+                <span>Speed <em id="stream-hz-value">10</em> Hz <span class="info" id="stream-hz-tip" tabindex="0" role="button">?</span></span>
                 <input id="stream-hz" type="range" min="1" max="25" step="1" value="10" />
               </label>
               <label class="field">
@@ -313,17 +295,13 @@
             </div>
           </div>
           <div class="panel-body">
-            <p class="hint">One letter per frame, <em>a</em> darkest through <em>z</em> brightest &mdash; the
-            encoding Quake used. Speed, brightness range, transition and colour all save with the
-            pattern, and it then shows up in every light&rsquo;s list.</p>
-
             <div class="custom-form">
               <label class="field">
                 <span>Name</span>
                 <input id="custom-name" type="text" placeholder="Torchlight" maxlength="60" />
               </label>
               <label class="field custom-seq-field">
-                <span>Sequence</span>
+                <span>Sequence <span class="info" tabindex="0" role="button" aria-label="One letter per frame, a darkest through z brightest &mdash; the encoding Quake used. Speed, brightness range, transition and colour all save with the pattern, and it then shows up in every light&#39;s list." data-tip="One letter per frame, a darkest through z brightest &mdash; the encoding Quake used. Speed, brightness range, transition and colour all save with the pattern, and it then shows up in every light&#39;s list.">?</span></span>
                 <input id="custom-seq" type="text" placeholder="mmnmmommommnonmmonqnmmo"
                        spellcheck="false" autocomplete="off" />
               </label>

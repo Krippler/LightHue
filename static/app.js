@@ -1,6 +1,14 @@
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
+// A hover tip is drawn from data-tip and read out from aria-label, so both have
+// to carry the same words — one function so they cannot drift apart.
+function setTip(el, text) {
+  if (!el) return;
+  el.dataset.tip = text;
+  el.setAttribute('aria-label', text);
+}
+
 let PATTERNS = { builtin: [], custom: [] };
 let LIGHTS = [];
 let AREAS = [];        // entertainment areas on the bridge
@@ -1588,8 +1596,17 @@ async function loadStreamAreas() {
   try {
     const body = await api('/api/stream/areas');
     AREAS = body.areas || [];
-    $('#stream-max-hz').textContent = body.max_stream_hz;
     streamHz.max = body.max_stream_hz;
+    setTip($('#stream-hz-tip'),
+      'Sending one command per light, the bridge takes about ten a second in '
+      + 'total, so seven bulbs land near 1 Hz each. A stream sends one frame '
+      + 'holding the whole area, so speed stops being divided \u2014 up to '
+      + `${body.max_stream_hz} Hz across every light at once.`);
+    setTip($('#area-tip'),
+      'An area is a set of lights the bridge streams to as one, at full speed. '
+      + 'Tick lights in Lights & Plugs below, or copy a room from the Hue app, '
+      + 'then save. Areas live on the bridge, so they show up in the Hue app '
+      + `too \u2014 up to ${body.max_lights} colour-capable lights each.`);
     const warning = $('#stream-unavailable');
     if (!body.can_stream) {
       // The DTLS key is only handed out at pairing time, so there is no way to

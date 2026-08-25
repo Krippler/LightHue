@@ -55,3 +55,47 @@ def test_the_helper_binds_both_events():
     body = re.search(r"function onColourPicked\([^)]*\)\s*\{(.*?)\n\}", APP_JS, re.S)
     assert body, "onColourPicked is missing"
     assert "'input'" in body.group(1) and "'change'" in body.group(1)
+
+
+def info_markers() -> list[str]:
+    """Every inline-help marker in the page, as its whole tag."""
+    return [tag for tag in re.findall(r"<span\b[^>]*>", INDEX) if 'class="info"' in tag]
+
+
+def test_every_hover_tip_is_also_readable_without_hovering():
+    """A tip must carry the same words in data-tip and aria-label.
+
+    data-tip is what the CSS paints on hover; aria-label is what a screen
+    reader announces and what a keyboard user gets on focus. Setting one
+    without the other makes the help hover-only, which is exactly what the
+    paragraphs it replaced were not.
+    """
+    markers = info_markers()
+    assert len(markers) >= 5, f"expected the inline-help markers, found {len(markers)}"
+    for tag in markers:
+        tip = re.search(r'data-tip="([^"]*)"', tag)
+        label = re.search(r'aria-label="([^"]*)"', tag)
+        if tip is None and label is None:
+            # Tips whose wording quotes a bridge limit are filled in by JS.
+            assert re.search(r'id="([^"]+)"', tag), (
+                f"a marker with no tip needs an id for the JS to find: {tag}"
+            )
+            continue
+        assert tip and label, f"data-tip and aria-label have to travel together: {tag}"
+        assert tip.group(1) == label.group(1), f"tip and label have drifted apart: {tag}"
+
+
+def test_the_bridge_dependent_tips_are_filled_in():
+    """The two tips that quote a bridge limit are set through setTip.
+
+    They ship without text so the numbers cannot go stale, which means nothing
+    at all appears if the wiring is dropped.
+    """
+    assert "function setTip(" in APP_JS
+    body = re.search(r"function setTip\([^)]*\)\s*\{(.*?)\n\}", APP_JS, re.S)
+    assert body, "setTip is missing"
+    assert "dataset.tip" in body.group(1) and "aria-label" in body.group(1), (
+        "setTip has to write both halves, or a tip goes hover-only"
+    )
+    for marker_id in ("#area-tip", "#stream-hz-tip"):
+        assert f"setTip($('{marker_id}')" in APP_JS, f"{marker_id} is never filled in"
