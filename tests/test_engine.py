@@ -172,9 +172,11 @@ async def test_colour_can_be_changed_mid_flicker():
 
 @pytest.mark.asyncio
 async def test_colour_is_not_resent_every_tick():
+    # An animating sequence on purpose: a constant one is held rather than
+    # looped, so it would pass this by never sending a second frame at all.
     fake = FakeClient()
     engine = FlickerEngine(get_client=lambda: fake)
-    await engine.start("1", "mmmm", "steady", 20.0, 1, 254, 100, 200, 0)
+    await engine.start("1", "mmno", "flicker_a", 20.0, 1, 254, 100, 200, 0)
     await asyncio.sleep(0.4)
     await engine.stop_all()
     assert len([c for c in fake.calls if "hue" in c[2]]) == 1
@@ -511,3 +513,138 @@ async def test_a_second_light_starting_does_not_stall_the_first():
 
     sent = sum(1 for c in fake.calls if c[1] == "1") - before
     assert sent >= 3, f"light 1 stalled when light 2 joined: {sent} sends in 1.5s"
+
+
+@pytest.mark.asyncio
+async def test_a_steady_sequence_is_sent_once_and_held():
+    """"z" is a light left on, not a flicker with no variation in it.
+
+    Before this it ran as a loop like any other pattern: the same brightness
+    ten times a second, forever, out of a budget shared with every other
+    flickering light.
+    """
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    engine.limiter.set_rate(10.0)
+    await engine.start("1", "z", "xbox", 10.0, 1, 254, 21745, 227, 0)
+    await asyncio.sleep(1.5)
+    await engine.stop_all(restore=False)
+
+    assert len(fake.calls) == 1, f"a hold should send once, sent {len(fake.calls)}"
+    _, _, sent = fake.calls[0]
+    # "with all other settings": the full brightness, colour and transition.
+    assert sent == {"on": True, "bri": 254, "transitiontime": 0,
+                    "hue": 21745, "sat": 227}
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_character_holds_the_same_way():
+    """"zzzz" says exactly what "z" says, however it is written."""
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    await engine.start("1", "zzzz", "xbox", 10.0, 1, 254, None, None, 0)
+    await asyncio.sleep(1.0)
+    await engine.stop_all(restore=False)
+    assert len(fake.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_held_light_re_sends_when_a_setting_moves():
+    """Held is not finished: the sliders still drive the bulb."""
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    await engine.start("1", "z", "xbox", 10.0, 1, 254, 21745, 227, 0)
+    await asyncio.sleep(0.6)
+    assert len(fake.calls) == 1
+
+    engine.update("1", max_bri=100)
+    await asyncio.sleep(0.6)
+    assert len(fake.calls) == 2
+    assert fake.calls[-1][2]["bri"] == 100
+
+    engine.update("1", hue=10000, sat=200)
+    await asyncio.sleep(0.6)
+    assert len(fake.calls) == 3
+    assert (fake.calls[-1][2]["hue"], fake.calls[-1][2]["sat"]) == (10000, 200)
+
+    # Nothing further, since nothing further changed.
+    await asyncio.sleep(0.8)
+    assert len(fake.calls) == 3
+    await engine.stop_all(restore=False)
+
+
+@pytest.mark.asyncio
+async def test_retuning_a_hold_into_a_pattern_starts_it_animating():
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    engine.limiter.set_rate(10.0)
+    await engine.start("1", "z", "xbox", 10.0, 1, 254, None, None, 0)
+    await asyncio.sleep(0.6)
+    assert engine.status()["1"]["holding"] is True
+
+    engine.update("1", sequence="mmnmmommommnonmmonqnmmo")
+    await asyncio.sleep(1.0)
+    assert engine.status()["1"]["holding"] is False
+    assert len(fake.calls) > 5, "the loop should be animating again"
+
+    # ...and back again.
+    engine.update("1", sequence="z")
+    await asyncio.sleep(0.5)
+    settled = len(fake.calls)
+    await asyncio.sleep(1.0)
+    assert len(fake.calls) == settled, "a hold should go quiet again"
+    assert engine.status()["1"]["holding"] is True
+    await engine.stop_all(restore=False)
+
+
+@pytest.mark.asyncio
+async def test_a_held_light_costs_a_flicker_nothing():
+    """The point of the whole change: a hold must not eat the shared budget."""
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    engine.limiter.set_rate(10.0)
+    await engine.start("1", "mmnmmommommnonmmonqnmmo", "flicker_a", 10.0, 1, 254,
+                       None, None, 0)
+    await engine.start("2", "z", "xbox", 10.0, 1, 254, 21745, 227, 0)
+    await asyncio.sleep(2.0)
+    await engine.stop_all(restore=False)
+
+    flickering = [c for c in fake.calls if c[1] == "1"]
+    held = [c for c in fake.calls if c[1] == "2"]
+    assert len(held) == 1, "the hold should send once and stop"
+    # Two lights sharing the budget would have given the flicker ~4/sec. On its
+    # own it keeps the lot.
+    assert len(flickering) >= 17, (
+        f"the flicker should keep the budget to itself, got {len(flickering)} in 2s")
+
+
+@pytest.mark.asyncio
+async def test_a_hold_is_not_starved_by_a_light_running_flat_out():
+    """wait() retries rather than queueing, so a rare sender can be shut out.
+
+    A flicker taking the whole budget leaves no token to find, and the hold's
+    single send would wait forever behind it.
+    """
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    engine.limiter.set_rate(10.0)
+    await engine.start("1", "mmnmmommommnonmmonqnmmo", "flicker_a", 10.0, 1, 254,
+                       None, None, 0)
+    await asyncio.sleep(0.5)          # let it settle into taking every token
+    await engine.start("2", "z", "xbox", 10.0, 1, 254, 21745, 227, 0)
+    await asyncio.sleep(1.0)
+    await engine.stop_all(restore=False)
+    assert [c for c in fake.calls if c[1] == "2"], "the hold never got through"
+
+
+@pytest.mark.asyncio
+async def test_a_held_light_reports_no_frame_rate():
+    """effective_hz is frames a second, and a hold has no frames."""
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    await engine.start("1", "z", "xbox", 10.0, 1, 254, None, None, 0)
+    await asyncio.sleep(0.4)
+    entry = engine.status()["1"]
+    assert entry["holding"] is True
+    assert "effective_hz" not in entry
+    await engine.stop_all(restore=False)

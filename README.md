@@ -104,6 +104,13 @@ Under each swatch is a box for an exact colour. It takes `6000,225` (Hue's own
 hue and saturation, the exact form) or `#ff991d` / `#f80` (converted to the
 nearest hue/sat). The box always shows the numbers being sent.
 
+**A pattern that never changes is a hold, not a flicker.** Write `z` (or pick
+Quake's own *0 Steady*) and the light is simply set to that brightness and
+colour and left there — one command, then nothing. The button says **Hold this
+colour** and the badge reads HOLDING. Moving a slider re-sends it once. This
+matters because the bridge's ~10 commands a second are shared: repeating an
+unchanging frame would take that budget from the lights actually flickering.
+
 **Plugs can't flicker.** A smart plug switches a relay: it is on or it is off,
 with no brightness in between, and a flicker frame is a brightness. Plugs are
 still listed — one greyed row at the end of Lights & Plugs, saying so — but

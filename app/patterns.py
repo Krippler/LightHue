@@ -466,3 +466,14 @@ def level_for_char(c: str) -> float:
         c = "m"
     val = (ord(c) - ord("a")) / 25.0
     return max(0.0, min(1.0, val))
+
+
+def is_steady(sequence: str) -> bool:
+    """Whether a sequence holds one level rather than animating.
+
+    "z" is not a flicker with no variation in it — it is a light left on at
+    full. Anything whose characters all resolve to the same level is the same
+    thing however long it is written: "zzzz" holds exactly as "z" does.
+    """
+    seq = sequence or "m"
+    return len({level_for_char(c) for c in seq}) <= 1

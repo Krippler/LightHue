@@ -251,6 +251,27 @@ function sequenceFor(patternId) {
   return p ? p.sequence : 'm';
 }
 
+// Named for what pressing it will actually do, which the chosen pattern
+// already decides. Called from the dropdown too: picking a steady pattern
+// while nothing is running gets no status push to relabel it.
+function labelStartButton(card, partial = false) {
+  const steady = isSteadySequence(sequenceFor(card.querySelector('.pattern-select').value));
+  card.querySelector('.btn-start').textContent = partial
+    ? 'Start the rest'
+    : (steady ? 'Hold this colour' : 'Start flicker');
+}
+
+// Mirrors is_steady() on the server. A sequence whose letters all mean the
+// same brightness isn't an animation with no movement in it — it's a light
+// left on, so it's sent once and held rather than run as a loop.
+function isSteadySequence(sequence) {
+  const seq = sequence || 'm';
+  return new Set([...seq].map(c => {
+    const lower = c.toLowerCase();
+    return lower >= 'a' && lower <= 'z' ? lower : 'm';
+  })).size <= 1;
+}
+
 // A pattern isn't just its letters: the speed, how far the bulb swings and how
 // hard the steps are all belong to the effect. A sputtering bulb and a slow
 // gothic throb aren't the same shape played faster or slower.
@@ -436,6 +457,7 @@ function buildCard(entity) {
   select.addEventListener('change', () => {
     applyPatternFraming();
     drawWaveform(entity.key, sequenceFor(select.value));
+    labelStartButton(card);
     pushLive(entity);
   });
 
@@ -487,6 +509,7 @@ function buildCard(entity) {
   });
 
   applyPatternFraming();
+  labelStartButton(card);
   applyCapabilities(node, entity.light);
   cardEls[entity.key] = card;
   cardEntities[entity.key] = entity;
@@ -807,7 +830,9 @@ function updatePlayheads() {
     if (!entity) return;
     const { running, partial, settings } = entityState(entity);
     const bars = card.querySelectorAll('.waveform .bar');
-    if (!(running || partial) || !settings || !bars.length) {
+    // A held light isn't playing through anything, so there is no frame for a
+    // playhead to sit on.
+    if (!(running || partial) || !settings || settings.holding || !bars.length) {
       clearPlayhead(card, key);
       return;
     }
@@ -1183,14 +1208,16 @@ function applyStatus() {
     card.classList.toggle('is-running', active);
     card.classList.toggle('is-partial', partial);
     badge.classList.toggle('hidden', !active);
+    const holding = !!(settings && settings.holding);
+    const word = holding ? 'HOLDING' : 'FLICKERING';
     badge.textContent = partial
-      ? `${runningCount}/${entity.lightIds.length} FLICKERING`
-      : 'FLICKERING';
+      ? `${runningCount}/${entity.lightIds.length} ${word}`
+      : word;
     // A partly-running group keeps Start available so the stragglers can be
     // brought in line without stopping the ones already going.
     btnStart.classList.toggle('hidden', running);
     btnStop.classList.toggle('hidden', !active);
-    btnStart.textContent = partial ? 'Start the rest' : 'Start flicker';
+    labelStartButton(card, partial);
     // Only useful once the flicker has stopped and the bulb is sitting on
     // whatever the last tick left it at.
     card.querySelector('.btn-revert').classList.toggle('hidden', active || !hasSnapshot(entity));

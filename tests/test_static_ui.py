@@ -132,3 +132,17 @@ def test_the_card_template_carries_the_slots_the_gating_needs():
         assert f'class="{cls}"' in INDEX or f'"{cls} ' in INDEX or f' {cls}"' in INDEX, (
             f"the card template has no .{cls} for applyCapabilities to act on"
         )
+
+
+def test_the_console_mirrors_the_servers_steady_rule():
+    """The button label depends on it, and it is decided client-side.
+
+    A wrong answer here would promise a flicker and deliver a hold, or the
+    other way round.
+    """
+    assert "function isSteadySequence(" in APP_JS
+    assert "labelStartButton(card)" in APP_JS, (
+        "the label has to be refreshed when the pattern dropdown changes, not "
+        "only on a status push"
+    )
+    assert "settings.holding" in APP_JS, "the badge never reads the held state"
