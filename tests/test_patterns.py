@@ -241,20 +241,29 @@ def test_every_pattern_states_its_whole_framing():
         assert 0 <= framing["transition_ms"] <= 60000, pattern["id"]
 
 
-def test_engine_styles_are_left_unframed():
-    # The a-z curve is the whole brightness story in those tables, and the
-    # engines step it hard, so smoothing or narrowing would misrepresent them.
+def test_engine_styles_keep_the_full_range_unless_the_fixture_argues_otherwise():
+    """The a-z curve is the whole brightness story in those tables.
+
+    So an engine style maps it across the bulb's full range and steps it hard,
+    which is what the engine does. The exceptions are named rather than
+    general: a flame needs a floor and some smoothing not to read as a fault,
+    and a ramp written as fifty steps reads as a ramp once each step fades
+    into the next.
+    """
+    softened = {"candle_a", "candle_b", "candle_c", "hl_underwater",
+                "slow_strong_pulse", "gentle_pulse", "slow_pulse_nb",
+                "steady", "quake_testing"}
     for pattern in BUILTIN_PATTERNS:
-        if pattern["origin"] == "engine":
-            assert (pattern["min_bri"], pattern["max_bri"], pattern["transition_ms"]) \
-                == (1, 254, 0), pattern["id"]
+        if pattern["origin"] != "engine" or pattern["id"] in softened:
+            continue
+        assert (pattern["min_bri"], pattern["max_bri"], pattern["transition_ms"]) \
+            == (1, 254, 0), f"{pattern['id']} should be left hard and wide"
 
 
-def test_authored_patterns_use_the_framing():
-    framed = [p for p in BUILTIN_PATTERNS
-              if (p["min_bri"], p["max_bri"], p["transition_ms"]) != (1, 254, 0)]
-    assert len(framed) > 10
-    assert all(p["origin"] == "inspired" for p in framed)
+def test_hard_stepped_engine_styles_are_not_smoothed():
+    """Strobes and flickers snap. A transition on one would soften the effect."""
+    for pid in ("flicker_a", "flicker_b", "fast_strobe", "hard_strobe", "fluorescent"):
+        assert BUILTIN_BY_ID[pid]["transition_ms"] == 0, pid
 
 
 def test_transitions_sit_on_the_bridges_own_resolution():
@@ -303,11 +312,20 @@ def test_colour_is_only_given_where_the_game_actually_had_one():
         assert (pattern["hue"] is None) == (pattern["sat"] is None), pattern["id"]
 
 
-def test_engine_styles_never_carry_a_colour():
-    # Those tables are brightness only; colour came from the map's light entity.
+def test_engine_styles_carry_a_colour_only_for_a_coloured_fixture():
+    """A lightstyle names no colour — in the engine it comes from the lightmap.
+
+    So a colour here is always authored, and is only worth authoring where the
+    fixture has one in life: Quake's candles are candles. The rest run in
+    whatever colour the bulb is already set to, which is the closer analogue of
+    what the engine does.
+    """
+    coloured = {"candle_a", "candle_b", "candle_c", "hl_underwater"}
     for pattern in BUILTIN_PATTERNS:
-        if pattern["origin"] == "engine":
-            assert pattern["hue"] is None and pattern["sat"] is None, pattern["id"]
+        if pattern["origin"] != "engine":
+            continue
+        has = pattern["hue"] is not None
+        assert has == (pattern["id"] in coloured), pattern["id"]
 
 
 def test_is_steady_recognises_a_sequence_that_never_changes():
@@ -332,3 +350,84 @@ def test_the_engines_own_steady_styles_are_recognised():
     assert is_steady(by_id["steady"]["sequence"])            # style 0
     assert is_steady(by_id["quake_testing"]["sequence"])     # style 63
     assert not is_steady(by_id["flicker_a"]["sequence"])
+
+
+def test_every_preset_carries_its_whole_framing():
+    """Speed, brightness window and transition are set on every preset.
+
+    They used to fall through to module defaults on the fourteen verbatim
+    engine styles, so picking one of those left the sliders wherever the last
+    pattern put them instead of describing the effect.
+    """
+    for pattern in BUILTIN_PATTERNS:
+        for field in ("hz", "min_bri", "max_bri", "transition_ms"):
+            assert pattern.get(field) is not None, f"{pattern['id']} has no {field}"
+
+
+def test_preset_framing_is_in_range_and_the_right_way_round():
+    for p in BUILTIN_PATTERNS:
+        assert 1 <= p["min_bri"] <= 254, p["id"]
+        assert 1 <= p["max_bri"] <= 254, p["id"]
+        assert p["min_bri"] <= p["max_bri"], f"{p['id']} has an inverted window"
+        assert 0 < p["hz"] <= 25, p["id"]
+        assert 0 <= p["transition_ms"] <= 1000, p["id"]
+
+
+def test_hue_and_sat_always_travel_together():
+    """Half a colour is not a colour: the engine drops both unless both are set."""
+    for p in BUILTIN_PATTERNS:
+        assert (p["hue"] is None) == (p["sat"] is None), f"{p['id']} names half a colour"
+        if p["hue"] is not None:
+            assert 0 <= p["hue"] <= 65535, p["id"]
+            assert 0 <= p["sat"] <= 254, p["id"]
+
+
+def test_colour_is_named_only_where_the_fixture_has_one():
+    """Colourless is a choice here, not an omission.
+
+    A strobe or a failing fluorescent has no colour of its own — it runs in
+    whatever the bulb is already set to, which is also how the engines treat
+    it, since a lightstyle is a brightness curve and the colour comes from
+    somewhere else entirely.
+    """
+    by_id = BUILTIN_BY_ID
+    # Fixtures that are coloured in life keep their colour.
+    for pid in ("candle_a", "candle_b", "candle_c", "doom_fire_flicker",
+                "heretic_wall_torch", "duke_blink"):
+        assert by_id[pid]["hue"] is not None, f"{pid} should name a colour"
+    # Effects that are purely about brightness do not.
+    for pid in ("fast_strobe", "hard_strobe", "flicker_a", "fluorescent",
+                "doom_strobe_fast", "doom3_strobe", "sw_fluorescent"):
+        assert by_id[pid]["hue"] is None, f"{pid} should stay colourless"
+
+
+def test_unreals_light_types_stay_colourless():
+    """LT_* is a light *type* in Unreal; colour is a separate actor property.
+
+    Naming one here would merge two things the engine deliberately keeps apart.
+    """
+    for p in BUILTIN_PATTERNS:
+        if p["game"] == "Unreal":
+            assert p["hue"] is None, f"{p['id']} should leave colour to the bulb"
+
+
+def test_flames_keep_a_floor_and_some_smoothing():
+    """A real flame does not go out between frames.
+
+    Quake's candles gutter all the way to 'a', which on a bulb is off. They
+    are framed with a floor and a transition so they read as a flame rather
+    than as a stutter.
+    """
+    for pid in ("candle_a", "candle_b", "candle_c"):
+        p = BUILTIN_BY_ID[pid]
+        assert p["min_bri"] >= 20, f"{pid} guttering to black reads as a fault"
+        assert p["transition_ms"] > 0, f"{pid} needs smoothing to read as a flame"
+
+
+def test_the_verbatim_sequences_are_still_verbatim():
+    """Framing was added around these; the strings themselves must not move."""
+    assert BUILTIN_BY_ID["flicker_a"]["sequence"] == "mmnmmommommnonmmonqnmmo"
+    assert BUILTIN_BY_ID["fast_strobe"]["sequence"] == "mamamamamama"
+    assert BUILTIN_BY_ID["candle_a"]["sequence"] == "mmmmmaaaaammmmmaaaaaabcdefgabcdefg"
+    assert BUILTIN_BY_ID["hard_strobe"]["sequence"] == "aaaaaaaazzzzzzzz"
+    assert BUILTIN_BY_ID["hl_underwater"]["sequence"] == "mmnnmmnnnmmnn"

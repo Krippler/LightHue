@@ -19,8 +19,16 @@ letters.
 Two kinds of pattern live here, and the difference is worth keeping honest:
 
   origin="engine"
-      Copied verbatim from the game's own lightstyle table, checked against
-      the released source rather than memory. Quake shipped styles 0-11 and 63
+      The *sequence* is copied verbatim from the game's own lightstyle table,
+      checked against the released source rather than memory. The framing
+      around it is not a claim about the engine: only the rate comes from it
+      (these tables step at 10 fps). The brightness window, the transition and
+      any colour are authored here, because the engines have none to copy —
+      a Quake lightstyle is a brightness curve, and the light's colour comes
+      from the map's lightmap, not the style. Where a colour is named it is
+      because the fixture has one in life: a candle is orange whatever the
+      lightmap says. Generic flickers, strobes and fluorescents name none, and
+      run in whatever colour the bulb is already set to. Quake shipped styles 0-11 and 63
       as literal a-z strings; Quake II, Half-Life and Source all ship that same
       table byte for byte, and GoldSrc/Source add style 12. Because they are
       the same strings, they are listed once and shared into each game's menu
@@ -54,60 +62,78 @@ BUILTIN_PATTERNS = [
     # engine that inherited it unchanged ----
     {"id": "steady", "game": "Quake", "shared_with": QUAKE_LINEAGE,
      "name": "Quake — 0 Steady", "hz": 10,
+     "min_bri": 1, "max_bri": 254, "transition_ms": 200,
      "sequence": "m",
      "origin": "engine"},
     {"id": "flicker_a", "game": "Quake", "shared_with": QUAKE_LINEAGE,
      "name": "Quake — 1 Flicker", "hz": 10,
+     "min_bri": 1, "max_bri": 254, "transition_ms": 0,
      "sequence": "mmnmmommommnonmmonqnmmo",
      "origin": "engine"},
     {"id": "slow_strong_pulse", "game": "Quake", "shared_with": QUAKE_LINEAGE,
      "name": "Quake — 2 Slow Strong Pulse", "hz": 10,
+     "min_bri": 1, "max_bri": 254, "transition_ms": 100,
      "sequence": "abcdefghijklmnopqrstuvwxyzyxwvutsrqponmlkjihgfedcba",
      "origin": "engine"},
     {"id": "candle_a", "game": "Quake", "shared_with": QUAKE_LINEAGE,
      "name": "Quake — 3 Candle", "hz": 10,
+     "min_bri": 30, "max_bri": 210, "transition_ms": 100,
+     "hue": 6000, "sat": 200,
      "sequence": "mmmmmaaaaammmmmaaaaaabcdefgabcdefg",
      "origin": "engine"},
     {"id": "fast_strobe", "game": "Quake", "shared_with": QUAKE_LINEAGE,
      "name": "Quake — 4 Fast Strobe", "hz": 10,
+     "min_bri": 1, "max_bri": 254, "transition_ms": 0,
      "sequence": "mamamamamama",
      "origin": "engine"},
     {"id": "gentle_pulse", "game": "Quake", "shared_with": QUAKE_LINEAGE,
      "name": "Quake — 5 Gentle Pulse", "hz": 10,
+     "min_bri": 1, "max_bri": 254, "transition_ms": 100,
      "sequence": "jklmnopqrstuvwxyzyxwvutsrqponmlkj",
      "origin": "engine"},
     {"id": "flicker_b", "game": "Quake", "shared_with": QUAKE_LINEAGE,
      "name": "Quake — 6 Flicker (alt)", "hz": 10,
+     "min_bri": 1, "max_bri": 254, "transition_ms": 0,
      "sequence": "nmonqnmomnmomomno",
      "origin": "engine"},
     {"id": "candle_b", "game": "Quake", "shared_with": QUAKE_LINEAGE,
      "name": "Quake — 7 Candle (alt)", "hz": 10,
+     "min_bri": 30, "max_bri": 210, "transition_ms": 100,
+     "hue": 6000, "sat": 200,
      "sequence": "mmmaaaabcdefgmmmmaaaammmaamm",
      "origin": "engine"},
     {"id": "candle_c", "game": "Quake", "shared_with": QUAKE_LINEAGE,
      "name": "Quake — 8 Candle (long)", "hz": 10,
+     "min_bri": 30, "max_bri": 210, "transition_ms": 100,
+     "hue": 6000, "sat": 200,
      "sequence": "mmmaaammmaaammmabcdefaaaammmmabcdefmmmaaaa",
      "origin": "engine"},
     {"id": "hard_strobe", "game": "Quake", "shared_with": QUAKE_LINEAGE,
      "name": "Quake — 9 Slow Strobe", "hz": 10,
+     "min_bri": 1, "max_bri": 254, "transition_ms": 0,
      "sequence": "aaaaaaaazzzzzzzz",
      "origin": "engine"},
     {"id": "fluorescent", "game": "Quake", "shared_with": QUAKE_LINEAGE,
      "name": "Quake — 10 Fluorescent Flicker", "hz": 10,
+     "min_bri": 1, "max_bri": 254, "transition_ms": 0,
      "sequence": "mmamammmmammamamaaamammma",
      "origin": "engine"},
     {"id": "slow_pulse_nb", "game": "Quake", "shared_with": QUAKE_LINEAGE,
      "name": "Quake — 11 Slow Pulse (no black)", "hz": 10,
+     "min_bri": 1, "max_bri": 254, "transition_ms": 100,
      "sequence": "abcdefghijklmnopqrrqponmlkjihgfedcba",
      "origin": "engine"},
     {"id": "quake_testing", "game": "Quake", "shared_with": QUAKE_LINEAGE,
      "name": "Quake — 63 Testing (held dark)", "hz": 10,
+     "min_bri": 1, "max_bri": 254, "transition_ms": 200,
      "sequence": "a",
      "origin": "engine"},
 
     # ---- Half-Life: GoldSrc added style 12, which Source carries too ----
     {"id": "hl_underwater", "game": "Half-Life", "shared_with": ["Half-Life 2 / Source"],
      "name": "Half-Life — 12 Underwater Mutation", "hz": 10,
+     "min_bri": 40, "max_bri": 230, "transition_ms": 100,
+     "hue": 40000, "sat": 170,
      "sequence": "mmnnmmnnnmmnn",
      "origin": "engine"},
 
@@ -186,6 +212,7 @@ BUILTIN_PATTERNS = [
     {"id": "descent_panel", "game": "Descent",
      "name": "Descent — Damaged Panel", "hz": 14,
      "min_bri": 10, "max_bri": 240, "transition_ms": 0,
+     "hue": 40000, "sat": 120,
      "sequence": "wvzwuzvwxzuwvzxw",
      "origin": "inspired"},
 
@@ -232,6 +259,7 @@ BUILTIN_PATTERNS = [
     {"id": "duke_blink", "game": "Duke Nukem 3D",
      "name": "Duke Nukem 3D — Blinking Sign", "hz": 6,
      "min_bri": 1, "max_bri": 254, "transition_ms": 0,
+     "hue": 55000, "sat": 220,
      "sequence": "zzzaaazzzaaaaaa",
      "origin": "inspired"},
     {"id": "duke_pulse", "game": "Duke Nukem 3D",
@@ -291,6 +319,7 @@ BUILTIN_PATTERNS = [
     {"id": "sw_sputter", "game": "Shadow Warrior",
      "name": "Shadow Warrior — Sputtering Bulb", "hz": 15,
      "min_bri": 1, "max_bri": 245, "transition_ms": 0,
+     "hue": 7000, "sat": 180,
      "sequence": "wawwawwwawawwaawwwaw",
      "origin": "inspired"},
 
@@ -335,6 +364,7 @@ BUILTIN_PATTERNS = [
     {"id": "thief_electric", "game": "Thief",
      "name": "Thief — Failing Electric Light", "hz": 13,
      "min_bri": 1, "max_bri": 250, "transition_ms": 0,
+     "hue": 41000, "sat": 100,
      "sequence": "zazzzaazzzzazaazzzza",
      "origin": "inspired"},
 
@@ -342,6 +372,7 @@ BUILTIN_PATTERNS = [
     {"id": "ss2_deck", "game": "System Shock 2",
      "name": "System Shock 2 — Failing Deck Light", "hz": 11,
      "min_bri": 15, "max_bri": 240, "transition_ms": 0,
+     "hue": 41000, "sat": 80,
      "sequence": "yzyxzyxwzyxyzwyxz",
      "origin": "inspired"},
     {"id": "ss2_emergency", "game": "System Shock 2",
@@ -352,6 +383,7 @@ BUILTIN_PATTERNS = [
     {"id": "ss2_medsci", "game": "System Shock 2",
      "name": "System Shock 2 — Med-Sci Flicker", "hz": 15,
      "min_bri": 25, "max_bri": 235, "transition_ms": 0,
+     "hue": 25000, "sat": 150,
      "sequence": "wyxzwvyxwzyvxw",
      "origin": "inspired"},
 
@@ -359,6 +391,7 @@ BUILTIN_PATTERNS = [
     {"id": "doom3_ceiling", "game": "Doom 3",
      "name": "Doom 3 — Failing Ceiling Light", "hz": 14,
      "min_bri": 1, "max_bri": 254, "transition_ms": 0,
+     "hue": 42000, "sat": 70,
      "sequence": "zzzzaazzzaaaaaazzaazzzzzzaaazz",
      "origin": "inspired"},
     {"id": "doom3_strobe", "game": "Doom 3",
@@ -369,6 +402,7 @@ BUILTIN_PATTERNS = [
     {"id": "doom3_panel", "game": "Doom 3",
      "name": "Doom 3 — Dying Panel", "hz": 8,
      "min_bri": 5, "max_bri": 235, "transition_ms": 100,
+     "hue": 44000, "sat": 140,
      "sequence": "zyxwvutsrqponmlkjihgfedcba",
      "origin": "inspired"},
 

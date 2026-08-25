@@ -91,14 +91,23 @@ along, so the light looks right without tuning anything:
 | Doom 3 — Corridor Strobe | 12 Hz, full range, hard steps, no colour |
 | Hexen — Slow Mana Pulse | 5 Hz, 20–230, 200 ms, violet |
 | Quake 4 — Strogg Machinery | 8 Hz, 35–225, 100 ms, sickly green |
+| Quake — 3 Candle | 10 Hz, 30–210, 100 ms, warm orange |
+| Quake — 4 Fast Strobe | 10 Hz, full range, hard steps, no colour |
 
 Flames keep a brightness floor and a little smoothing, because a real flame
 doesn't go out between frames. Failing tubes and strobes do the opposite: they
 snap, and they go dark. Every slider still works afterwards.
 
-**Colour is opt-in.** Half the patterns name one; half deliberately don't, so
-they leave whatever colour you set in the Hue app alone. Unticking **Set
-colour** overrides a pattern that names one.
+**Colour is named where the fixture has one.** A candle is orange, a neon sign
+is magenta, a Strogg machine is a sickly green — those patterns bring their
+colour with them. A strobe, a generic flicker or a failing fluorescent has no
+colour of its own, so those leave whatever you set in the Hue app alone and
+just flicker it. Unticking **Set colour** overrides a pattern that names one.
+
+That split is why 37 of the 64 presets name a colour and 27 deliberately
+don't. Unreal's are all in the second group on purpose: `LT_Flicker` is a light
+*type* there, and colour is a separate property of the actor, so naming one
+here would merge two things the engine keeps apart.
 
 Under each swatch is a box for an exact colour. It takes `6000,225` (Hue's own
 hue and saturation, the exact form) or `#ff991d` / `#f80` (converted to the
