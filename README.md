@@ -131,12 +131,12 @@ Plugs.
 
 You also need a pairing that included a streaming key. A console paired before
 this feature existed has to pair again; the panel tells you when that applies.
-Only one area streams at a time, so an area Hue Sync or a game has claimed says
-so on its card.
+Only one area streams at a time, so an area Hue Sync or a game has claimed is
+marked **in use elsewhere**.
 
-**Use for stream** on an area card picks it; the controls below it in the same
-panel set the pattern, speed, brightness, transition and colour, and **Start
-stream** runs it. If a stream won't start, **Diagnostics** says what the bridge
+Areas are listed one row each: click a row to stream to it, and use the ✎ and ×
+on the row to rename or delete it. The controls below the list set the pattern,
+speed, brightness, transition and colour, and **Start stream** runs it. If a stream won't start, **Diagnostics** says what the bridge
 is doing, and [docs/streaming.md](docs/streaming.md) covers how to read it.
 
 ## Custom patterns

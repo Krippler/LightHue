@@ -314,7 +314,7 @@ input[type="color"] {
 /* With no groups yet the grid is an unexplained gap, so it collapses away and
    the tools below it lose their divider. */
 #groups-grid:empty { display: none; }
-#areas-grid:not(:empty) + .group-tools {
+#areas-list:not(:empty) + .group-tools {
   margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);
 }
 
@@ -502,12 +502,33 @@ input[type="color"] {
 .btn-delete-group:hover { border-color: var(--err); color: var(--err); }
 
 /* Groups lead the grid, so they get a marker that reads at a glance. */
-/* Areas are managed, not flickered, so their cards carry the marker the group
-   cards used to and drop the controls a light card has. */
-.area-card { border-left: 3px solid var(--warn); }
-.area-card .light-name::before { content: "▣ "; color: var(--warn); }
-.area-card.is-picked { border-left-color: var(--app); background: var(--panel2); }
-.area-card .reachable-text { margin-bottom: 10px; }
+/* A short list of names does not need a card each. One row per area, with
+   picking folded into the row rather than spending a button on it. */
+.areas-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.area-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px; cursor: pointer;
+  background: var(--panel2); border: 1px solid var(--border);
+  border-left: 3px solid var(--border); border-radius: 4px;
+  transition: border-color .12s, background .12s;
+}
+.area-row:hover { border-color: var(--muted); }
+.area-row:focus-visible { outline: 2px solid var(--app); outline-offset: 1px; }
+.area-row.is-picked { border-left-color: var(--app); background: var(--panel); }
+.area-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto;
+  border: 1px solid var(--muted);
+}
+.area-row.is-picked .area-dot { background: var(--app); border-color: var(--app); }
+.area-row-name { font-size: 13px; font-weight: 600; white-space: nowrap; }
+/* The names run out before the row does, so the meta takes the slack and
+   truncates rather than wrapping the actions onto a second line. */
+.area-row-meta {
+  flex: 1 1 auto; min-width: 0; font-size: 11px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.area-row-busy { font-size: 11px; color: var(--err); flex: 0 0 auto; }
+.area-row .chip-edit, .area-row .chip-del { flex: 0 0 auto; }
 /* Separates managing areas from driving one, inside the panel that now does
    both. They are one subject, but two jobs. */
 .panel-rule {
