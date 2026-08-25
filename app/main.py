@@ -601,6 +601,13 @@ async def list_lights():
             "sat": state.get("sat"),
             "colormode": state.get("colormode"),
             "has_color": "hue" in state,
+            # What the device will actually accept. A smart plug switches a
+            # relay and reports no bri at all; the bridge answers a PUT
+            # carrying one with HTTP 200 and a per-parameter error, so the
+            # send looks like it worked while nothing happens. Both flags are
+            # read off the state the bridge reports rather than the light's
+            # type string, which varies by manufacturer.
+            "dimmable": "bri" in state,
         })
     out.sort(key=lambda x: x["name"])
     return {"lights": out, "snapshots": engine.snapshots}
@@ -1756,6 +1763,51 @@ async def get_status():
     return status_payload()
 
 
+def _undimmable(lights: dict, light_ids: list[str]) -> list[str]:
+    """The names of any lights asked to flicker that have no brightness.
+
+    A flicker frame is a brightness. A device without one — a smart plug
+    switching a relay — takes the `on: true` that rides along with it and
+    ignores the rest, so it lights up and then sits there while its share of
+    the bridge's command budget is spent on frames that do nothing. Lights the
+    bridge doesn't report at all are left alone: that is a stale id, which the
+    flicker loop already handles by giving up on it.
+    """
+    refused = []
+    for lid in light_ids:
+        info = lights.get(lid)
+        if info is None:
+            continue
+        if "bri" not in (info.get("state") or {}):
+            refused.append(info.get("name") or f"Light {lid}")
+    return sorted(refused)
+
+
+def _cannot_flicker_message(names: list[str]) -> str:
+    subject = names[0] if len(names) == 1 else ", ".join(names)
+    verb = "has no brightness" if len(names) == 1 else "have no brightness"
+    return (f"{subject} {verb} to flicker — a plug can only switch on and off. "
+            "Flickering it would spend the bridge's command budget without "
+            "changing anything.")
+
+
+async def _read_lights_for_start() -> dict | None:
+    """The bridge's lights, or None if it could not be asked.
+
+    A failed read must not block a start that would otherwise have worked, so
+    the checks that depend on it are skipped rather than turned into an error.
+    """
+    client = get_client()
+    if client is None:
+        return None
+    try:
+        await engine.limiter.wait()
+        return await client.get_lights()
+    except Exception as e:
+        logger.warning("Could not read lights before starting a flicker: %s", e)
+        return None
+
+
 @app.post("/api/flicker/start")
 async def start_flicker(req: StartRequest):
     if get_client() is None:
@@ -1786,9 +1838,15 @@ async def start_flicker(req: StartRequest):
     # spends the only token and the group's first round is strung out behind
     # it. The read counts against the budget too, hence the extra one.
     engine.expect_batch(len(req.light_ids) + 1)
-    # Snapshot first — one bulk GET for the whole group — so Stop has something
-    # to put back. Lights already running keep their earlier snapshot.
-    await engine.capture(req.light_ids)
+    # One bulk GET serves both jobs below, so starting still costs one read.
+    lights = await _read_lights_for_start()
+    if lights is not None:
+        refused = _undimmable(lights, req.light_ids)
+        if refused:
+            raise HTTPException(422, _cannot_flicker_message(refused))
+    # Snapshot next — so Stop has something to put back. Lights already running
+    # keep their earlier snapshot.
+    await engine.capture(req.light_ids, lights)
     # One epoch for the whole request: every light in a group then derives the
     # same frame from it and they flicker in step.
     epoch = time.monotonic()

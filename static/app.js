@@ -308,7 +308,12 @@ function renderGrid() {
   cardEls = {};
   cardEntities = {};
 
-  LIGHTS.map(lightEntity).forEach(e => lightGrid.appendChild(buildCard(e)));
+  // Devices that cannot flicker sit at the end, still in name order. They are
+  // worth showing — a plug that vanished would read as the bridge having lost
+  // it — but they are not what this panel is for.
+  const byUsefulness = [...LIGHTS].sort(
+    (a, b) => (a.dimmable === false) - (b.dimmable === false));
+  byUsefulness.map(lightEntity).forEach(e => lightGrid.appendChild(buildCard(e)));
 
   // An empty grid would otherwise be an unexplained gap in its panel.
   if (!LIGHTS.length) {
@@ -482,10 +487,45 @@ function buildCard(entity) {
   });
 
   applyPatternFraming();
+  applyCapabilities(node, entity.light);
   cardEls[entity.key] = card;
   cardEntities[entity.key] = entity;
   drawWaveform(entity.key, sequenceFor(select.value));
   return node;
+}
+
+// Hide the controls a device cannot honour, rather than letting them be set
+// and silently dropped.
+//
+// The bridge answers a PUT carrying a key the device lacks with HTTP 200 and a
+// per-parameter error, so nothing upstream notices: a brightness sent to a
+// plug, or a colour sent to a white-only bulb, reads as a successful send that
+// changes nothing. The controls are hidden rather than removed so that
+// cardSettings() still finds them — it reads the colour box on every send.
+function applyCapabilities(node, light) {
+  if (!light) return;
+  const card = node.querySelector('.light-card');
+
+  // A colour-capable bulb reports hue; a white-only one does not.
+  if (light.has_color === false) {
+    node.querySelector('.color-row').classList.add('hidden');
+  }
+
+  // A plug reports no brightness at all, and a flicker frame is a brightness,
+  // so there is nothing here it can do. Its selection box goes too: an area
+  // needs lights the bridge can render, which a plug is not.
+  if (light.dimmable === false) {
+    card.classList.add('cannot-flicker');
+    node.querySelector('.waveform').classList.add('hidden');
+    node.querySelector('.controls').classList.add('hidden');
+    node.querySelector('.card-actions').classList.add('hidden');
+    node.querySelector('.card-select').classList.add('hidden');
+    // Nothing can tick it now, so it must not stay ticked from before.
+    if (selected.delete(light.id)) renderSelection();
+    const note = node.querySelector('.cannot-note');
+    note.textContent = 'Switches on and off only — no brightness to flicker.';
+    note.classList.remove('hidden');
+  }
 }
 
 function cardSettings(card) {
