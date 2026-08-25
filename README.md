@@ -104,6 +104,12 @@ Under each swatch is a box for an exact colour. It takes `6000,225` (Hue's own
 hue and saturation, the exact form) or `#ff991d` / `#f80` (converted to the
 nearest hue/sat). The box always shows the numbers being sent.
 
+**Plugs can't flicker.** A smart plug switches a relay: it is on or it is off,
+with no brightness in between, and a flicker frame is a brightness. Plugs are
+still listed — one greyed row at the end of Lights & Plugs, saying so — but
+they're offered no controls. White-only bulbs do flicker; they just lose the
+colour swatch, which they have no way to use.
+
 ## Entertainment areas
 
 One command per light is all the ordinary path can do, and the bridge takes
@@ -120,14 +126,15 @@ the bridge** to tick the lights of a room you already made in the Hue app, then
 save that.
 
 Areas are created on the bridge, not in this console, so they show up in the
-Hue app too and survive the container being replaced. Each area gets a card
-with **Use for stream**, **Rename** and **Delete**.
+Hue app too and survive the container being replaced. They are listed one row
+each: click a row to stream to it, and use the ✎ and × on the row to rename or
+delete it.
 
 Two limits, both the bridge's: an area holds at most **10 lights**, and only
 **colour-capable** ones. Plugs and white-only bulbs have no entertainment
 service for the bridge to stream to, so saving an area containing one is
-refused with that light named. Drive those from their own cards in Lights &
-Plugs.
+refused with that light named. White-only bulbs still flicker from their own
+card; plugs can't flicker at all (below).
 
 You also need a pairing that included a streaming key. A console paired before
 this feature existed has to pair again; the panel tells you when that applies.

@@ -138,25 +138,29 @@ class FlickerEngine:
         """Adopt snapshots persisted by a previous run."""
         self._snapshots = {lid: dict(s) for lid, s in (snapshots or {}).items()}
 
-    async def capture(self, light_ids) -> dict:
+    async def capture(self, light_ids, lights: dict | None = None) -> dict:
         """Read the bulbs' current state so it can be put back later.
 
         One bulk GET covers the whole group. Lights already flickering keep the
         snapshot taken before *that* run started — otherwise restarting a light
         would overwrite the original with our own flicker output.
+
+        A caller that has already read the lights for its own checks passes
+        them in, so starting a flicker still costs the bridge one GET.
         """
         wanted = [lid for lid in light_ids if lid not in self._snapshots]
         if not wanted:
             return self.snapshots
-        client = self._get_client()
-        if client is None:
-            return self.snapshots
-        try:
-            await self.limiter.wait()
-            lights = await client.get_lights()
-        except Exception as e:
-            logger.warning("Could not snapshot light state before flickering: %s", e)
-            return self.snapshots
+        if lights is None:
+            client = self._get_client()
+            if client is None:
+                return self.snapshots
+            try:
+                await self.limiter.wait()
+                lights = await client.get_lights()
+            except Exception as e:
+                logger.warning("Could not snapshot light state before flickering: %s", e)
+                return self.snapshots
         for lid in wanted:
             state = (lights.get(lid) or {}).get("state")
             if state:

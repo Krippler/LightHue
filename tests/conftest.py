@@ -50,7 +50,12 @@ def bridge(app_modules, monkeypatch):
             "on": True, "reachable": True, "bri": 220,
             "hue": 12000, "sat": 90, "xy": [0.31, 0.33], "ct": 300, "colormode": "xy",
         }},
-    }, "puts": []}
+        # A smart plug, as the bridge really reports one: it switches a relay,
+        # so there is no bri and no colour anywhere in its state.
+        "5": {"name": "Quad Socket", "state": {
+            "on": False, "reachable": True, "mode": "homeautomation",
+        }},
+    }, "puts": [], "light_reads": 0}
 
     # The bridge's own rooms and zones, as the Hue app would have set them up.
     state["groups"] = {
@@ -140,6 +145,8 @@ def bridge(app_modules, monkeypatch):
         if path.endswith("/groups"):
             return httpx.Response(200, json=state["groups"])
         if path.endswith("/lights"):
+            # Counted so a test can hold the line on how many reads a start costs.
+            state["light_reads"] += 1
             return httpx.Response(200, json=state["lights"])
         if request.method == "PUT" and "/groups/" in request.url.path:
             import json
@@ -152,8 +159,23 @@ def bridge(app_modules, monkeypatch):
             return httpx.Response(200, json=[{"success": {}}])
         if request.url.path.endswith("/state"):
             import json
-            state["puts"].append(json.loads(request.content))
-            return httpx.Response(200, json=[{"success": {}}])
+            lid = request.url.path.split("/lights/")[1].split("/")[0]
+            body = json.loads(request.content)
+            state["puts"].append(body)
+            # A real bridge answers per parameter, and declines the ones the
+            # device does not have — at HTTP 200, so a caller that only checks
+            # the status code cannot tell. Modelled here so that sending a
+            # brightness to the plug looks exactly as harmless as it really is.
+            known = (state["lights"].get(lid) or {}).get("state", {})
+            answer = []
+            for key, value in body.items():
+                if key == "on" or key in known or key == "transitiontime" and "bri" in known:
+                    answer.append({"success": {f"/lights/{lid}/state/{key}": value}})
+                else:
+                    answer.append({"error": {
+                        "type": 6, "address": f"/lights/{lid}/state/{key}",
+                        "description": f"parameter, {key}, not available"}})
+            return httpx.Response(200, json=answer)
         if path.endswith("/config"):
             return httpx.Response(200, json={
                 "name": "Stub Bridge", "modelid": "BSB002",

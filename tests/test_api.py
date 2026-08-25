@@ -22,7 +22,8 @@ def test_lights_are_listed_sorted_by_name(client, bridge):
     configure(client)
     lights = client.get("/api/lights").json()["lights"]
     assert [x["name"] for x in lights] == [
-        "Armory Strip", "Nailgun Nook", "Rocket Alcove", "Slipgate Sconce",
+        "Armory Strip", "Nailgun Nook", "Quad Socket", "Rocket Alcove",
+        "Slipgate Sconce",
     ]
     assert lights[0]["reachable"] is False
 
@@ -213,6 +214,89 @@ def test_lights_expose_their_current_colour(client, bridge):
     assert sconce["colormode"] == "hs"
     assert sconce["has_color"] is True
     assert lights["Nailgun Nook"]["has_color"] is False   # white-only bulb
+
+
+def test_lights_report_whether_they_can_be_dimmed(client, bridge):
+    """A plug has no brightness, and a flicker frame is a brightness.
+
+    The UI needs this to decide whether to offer the controls at all: the
+    bridge accepts a PUT carrying a bri the device lacks and declines just
+    that key, so nothing downstream would notice the setting being dropped.
+    """
+    configure(client)
+    lights = {x["name"]: x for x in client.get("/api/lights").json()["lights"]}
+    assert lights["Slipgate Sconce"]["dimmable"] is True
+    assert lights["Nailgun Nook"]["dimmable"] is True     # white, but dimmable
+    assert lights["Quad Socket"]["dimmable"] is False     # a plug
+    assert lights["Quad Socket"]["has_color"] is False
+
+
+def test_a_plug_is_refused_a_flicker_by_name(client, bridge):
+    """Refused at the API rather than left to run against a device that ignores it.
+
+    Before this, starting a flicker on a plug turned it on and then sent it a
+    brightness ten times a second forever. Each send was answered 200, so the
+    loop never gave up — and every one of those frames came out of the same
+    rate budget the real bulbs flicker from.
+    """
+    configure(client)
+    r = client.post("/api/flicker/start", json={"light_ids": ["5"], "pattern_id": "flicker_a"})
+    assert r.status_code == 422
+    assert "Quad Socket" in r.json()["detail"]
+    assert client.get("/api/status").json()["lights"] == {}
+    # And nothing was sent to it.
+    assert bridge["puts"] == []
+
+
+def test_a_plug_in_a_group_stops_the_whole_start(client, bridge):
+    """All-or-nothing, and the message names the offender.
+
+    Starting the bulbs and quietly dropping the plug would leave the caller
+    believing the plug is flickering.
+    """
+    configure(client)
+    r = client.post("/api/flicker/start",
+                    json={"light_ids": ["1", "5"], "pattern_id": "flicker_a"})
+    assert r.status_code == 422
+    assert "Quad Socket" in r.json()["detail"]
+    assert client.get("/api/status").json()["lights"] == {}
+
+
+def test_dimmable_lights_still_start(client, bridge):
+    """The guard must not cost a working light its flicker."""
+    configure(client)
+    r = client.post("/api/flicker/start",
+                    json={"light_ids": ["1", "3"], "pattern_id": "flicker_a"})
+    assert r.status_code == 200
+    assert set(client.get("/api/status").json()["lights"]) == {"1", "3"}
+    client.post("/api/flicker/stop", json={})
+
+
+def test_a_start_is_not_blocked_when_the_bridge_cannot_be_read(client, bridge, monkeypatch,
+                                                              app_modules):
+    """A failed read skips the check rather than turning into a refusal.
+
+    The check exists to stop a pointless flicker, not to add a new way for a
+    momentary bridge hiccup to refuse a good one.
+    """
+    configure(client)
+
+    async def unreadable():
+        return None            # what the helper returns when the GET failed
+
+    monkeypatch.setattr(app_modules, "_read_lights_for_start", unreadable)
+    r = client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "flicker_a"})
+    assert r.status_code == 200
+    client.post("/api/flicker/stop", json={})
+
+
+def test_starting_a_flicker_still_costs_one_read(client, bridge):
+    """The capability check reuses the snapshot's GET rather than adding one."""
+    configure(client)
+    before = bridge["light_reads"]
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "flicker_a"})
+    client.post("/api/flicker/stop", json={})
+    assert bridge["light_reads"] - before == 1
 
 
 def test_starting_snapshots_the_bulb_state(client, bridge):
@@ -1670,7 +1754,7 @@ def test_candidates_separate_lights_that_can_stream_from_those_that_cannot(clien
     body = client.get("/api/stream/candidates").json()
 
     assert [c["light_id"] for c in body["candidates"]] == ["2", "1"]  # by name
-    assert {c["light_id"] for c in body["excluded"]} == {"3", "4"}
+    assert {c["light_id"] for c in body["excluded"]} == {"3", "4", "5"}
     assert body["max_lights"] == 10
     # The service id is what the create call needs, so it has to come back too.
     assert {c["service_rid"] for c in body["candidates"]} == {"ent-1", "ent-2"}
