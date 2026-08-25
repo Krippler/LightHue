@@ -1406,6 +1406,65 @@ def test_the_port_probe_note_reads_the_bridge_not_our_engine(client, bridge):
         "/api/stream/diagnostics").json()["udp_to_stream_port"]["note"]
 
 
+def test_diagnostics_never_returns_the_bridge_api_key(client, bridge):
+    """The whole response, not one field: this output exists to be pasted.
+
+    On the v1 API `stream.owner` is the whitelist username — this console's
+    own API key. The endpoint's own docstring invites the user to paste its
+    output into a bug report, and the console ships with no password, so the
+    key must not appear anywhere in it. The comparison every caller actually
+    wanted travels in its place.
+    """
+    import json
+
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    api_key = client.get("/api/bridge").json()
+    assert "api_key" not in api_key          # and not from /api/bridge either
+    key = "stub-key"                         # what the stub bridge issues
+
+    # Claimed by us, claimed by someone else, and claimed then released: the
+    # owner is populated in every state a user would run diagnostics in.
+    bridge["groups"]["6"]["stream"] = {"active": True, "owner": key}
+    body = client.get("/api/stream/diagnostics").json()
+    assert key not in json.dumps(body), "the API key reached the diagnostics output"
+    assert body["areas"]["6"]["stream"]["owned_by_us"] is True
+    assert body["areas"]["6"]["stream"]["owned_by_other"] is False
+    # The fields that are safe still travel.
+    assert body["areas"]["6"]["stream"]["active"] is True
+
+    bridge["groups"]["6"]["stream"] = {"active": True, "owner": "hue-sync"}
+    body = client.get("/api/stream/diagnostics").json()
+    assert "hue-sync" not in json.dumps(body)
+    assert body["areas"]["6"]["stream"]["owned_by_other"] is True
+    assert body["areas"]["6"]["stream"]["owned_by_us"] is False
+
+
+def test_a_start_attempt_does_not_record_the_api_key(client, bridge, app_modules,
+                                                     monkeypatch):
+    """last_attempt is returned wholesale, and the v1 arm reads the group back.
+
+    That read happens *after* the bridge records us as the owner, so it is the
+    path that captures the key even once the area is released and the live
+    areas block reads null again. Firmware with no v2 record is what puts the
+    arm down that path.
+    """
+    import json
+
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    bridge["v2"]["configurations"] = []          # older firmware: v1 is the real thing
+    monkeypatch.setattr(app_modules.stream_engine, "start",
+                        lambda *a, **kw: (_ for _ in ()).throw(
+                            app_modules.StreamError("no route to the bridge")))
+    client.post("/api/stream/start", json=stream_body())
+
+    body = client.get("/api/stream/diagnostics").json()
+    steps = body["last_attempt"]["steps"]
+    armed = next(s for s in steps if s["step"] == "armed")
+    assert armed["over"] == "v1", "this test only means anything on the v1 path"
+    assert armed["bridge_says"]["owned_by_us"] is True, "the claim should be ours"
+    assert "stub-key" not in json.dumps(body)
+
+
 def test_streaming_needs_a_console_paired_for_it(client, bridge):
     configure(client)                               # api key only, no client key
     r = client.post("/api/stream/start", json=stream_body())

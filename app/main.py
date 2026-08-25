@@ -1139,13 +1139,40 @@ async def _arm_area(client, area_id: str, configuration: dict | None) -> dict:
     return {"over": "v1", "bridge_says": await _v1_stream_state(client, area_id)}
 
 
+def safe_stream(stream: dict | None, api_key: str | None) -> dict:
+    """A group's stream state with the owner replaced by what it means.
+
+    On the v1 API `stream.owner` is the whitelist username — this console's
+    own API key. It must not leave this process: the key is minted by a
+    physical press of the bridge's link button, never expires, has no scoping,
+    and grants full control of every light, scene, schedule and sensor on the
+    bridge. Anyone holding it can drive the bridge directly, with no need for
+    this console and no way to revoke it short of deleting the whitelist entry
+    by hand.
+
+    Every caller only ever wanted the comparison anyway, so it is made here
+    and the two answers travel in the key's place. /api/stream/areas already
+    works this way; this is the same rule applied to everything else that
+    hands a stream state back.
+    """
+    stream = stream or {}
+    owner = stream.get("owner")
+    kept = {k: v for k, v in stream.items() if k != "owner"}
+    return {**kept,
+            "owned_by_us": bool(owner) and owner == api_key,
+            "owned_by_other": bool(owner) and owner != api_key}
+
+
 async def _v1_stream_state(client, area_id: str) -> dict:
     try:
         groups = await client.get_groups()
     except Exception:
         logger.debug("Could not read back group %s", area_id, exc_info=True)
         return {}
-    return (groups.get(area_id) or {}).get("stream") or {}
+    # Redacted at the source: this is recorded into _last_attempt, which the
+    # diagnostics endpoint returns wholesale.
+    return safe_stream((groups.get(area_id) or {}).get("stream"),
+                       config_store.load().get("api_key"))
 
 
 async def _claim_area(client, area_id: str):
@@ -1401,9 +1428,11 @@ async def stream_diagnostics():
         gid: {
             "name": info.get("name"),
             "lights": info.get("lights"),
-            # Verbatim, including proxymode and proxynode: whatever the bridge
-            # thinks is what matters here, not our reading of it.
-            "stream": info.get("stream"),
+            # proxymode and proxynode verbatim — whatever the bridge thinks is
+            # what matters here, not our reading of it. The owner is the one
+            # field that cannot travel: it is this console's API key, and this
+            # output exists to be pasted into a bug report.
+            "stream": safe_stream(info.get("stream"), cfg.get("api_key")),
             # Whether the lights were ever positioned. The bridge refuses to
             # stream to an area that was never finished in the Hue app.
             "has_locations": bool(info.get("locations")),
@@ -1412,12 +1441,11 @@ async def stream_diagnostics():
         if (info.get("type") or "") == ENTERTAINMENT_GROUP_TYPE
     }
     if isinstance(out.get("udp_to_stream_port"), dict):
-        out["udp_to_stream_port"]["note"] = _probe_note(out["areas"],
-                                                        cfg.get("api_key"))
+        out["udp_to_stream_port"]["note"] = _probe_note(out["areas"])
     return out
 
 
-def _probe_note(areas: dict, api_key: str | None) -> str:
+def _probe_note(areas: dict) -> str:
     """What the port probe means, given what the bridge is holding.
 
     The bridge only binds UDP 2100 while it holds an area, so the same answer
@@ -1435,7 +1463,7 @@ def _probe_note(areas: dict, api_key: str | None) -> str:
         stream = area.get("stream") or {}
         if not stream.get("active"):
             continue
-        (ours if stream.get("owner") == api_key else theirs).append(gid)
+        (ours if stream.get("owned_by_us") else theirs).append(gid)
 
     if ours:
         return (f"probed while this console is holding area {', '.join(ours)} — if no "
@@ -1511,7 +1539,8 @@ async def start_stream(req: StreamStartRequest):
 
     client = get_client()
     configuration = await _v2_configuration(req.area_id)
-    _note("before-claim", bridge_says=(info.get("stream") or {}),
+    _note("before-claim",
+          bridge_says=safe_stream(info.get("stream"), cfg.get("api_key")),
           has_locations=bool(info.get("locations")),
           v2_configuration=bool(configuration))
     try:
