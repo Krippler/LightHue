@@ -259,7 +259,7 @@ function framingFor(patternId) {
   return framing;
 }
 
-// Cards drive one light each. Areas are not cards of this kind: the bridge
+// Cards drive one light each. Areas are not cards at all: the bridge
 // streams to an area as a unit, so it is driven from the stream panel rather
 // than by sending its lights commands one at a time.
 function lightEntity(light) {
@@ -1624,67 +1624,66 @@ function pickArea(id) {
 
 // One card per area: what it holds, and the three things you can do to it.
 function renderAreas() {
-  const grid = $('#areas-grid');
+  const grid = $('#areas-list');
   grid.innerHTML = '';
   if (!AREAS.length) {
     grid.appendChild(emptyState(
       'No entertainment areas yet. Tick some lights below and save one.'));
   }
-  AREAS.forEach(a => grid.appendChild(buildAreaCard(a)));
+  AREAS.forEach(a => grid.appendChild(buildAreaRow(a)));
   renderPickedArea();
 }
 
-function buildAreaCard(area) {
-  const card = document.createElement('div');
-  card.className = 'light-card area-card';
-  card.classList.toggle('is-picked', area.id === pickedAreaId);
+// One compact row per area. A whole card each was a lot of furniture for what
+// is really a short list of names — the row carries the same three actions,
+// with picking folded into the row itself rather than spending a button on it.
+function buildAreaRow(area) {
+  const row = document.createElement('div');
+  row.className = 'area-row';
+  row.classList.toggle('is-picked', area.id === pickedAreaId);
+  row.tabIndex = 0;
+  row.setAttribute('role', 'button');
+  row.setAttribute('aria-pressed', String(area.id === pickedAreaId));
+  row.title = `Stream to "${area.name}"`;
 
-  const head = document.createElement('div');
-  head.className = 'card-head';
-  const name = document.createElement('div');
-  name.className = 'light-name';
+  const dot = document.createElement('span');
+  dot.className = 'area-dot';
+  dot.setAttribute('aria-hidden', 'true');
+
+  const name = document.createElement('span');
+  name.className = 'area-row-name';
   name.textContent = area.name;
-  head.appendChild(name);
-  card.appendChild(head);
 
-  const meta = document.createElement('div');
-  meta.className = 'reachable-text';
+  const meta = document.createElement('span');
+  meta.className = 'area-row-meta';
   const names = area.light_ids
     .map(id => (LIGHTS.find(l => l.id === id) || {}).name)
     .filter(Boolean);
-  const shown = names.slice(0, 3).join(', ');
-  const extra = names.length - 3;
+  const shown = names.slice(0, 2).join(', ');
+  const extra = names.length - 2;
   meta.textContent = `${area.light_ids.length} light`
     + `${area.light_ids.length === 1 ? '' : 's'}`
-    + (names.length ? ` · ${shown}${extra > 0 ? ` +${extra} more` : ''}` : '');
-  card.appendChild(meta);
+    + (names.length ? ` · ${shown}${extra > 0 ? ` +${extra}` : ''}` : '');
+
+  row.append(dot, name, meta);
 
   if (area.in_use_by_someone_else) {
-    const busy = document.createElement('div');
-    busy.className = 'status-line err';
-    busy.textContent = 'In use by another app — Hue Sync or a game.';
-    card.appendChild(busy);
+    const busy = document.createElement('span');
+    busy.className = 'area-row-busy';
+    busy.textContent = 'in use elsewhere';
+    row.appendChild(busy);
   }
-
-  const row = document.createElement('div');
-  row.className = 'action-row';
-
-  const pick = document.createElement('button');
-  pick.className = area.id === pickedAreaId ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm';
-  pick.type = 'button';
-  pick.textContent = area.id === pickedAreaId ? 'Picked for stream' : 'Use for stream';
-  pick.disabled = area.id === pickedAreaId;
-  pick.addEventListener('click', () => pickArea(area.id));
-  row.appendChild(pick);
 
   // Rename and delete address the configuration itself, which older firmware
   // does not expose — so they are absent rather than offered and then failing.
   if (area.uuid) {
     const rename = document.createElement('button');
-    rename.className = 'btn btn-ghost btn-sm';
+    rename.className = 'chip-edit';
     rename.type = 'button';
-    rename.textContent = 'Rename';
-    rename.addEventListener('click', async () => {
+    rename.textContent = '\u270e';
+    rename.title = `Rename "${area.name}"`;
+    rename.addEventListener('click', async event => {
+      event.stopPropagation();          // the row beneath is the pick control
       const next = prompt(`Rename "${area.name}" to:`, area.name);
       if (next === null) return;
       const trimmed = next.trim();
@@ -1699,13 +1698,14 @@ function buildAreaCard(area) {
         setGroupStatus(e.message, 'err');
       }
     });
-    row.appendChild(rename);
 
     const del = document.createElement('button');
-    del.className = 'btn btn-ghost btn-sm';
+    del.className = 'chip-del';
     del.type = 'button';
-    del.textContent = 'Delete';
-    del.addEventListener('click', async () => {
+    del.textContent = '\u00d7';
+    del.title = `Delete "${area.name}"`;
+    del.addEventListener('click', async event => {
+      event.stopPropagation();
       if (!confirm(`Delete "${area.name}" from the bridge?\n\n`
           + 'It disappears from the Hue app too, and anything else using it '
           + 'stops being able to.')) return;
@@ -1717,11 +1717,17 @@ function buildAreaCard(area) {
         setGroupStatus(e.message, 'err');
       }
     });
-    row.appendChild(del);
+    row.append(rename, del);
   }
 
-  card.appendChild(row);
-  return card;
+  row.addEventListener('click', () => pickArea(area.id));
+  row.addEventListener('keydown', event => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      pickArea(area.id);
+    }
+  });
+  return row;
 }
 
 function renderPickedArea() {
