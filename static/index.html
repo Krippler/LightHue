@@ -205,7 +205,6 @@
               Entertainment
             </div>
             <div class="panel-head-actions">
-              <span id="selection-count" class="dim"></span>
               <span id="stream-state" class="dim">idle</span>
               <button id="btn-stream-refresh" class="btn btn-ghost btn-sm">Refresh areas</button>
             </div>
@@ -213,22 +212,6 @@
           <div class="panel-body">
 
             <div id="areas-list" class="areas-list"></div>
-            <div class="group-tools">
-            <div class="group-form">
-              <label class="field">
-                <span>Area name <span class="info" id="area-tip" tabindex="0" role="button">?</span></span>
-                <input id="area-name" type="text" placeholder="TV area" maxlength="32" />
-              </label>
-              <div class="action-row">
-                <button id="btn-save-area" class="btn btn-primary btn-sm">Save as area</button>
-                <button id="btn-clear-selection" class="btn btn-ghost btn-sm">Clear selection</button>
-                <button id="btn-bridge-groups" class="btn btn-ghost btn-sm">Use a room from the bridge</button>
-              </div>
-            </div>
-            <div id="area-status" class="status-line"></div>
-            <div id="bridge-groups" class="bridge-groups hidden"></div>
-            </div>
-
             <hr class="panel-rule" />
 
             <div id="stream-unavailable" class="status-line err hidden"></div>
@@ -364,10 +347,30 @@
               Lights &amp; Plugs
             </div>
             <div class="panel-head-actions">
+              <span id="selection-count" class="dim"></span>
               <span id="light-count-label" class="dim"></span>
             </div>
           </div>
           <div class="panel-body">
+            <!-- Building an area starts here, next to the tickboxes that fill
+                 it: an area is the lights you picked, so the name and the Save
+                 sit with them rather than in another panel. -->
+            <div class="group-tools">
+            <div class="group-form">
+              <label class="field">
+                <span>Area name <span class="info" id="area-tip" tabindex="0" role="button">?</span></span>
+                <input id="area-name" type="text" placeholder="TV area" maxlength="32" />
+              </label>
+              <div class="action-row">
+                <button id="btn-save-area" class="btn btn-primary btn-sm">Save as area</button>
+                <button id="btn-clear-selection" class="btn btn-ghost btn-sm">Clear selection</button>
+                <button id="btn-bridge-groups" class="btn btn-ghost btn-sm">Use a room from the bridge</button>
+              </div>
+            </div>
+            <div id="area-status" class="status-line"></div>
+            <div id="bridge-groups" class="bridge-groups hidden"></div>
+            </div>
+
             <div id="lights-grid" class="lights-grid"></div>
           </div>
         </section>

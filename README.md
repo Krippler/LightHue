@@ -136,10 +136,11 @@ barely 1 Hz each.
 single frame carrying every light — so the speed stops being divided: up to
 25 Hz across the whole area, every light changing together.
 
-Tick the lights you want in **Lights & Plugs**, name them at the top of the
-**Entertainment** panel, and press **Save as area**. Or press **Use a room from
-the bridge** to tick the lights of a room you already made in the Hue app, then
-save that.
+Areas are built at the top of **Lights & Plugs**, next to the tickboxes that
+fill them: tick the lights you want, name the set, and press **Save as area**.
+Or press **Use a room from the bridge** to tick the lights of a room you already
+made in the Hue app, then save that. The new area appears in the **Entertainment**
+panel, which is where you drive it.
 
 Areas are created on the bridge, not in this console, so they show up in the
 Hue app too and survive the container being replaced. They are listed one row
