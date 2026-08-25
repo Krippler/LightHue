@@ -1471,6 +1471,19 @@ settleInput.addEventListener('input', () => {
 });
 
 const restoreToggle = $('#restore-toggle');
+const diagnosticsToggle = $('#diagnostics-toggle');
+
+// The button follows the setting rather than being hidden on its own, so the
+// console never offers something the server would answer 403 to.
+function applyDiagnosticsSetting(on) {
+  diagnosticsToggle.checked = on;
+  $('#btn-stream-diagnostics').classList.toggle('hidden', !on);
+  if (!on) {
+    const pane = $('#stream-diagnostics');
+    pane.textContent = '';
+    pane.classList.add('hidden');
+  }
+}
 
 async function loadSettings() {
   const settings = await api('/api/settings');
@@ -1479,6 +1492,7 @@ async function loadSettings() {
   restoreToggle.checked = settings.restore_on_stop;
   settleInput.value = settings.stream_settle_ms;
   settleValue.textContent = settings.stream_settle_ms;
+  applyDiagnosticsSetting(!!settings.diagnostics_enabled);
 }
 
 async function saveSettings() {
@@ -1488,9 +1502,27 @@ async function saveSettings() {
       max_commands_per_second: Number(rateInput.value),
       restore_on_stop: restoreToggle.checked,
       stream_settle_ms: Number(settleInput.value),
+      diagnostics_enabled: diagnosticsToggle.checked,
     }),
   });
 }
+
+diagnosticsToggle.addEventListener('change', async () => {
+  const statusEl = $('#diagnostics-status');
+  try {
+    const settings = await saveSettings();
+    applyDiagnosticsSetting(!!settings.diagnostics_enabled);
+    statusEl.textContent = settings.diagnostics_enabled
+      ? 'Diagnostics is on the Entertainment panel.'
+      : 'Diagnostics is off, and the console will not answer for it.';
+    statusEl.className = 'status-line ok';
+  } catch (e) {
+    // Put the box back where the server actually left it.
+    await loadSettings().catch(() => {});
+    statusEl.textContent = e.message;
+    statusEl.className = 'status-line err';
+  }
+});
 
 restoreToggle.addEventListener('change', async () => {
   const statusEl = $('#restore-status');

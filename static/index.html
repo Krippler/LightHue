@@ -162,6 +162,15 @@
               </div>
 
               <div class="setup-col">
+                <h3>Streaming diagnostics <span class="info" tabindex="0" role="button" aria-label="A report on why a stream would not start: your bridge model and firmware, every entertainment area and the lights in it, your local network shape, and the opening handshake bytes. It is meant to be pasted into a bug report, so it stays off until you want it. Your bridge key is never in it either way." data-tip="A report on why a stream would not start: your bridge model and firmware, every entertainment area and the lights in it, your local network shape, and the opening handshake bytes. It is meant to be pasted into a bug report, so it stays off until you want it. Your bridge key is never in it either way.">?</span></h3>
+                <label class="field checkbox-field">
+                  <input type="checkbox" id="diagnostics-toggle" />
+                  <span>Offer the Diagnostics button</span>
+                </label>
+                <div id="diagnostics-status" class="status-line"></div>
+              </div>
+
+              <div class="setup-col">
                 <h3>Console password</h3>
                 <p id="pw-explainer" class="hint">No password set &mdash; anyone on your network can
                 drive these lights.</p>
@@ -271,7 +280,7 @@
             <div class="action-row">
               <button id="btn-stream-start" class="btn btn-primary btn-sm">Start stream</button>
               <button id="btn-stream-stop" class="btn btn-danger btn-sm hidden">Stop stream</button>
-              <button id="btn-stream-diagnostics" class="btn btn-ghost btn-sm"
+              <button id="btn-stream-diagnostics" class="btn btn-ghost btn-sm hidden"
                       title="What the bridge says about each area, and what the last start attempt did">Diagnostics</button>
               <button id="btn-stream-release" class="btn btn-ghost btn-sm"
                       title="Hand the area back to the bridge — use this if a stream was left claimed and the lights answer to nothing">Release area</button>

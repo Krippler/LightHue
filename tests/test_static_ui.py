@@ -146,3 +146,16 @@ def test_the_console_mirrors_the_servers_steady_rule():
         "only on a status push"
     )
     assert "settings.holding" in APP_JS, "the badge never reads the held state"
+
+
+def test_the_diagnostics_button_ships_hidden():
+    """It must not be offered before the setting is read back from the server.
+
+    Rendering it and hiding it a moment later would flash a button that the
+    server would answer 403 to.
+    """
+    button = re.search(r'<button id="btn-stream-diagnostics"[^>]*>', INDEX)
+    assert button, "the diagnostics button is missing"
+    assert "hidden" in button.group(0), "it should start hidden and be revealed"
+    assert "applyDiagnosticsSetting" in APP_JS
+    assert "diagnostics_enabled" in APP_JS, "the setting is never sent or read"

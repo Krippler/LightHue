@@ -113,6 +113,14 @@ Diagnostics reports which client got through, as `transport`.
 
 ## Reading Diagnostics
 
+Turn on **Streaming diagnostics** in Settings first — the button is not there
+until you do, and the endpoint behind it answers 403. It is off by default
+because the report describes your bridge, its areas and the lights in them, and
+your local network, and it exists to be pasted somewhere public. The one thing
+it never contains is the bridge API key: `stream.owner` is that key on the v1
+API, so it is replaced with `owned_by_us` / `owned_by_other` before the report
+is built.
+
 **Diagnostics** in the streaming panel shows what the bridge says about each
 area, what the last start attempt did step by step, the bridge's own model and
 firmware, and — when a start fails — a deeper look taken while the area is still

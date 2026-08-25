@@ -327,6 +327,7 @@ class SettingsRequest(BaseModel):
     max_commands_per_second: float | None = Field(None, ge=1.0, le=30.0)
     restore_on_stop: bool | None = None
     stream_settle_ms: int | None = Field(None, ge=0, le=10000)
+    diagnostics_enabled: bool | None = None
 
 
 class StartRequest(BaseModel):
@@ -1357,8 +1358,21 @@ async def stream_diagnostics():
     """What the bridge says, and what the last start attempt did.
 
     Streaming fails against hardware that isn't in front of whoever is fixing
-    it, so this exists to be pasted into a bug report.
+    it, so this exists to be pasted into a bug report. That is also why it is
+    off until asked for: it describes a home in more detail than anything else
+    here, and pasting it somewhere public is the intended use.
+
+    Only the endpoint is gated. The attempt itself is still recorded in
+    memory, so turning this on after a stream fails still has something to
+    show — the alternative is a switch that only helps the *next* failure.
     """
+    if not config_store.get_settings()["diagnostics_enabled"]:
+        raise HTTPException(
+            403,
+            "Streaming diagnostics are off. Turn them on in Settings — they "
+            "describe your bridge, your lights and your network, so they stay "
+            "off until you want them.",
+        )
     cfg = config_store.load()
     out = {
         "can_stream": bool(cfg.get("client_key")),
