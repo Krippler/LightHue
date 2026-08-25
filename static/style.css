@@ -350,12 +350,15 @@ input[type="color"] {
 
 /* ---------- Groups ---------- */
 
-/* With no groups yet the grid is an unexplained gap, so it collapses away and
-   the tools below it lose their divider. */
-#groups-grid:empty { display: none; }
-#areas-list:not(:empty) + .group-tools {
-  margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);
+/* The area builder sits above the light cards, in the panel whose tickboxes
+   fill it, so its rule goes underneath rather than above. */
+.group-tools {
+  margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--border);
 }
+
+/* With no areas yet there is nothing above the rule to separate from, and it
+   would read as a stray line across the top of the panel. */
+#areas-list:empty + .panel-rule { display: none; }
 
 .group-form { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
 .group-form .field { flex: 0 1 320px; }

@@ -28,10 +28,11 @@ anything else.
 
 ## Making an area
 
-The Entertainment panel builds them: tick lights in Lights & Plugs, name the
-set, save. Managing areas and driving one live in the same panel, because they
-are the same subject — clicking a row picks which area the controls beneath the
-list apply to. Areas are created on the bridge, not in this console's config, so
+Lights & Plugs builds them, at the top of the panel: tick lights, name the set,
+save. The builder lives with the tickboxes because an area is the lights you
+picked. Driving one happens in the Entertainment panel, where the areas are
+listed — clicking a row picks which area the controls beneath the list apply
+to. Areas are created on the bridge, not in this console's config, so
 one made here appears in the Hue app and survives the container being replaced,
 and renaming or deleting one here does the same there.
 
@@ -112,6 +113,14 @@ Three details in the framing matter, and all three are easy to get wrong:
 Diagnostics reports which client got through, as `transport`.
 
 ## Reading Diagnostics
+
+Turn on **Streaming diagnostics** in Settings first — the button is not there
+until you do, and the endpoint behind it answers 403. It is off by default
+because the report describes your bridge, its areas and the lights in them, and
+your local network, and it exists to be pasted somewhere public. The one thing
+it never contains is the bridge API key: `stream.owner` is that key on the v1
+API, so it is replaced with `owned_by_us` / `owned_by_other` before the report
+is built.
 
 **Diagnostics** in the streaming panel shows what the bridge says about each
 area, what the last start attempt did step by step, the bridge's own model and

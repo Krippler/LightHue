@@ -21,6 +21,16 @@ _DEFAULT_SETTINGS = {
     # Adjustable because the right value is a property of one bridge on one
     # network, and nobody can guess it from here.
     "stream_settle_ms": 1500,
+    # Whether /api/stream/diagnostics will answer at all.
+    #
+    # Off by default because it is the most revealing thing this console can
+    # say: bridge model and firmware, every entertainment area and its lights,
+    # the local network shape, and the bytes of the opening handshake. None of
+    # that is a secret on its own, and none of it is the API key — that is
+    # redacted at the source — but it is a description of somebody's home, it
+    # is meant to be pasted into a bug report, and the console ships with no
+    # password. Nothing needs it until a stream will not start.
+    "diagnostics_enabled": False,
 }
 
 _DEFAULT = {

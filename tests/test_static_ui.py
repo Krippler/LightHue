@@ -146,3 +146,36 @@ def test_the_console_mirrors_the_servers_steady_rule():
         "only on a status push"
     )
     assert "settings.holding" in APP_JS, "the badge never reads the held state"
+
+
+def test_the_diagnostics_button_ships_hidden():
+    """It must not be offered before the setting is read back from the server.
+
+    Rendering it and hiding it a moment later would flash a button that the
+    server would answer 403 to.
+    """
+    button = re.search(r'<button id="btn-stream-diagnostics"[^>]*>', INDEX)
+    assert button, "the diagnostics button is missing"
+    assert "hidden" in button.group(0), "it should start hidden and be revealed"
+    assert "applyDiagnosticsSetting" in APP_JS
+    assert "diagnostics_enabled" in APP_JS, "the setting is never sent or read"
+
+
+def test_the_area_builder_sits_with_the_lights_it_is_built_from():
+    """An area is the lights you ticked, so the name and Save sit beside them.
+
+    Split across two panels it read as unrelated: you ticked boxes in one and
+    then went looking for a name field in another.
+    """
+    lights_panel = INDEX.split('data-section="lights"', 1)
+    assert len(lights_panel) == 2, "the lights panel is missing"
+    body = lights_panel[1]
+    builder = body.find('class="group-tools"')
+    grid = body.find('id="lights-grid"')
+    assert builder != -1, "the area builder is not in the lights panel"
+    assert grid != -1
+    assert builder < grid, "the builder should sit above the cards, not below"
+
+    # And it must not have been left behind in the stream panel too.
+    stream = INDEX.split('data-section="stream"', 1)[1].split("</section>", 1)[0]
+    assert 'class="group-tools"' not in stream

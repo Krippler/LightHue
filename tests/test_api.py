@@ -8,6 +8,19 @@ def configure(client):
     assert r.status_code == 200
 
 
+def diagnostics(client) -> dict:
+    """Read the streaming diagnostics, turning them on first.
+
+    They ship off, so every caller has to ask. Going through one helper keeps
+    that fact visible at each call site instead of hiding it in a fixture.
+    """
+    r = client.put("/api/settings", json={"diagnostics_enabled": True})
+    assert r.status_code == 200
+    r = client.get("/api/stream/diagnostics")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
 def test_index_and_unconfigured_state(client):
     assert client.get("/").status_code == 200
     assert client.get("/api/bridge").json() == {
@@ -945,7 +958,7 @@ def test_an_empty_settings_body_changes_nothing(client):
     r = client.put("/api/settings", json={})
     assert r.status_code == 200
     assert r.json() == {"max_commands_per_second": 7.0, "restore_on_stop": False,
-                        "stream_settle_ms": 1500}
+                        "stream_settle_ms": 1500, "diagnostics_enabled": False}
 
 
 def test_the_settle_delay_is_adjustable_and_can_be_turned_off(client):
@@ -1187,7 +1200,7 @@ def test_a_new_api_key_drops_the_client_key_that_did_not_come_with_it(client):
 
 
 def provenance(client):
-    return client.get("/api/stream/diagnostics").json()["keys_from_same_pairing"]
+    return diagnostics(client)["keys_from_same_pairing"]
 
 
 def test_key_provenance_separates_not_knowing_from_knowing_it_is_wrong(client, bridge):
@@ -1218,7 +1231,7 @@ def test_pairing_on_firmware_that_issues_no_streaming_key_is_not_a_match(client,
     """Nothing to pair the api key with means nothing to vouch for."""
     bridge["omit_client_key"] = True
     client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
-    assert client.get("/api/stream/diagnostics").json()["can_stream"] is False
+    assert diagnostics(client)["can_stream"] is False
     assert provenance(client) == "no"
 
 
@@ -1321,7 +1334,7 @@ def test_the_arm_step_records_what_the_bridge_said_not_what_we_asked(
                             app_modules.StreamError("no route to the bridge")))
     client.post("/api/stream/start", json=stream_body())
 
-    steps = client.get("/api/stream/diagnostics").json()["last_attempt"]["steps"]
+    steps = diagnostics(client)["last_attempt"]["steps"]
     armed = next(s for s in steps if s["step"] == "armed")
     assert armed["over"] == "v2"
     assert armed["bridge_says"]["status"] == "active"
@@ -1349,7 +1362,7 @@ def test_each_client_gets_a_freshly_armed_area(client, bridge, app_modules,
     assert tried == list(app_modules.STREAM_TRANSPORTS)
     assert None not in tried, "an unnamed transport would fall through internally"
     # One arm before the first client, one before each of the rest.
-    steps = client.get("/api/stream/diagnostics").json()["last_attempt"]["steps"]
+    steps = diagnostics(client)["last_attempt"]["steps"]
     arms = [s for s in steps if s["step"] in ("armed", "re-armed")]
     assert len(arms) == len(tried)
 
@@ -1377,7 +1390,7 @@ def test_a_release_that_did_not_take_is_said_out_loud(client, bridge, app_module
     r = client.post("/api/stream/start", json=stream_body())
     assert r.status_code == 502
     assert "still holding area 6" in r.json()["detail"]
-    steps = client.get("/api/stream/diagnostics").json()["last_attempt"]["steps"]
+    steps = diagnostics(client)["last_attempt"]["steps"]
     assert any(s["step"] == "release-failed" for s in steps)
 
 
@@ -1391,19 +1404,129 @@ def test_the_port_probe_note_reads_the_bridge_not_our_engine(client, bridge):
     client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
 
     # Area 4 is streaming, but to Hue Sync — working as intended, not a fault.
-    note = client.get("/api/stream/diagnostics").json()["udp_to_stream_port"]["note"]
+    note = diagnostics(client)["udp_to_stream_port"]["note"]
     assert "something else is streaming to area 4" in note
     assert "stranded" not in note
 
     # An area this console claimed and never released is the one worth naming.
     bridge["groups"]["6"]["stream"] = {"active": True, "owner": "stub-key"}
-    note = client.get("/api/stream/diagnostics").json()["udp_to_stream_port"]["note"]
+    note = diagnostics(client)["udp_to_stream_port"]["note"]
     assert "this console is holding area 6" in note and "stranded" in note
 
     bridge["groups"]["4"]["stream"] = {"active": False, "owner": None}
     bridge["groups"]["6"]["stream"] = {"active": False, "owner": None}
-    assert "no area claimed" in client.get(
-        "/api/stream/diagnostics").json()["udp_to_stream_port"]["note"]
+    assert "no area claimed" in diagnostics(client)["udp_to_stream_port"]["note"]
+
+
+def test_diagnostics_are_off_until_asked_for(client, bridge):
+    """The most revealing thing this console can say, so it ships off.
+
+    Not a secret in itself — the API key is redacted either way — but it
+    describes a bridge, its areas and lights, and the local network, and the
+    console ships with no password.
+    """
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    assert client.get("/api/settings").json()["diagnostics_enabled"] is False
+
+    r = client.get("/api/stream/diagnostics")
+    assert r.status_code == 403
+    assert "Settings" in r.json()["detail"]
+
+    client.put("/api/settings", json={"diagnostics_enabled": True})
+    assert client.get("/api/stream/diagnostics").status_code == 200
+
+    # And back off again — a switch that only goes one way is not a switch.
+    client.put("/api/settings", json={"diagnostics_enabled": False})
+    assert client.get("/api/stream/diagnostics").status_code == 403
+
+
+def test_turning_diagnostics_on_does_not_disturb_the_other_settings(client):
+    """One setting at a time: the request model leaves out what it is not sent."""
+    client.put("/api/settings", json={"max_commands_per_second": 7.0,
+                                      "stream_settle_ms": 0,
+                                      "restore_on_stop": False})
+    settings = client.put("/api/settings",
+                          json={"diagnostics_enabled": True}).json()
+    assert settings["diagnostics_enabled"] is True
+    assert settings["max_commands_per_second"] == 7.0
+    assert settings["stream_settle_ms"] == 0
+    assert settings["restore_on_stop"] is False
+
+
+def test_a_failed_start_still_says_why_with_diagnostics_off(client, bridge,
+                                                            app_modules, monkeypatch):
+    """The gate is on the report, not on the error.
+
+    Someone who pressed Start and got nothing still has to be told what
+    happened, or the switch makes the app unfixable for the person using it.
+    """
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    monkeypatch.setattr(app_modules.stream_engine, "start",
+                        lambda *a, **kw: (_ for _ in ()).throw(
+                            app_modules.StreamError("no route to the bridge")))
+    r = client.post("/api/stream/start", json=stream_body())
+    assert r.status_code == 502
+    assert r.json()["detail"], "a failed start has to explain itself"
+    assert client.get("/api/settings").json()["diagnostics_enabled"] is False
+
+
+def test_diagnostics_never_returns_the_bridge_api_key(client, bridge):
+    """The whole response, not one field: this output exists to be pasted.
+
+    On the v1 API `stream.owner` is the whitelist username — this console's
+    own API key. The endpoint's own docstring invites the user to paste its
+    output into a bug report, and the console ships with no password, so the
+    key must not appear anywhere in it. The comparison every caller actually
+    wanted travels in its place.
+    """
+    import json
+
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    api_key = client.get("/api/bridge").json()
+    assert "api_key" not in api_key          # and not from /api/bridge either
+    key = "stub-key"                         # what the stub bridge issues
+
+    # Claimed by us, claimed by someone else, and claimed then released: the
+    # owner is populated in every state a user would run diagnostics in.
+    bridge["groups"]["6"]["stream"] = {"active": True, "owner": key}
+    body = diagnostics(client)
+    assert key not in json.dumps(body), "the API key reached the diagnostics output"
+    assert body["areas"]["6"]["stream"]["owned_by_us"] is True
+    assert body["areas"]["6"]["stream"]["owned_by_other"] is False
+    # The fields that are safe still travel.
+    assert body["areas"]["6"]["stream"]["active"] is True
+
+    bridge["groups"]["6"]["stream"] = {"active": True, "owner": "hue-sync"}
+    body = diagnostics(client)
+    assert "hue-sync" not in json.dumps(body)
+    assert body["areas"]["6"]["stream"]["owned_by_other"] is True
+    assert body["areas"]["6"]["stream"]["owned_by_us"] is False
+
+
+def test_a_start_attempt_does_not_record_the_api_key(client, bridge, app_modules,
+                                                     monkeypatch):
+    """last_attempt is returned wholesale, and the v1 arm reads the group back.
+
+    That read happens *after* the bridge records us as the owner, so it is the
+    path that captures the key even once the area is released and the live
+    areas block reads null again. Firmware with no v2 record is what puts the
+    arm down that path.
+    """
+    import json
+
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    bridge["v2"]["configurations"] = []          # older firmware: v1 is the real thing
+    monkeypatch.setattr(app_modules.stream_engine, "start",
+                        lambda *a, **kw: (_ for _ in ()).throw(
+                            app_modules.StreamError("no route to the bridge")))
+    client.post("/api/stream/start", json=stream_body())
+
+    body = diagnostics(client)
+    steps = body["last_attempt"]["steps"]
+    armed = next(s for s in steps if s["step"] == "armed")
+    assert armed["over"] == "v1", "this test only means anything on the v1 path"
+    assert armed["bridge_says"]["owned_by_us"] is True, "the claim should be ours"
+    assert "stub-key" not in json.dumps(body)
 
 
 def test_streaming_needs_a_console_paired_for_it(client, bridge):
@@ -1730,7 +1853,7 @@ def test_diagnostics_names_the_bridge_and_its_firmware(client, bridge):
     """Streaming faults get reported to people who cannot see the hardware, and
     "which bridge, running what" is the first thing any of them will ask."""
     client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
-    reported = client.get("/api/stream/diagnostics").json()["bridge"]
+    reported = diagnostics(client)["bridge"]
     assert reported["modelid"] == "BSB002"
     assert reported["swversion"] == "1970010101"
     assert reported["apiversion"] == "1.68.0"
@@ -1738,7 +1861,7 @@ def test_diagnostics_names_the_bridge_and_its_firmware(client, bridge):
 
 def test_diagnostics_survives_a_bridge_that_will_not_describe_itself(client):
     """An unconfigured console still has to render its diagnostics page."""
-    assert client.get("/api/stream/diagnostics").json()["bridge"] == {}
+    assert diagnostics(client)["bridge"] == {}
 
 
 # ---------- Creating entertainment areas ----------
@@ -1850,7 +1973,7 @@ def test_local_groups_are_gone(client, bridge):
     assert client.get("/api/groups").status_code == 404
     assert client.post("/api/groups", json={"name": "x", "light_ids": ["1"]}).status_code == 404
     # And nothing writes a groups key back into the config.
-    assert "groups" not in client.get("/api/stream/diagnostics").json()
+    assert "groups" not in diagnostics(client)
 
 
 # ---------- Editing a custom pattern ----------

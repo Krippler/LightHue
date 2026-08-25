@@ -136,10 +136,11 @@ barely 1 Hz each.
 single frame carrying every light — so the speed stops being divided: up to
 25 Hz across the whole area, every light changing together.
 
-Tick the lights you want in **Lights & Plugs**, name them at the top of the
-**Entertainment** panel, and press **Save as area**. Or press **Use a room from
-the bridge** to tick the lights of a room you already made in the Hue app, then
-save that.
+Areas are built at the top of **Lights & Plugs**, next to the tickboxes that
+fill them: tick the lights you want, name the set, and press **Save as area**.
+Or press **Use a room from the bridge** to tick the lights of a room you already
+made in the Hue app, then save that. The new area appears in the **Entertainment**
+panel, which is where you drive it.
 
 Areas are created on the bridge, not in this console, so they show up in the
 Hue app too and survive the container being replaced. They are listed one row
@@ -159,8 +160,14 @@ marked **in use elsewhere**.
 
 Areas are listed one row each: click a row to stream to it, and use the ✎ and ×
 on the row to rename or delete it. The controls below the list set the pattern,
-speed, brightness, transition and colour, and **Start stream** runs it. If a stream won't start, **Diagnostics** says what the bridge
-is doing, and [docs/streaming.md](docs/streaming.md) covers how to read it.
+speed, brightness, transition and colour, and **Start stream** runs it. If a stream won't start, the error says what happened.
+
+For more than that, turn on **Streaming diagnostics** in Settings — it adds a
+**Diagnostics** button that reports what the bridge is doing, and
+[docs/streaming.md](docs/streaming.md) covers how to read it. It ships off: the
+report describes your bridge, your areas and lights and your local network, and
+it is meant to be pasted into a bug report. Your bridge key is never in it
+either way.
 
 ## Custom patterns
 
