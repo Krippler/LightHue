@@ -308,3 +308,27 @@ def test_engine_styles_never_carry_a_colour():
     for pattern in BUILTIN_PATTERNS:
         if pattern["origin"] == "engine":
             assert pattern["hue"] is None and pattern["sat"] is None, pattern["id"]
+
+
+def test_is_steady_recognises_a_sequence_that_never_changes():
+    from app.patterns import is_steady
+    assert is_steady("z")            # a light left on at full
+    assert is_steady("zzzz")         # the same thing, written longer
+    assert is_steady("a")            # held dark
+    assert is_steady("m")
+    assert is_steady("")             # defaults to one level
+    assert is_steady("zZ")           # case is not a level
+    assert not is_steady("mmn")
+    assert not is_steady("za")
+    # Characters outside a-z all fall to the same level, so a sequence mixing
+    # one with a different letter still animates.
+    assert not is_steady("z!")
+
+
+def test_the_engines_own_steady_styles_are_recognised():
+    """Quake ships two of these itself, and they mean exactly what they say."""
+    from app.patterns import BUILTIN_PATTERNS, is_steady
+    by_id = {p["id"]: p for p in BUILTIN_PATTERNS}
+    assert is_steady(by_id["steady"]["sequence"])            # style 0
+    assert is_steady(by_id["quake_testing"]["sequence"])     # style 63
+    assert not is_steady(by_id["flicker_a"]["sequence"])

@@ -4,7 +4,7 @@ import time
 from collections.abc import Callable
 
 from .hue_client import HueClient
-from .patterns import level_for_char
+from .patterns import is_steady, level_for_char
 
 logger = logging.getLogger("flicker_engine")
 
@@ -114,6 +114,21 @@ class RateLimiter:
             # token to claim must not queue behind this one.
             await asyncio.sleep(shortfall)
 
+    async def take(self):
+        """Spend a token now, even if the bucket is empty.
+
+        wait() is a fair-weather queue: it retries rather than holding a place,
+        so a caller that sends rarely can be starved outright by one sending
+        flat out — which is exactly the shape of a held light sitting beside a
+        flicker running at the full budget. A send that happens once and then
+        not again is worth letting through immediately; the bucket goes
+        negative and the next refill repays it, so the flicker gives up the one
+        frame the send really cost rather than the hold waiting forever.
+        """
+        async with self._lock:
+            self._refill()
+            self._tokens -= 1.0
+
 
 class FlickerEngine:
     def __init__(self, get_client: Callable[[], HueClient | None], on_change: Callable = None,
@@ -203,7 +218,11 @@ class FlickerEngine:
         step with. Lights running together give a little of it back so they
         can be sent as one burst rather than strung out across the second.
         """
-        running = max(1, len(self._tasks))
+        # A light holding one level sends nothing between changes, so counting
+        # it here would hand a share of the budget to something that never
+        # spends it — and take that share off the lights that do.
+        running = max(1, sum(1 for lid in self._tasks
+                             if not self._states.get(lid, {}).get("holding")))
         if running == 1:
             return self.limiter.max_per_second
         return (self.limiter.max_per_second * GROUP_HEADROOM) / running
@@ -216,7 +235,7 @@ class FlickerEngine:
         out = {}
         for lid, st in self._states.items():
             entry = dict(st)
-            if st.get("running"):
+            if st.get("running") and not st.get("holding"):
                 entry["effective_hz"] = round(min(st["hz"], share), 2)
             out[lid] = entry
         return out
@@ -255,6 +274,9 @@ class FlickerEngine:
             # the same moment however unevenly the rate limiter serves them.
             "epoch": time.monotonic() if epoch is None else epoch,
             "running": True,
+            # Set by the loop on its first pass: whether this sequence animates
+            # at all, or just holds one level.
+            "holding": is_steady(sequence),
         }
         self._tasks[light_id] = asyncio.create_task(self._run_light(light_id, client))
         # Never shrink while starting: a caller bringing several lights up at
@@ -313,15 +335,72 @@ class FlickerEngine:
             await self.restore()
         self._on_change()
 
+    @staticmethod
+    def _payload(state: dict, level: float) -> dict:
+        bri = int(round(state["min_bri"] + level * (state["max_bri"] - state["min_bri"])))
+        payload = {
+            "on": True,
+            "bri": max(1, min(254, bri)),
+            "transitiontime": max(0, int(state["transition_ms"] / 100)),
+        }
+        hue, sat = state["hue"], state["sat"]
+        if hue is not None and sat is not None:
+            payload["hue"], payload["sat"] = int(hue), int(sat)
+        return payload
+
+    # How often a held light re-reads its own settings. No bridge traffic — it
+    # only sends when the answer changes — so this is just how quickly a slider
+    # drag shows up on the bulb.
+    HOLD_POLL_SECONDS = 0.25
+
     async def _run_light(self, light_id, client: HueClient):
         state = self._states[light_id]
         applied_color = None
         failures = 0
         last_frame = None
         last_interval = None
+        # The last payload the bridge actually accepted, so a hold can tell
+        # whether there is anything new to say.
+        held = None
 
         try:
             while True:
+                # A sequence that never changes level is a light left on, not a
+                # flicker with no variation in it. Sending the same brightness
+                # ten times a second would spend the bridge budget the animated
+                # lights are sharing and change nothing, so it is sent once and
+                # then only again when a setting moves.
+                if is_steady(state["sequence"]):
+                    state["holding"] = True
+                    wanted = self._payload(state, level_for_char((state["sequence"] or "m")[0]))
+                    if wanted != held:
+                        try:
+                            # take(), not wait(): a hold sends once and then
+                            # goes quiet, and a light flickering at the full
+                            # budget would otherwise never leave it a token.
+                            await self.limiter.take()
+                            await client.set_light_state(light_id, **wanted)
+                            held, failures = wanted, 0
+                            applied_color = None   # the hold re-sends colour itself
+                        except Exception as e:
+                            failures += 1
+                            if failures == 1:
+                                logger.warning("Hue PUT failed for light %s: %s", light_id, e)
+                            if failures >= GIVE_UP_AFTER_FAILURES:
+                                logger.error(
+                                    "Giving up on light %s after %d failed sends in a row",
+                                    light_id, failures)
+                                self._abandon(light_id)
+                                return
+                    await asyncio.sleep(self.HOLD_POLL_SECONDS)
+                    continue
+                if state.get("holding"):
+                    # Only on the way back out of a hold: the sequence was
+                    # retuned under us. last_frame belongs to a run that is
+                    # over, and clearing it every tick would defeat the
+                    # frame-boundary guard below.
+                    state["holding"] = False
+                    held, last_frame = None, None
                 # You cannot show frames you cannot send: running the pattern
                 # faster than this light's share of the bridge budget would
                 # just sample it, and a stride that divides the pattern evenly
