@@ -160,7 +160,7 @@ marked **in use elsewhere**.
 
 Areas are listed one row each: click a row to stream to it, and use the ✎ and ×
 on the row to rename or delete it. The controls below the list set the pattern,
-speed, brightness, transition and colour, and **Start stream** runs it. If a stream won't start, the error says what happened.
+speed, brightness, transition and colour, and **Start** runs it. If a stream won't start, the error says what happened.
 
 For more than that, turn on **Streaming diagnostics** in Settings — it adds a
 **Diagnostics** button that reports what the bridge is doing, and

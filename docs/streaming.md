@@ -75,7 +75,7 @@ ended, so a stream that closes quietly can leave a ghost session behind.
 On startup the console hands back any area the bridge still records as claimed
 by its own API key. That covers what nothing else does: a container killed,
 redeployed or crashed mid-stream leaves the claim behind, and until something
-clears it those lights answer to nothing at all. **Release area** clears one by
+clears it those lights answer to nothing at all. **Release** clears one by
 hand, including a claim left by something else, which beats restarting the
 bridge.
 
