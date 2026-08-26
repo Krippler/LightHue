@@ -219,3 +219,22 @@ def test_the_bridge_address_is_not_shown_beside_live():
     # Nothing else may write the status directly.
     assert APP_JS.count("connStatus.textContent") == 1
     assert APP_JS.count("connStatus.className") == 1
+
+
+def test_change_bridge_lives_in_settings():
+    """Re-pairing is a setting, not something to keep a toolbar slot for.
+
+    It is pressed once at install and then perhaps never again, while the
+    toolbar is for what you reach for while using the console.
+    """
+    settings = INDEX.split('id="settings-panel"', 1)[1].split("</section>", 1)[0]
+    assert 'id="btn-reconfigure"' in settings, "Change bridge is not in Settings"
+
+    toolbar = INDEX.split('class="action-bar"', 1)[1].split("</div>\n        </div>", 1)[0]
+    assert 'id="btn-reconfigure"' not in toolbar, "it was left in the toolbar too"
+
+    # Pressing it must not leave Settings open behind the setup screen.
+    body = re.search(r"\$\('#btn-reconfigure'\)\.addEventListener\('click',[^}]*\}",
+                     APP_JS, re.S)
+    assert body, "the Change bridge handler is missing"
+    assert "settingsPanel.classList.add('hidden')" in body.group(0)

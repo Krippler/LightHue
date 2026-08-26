@@ -115,7 +115,6 @@
             <button id="btn-stop-all" class="btn btn-danger btn-sm">Stop all</button>
             <button id="btn-refresh-lights" class="btn btn-ghost btn-sm">Refresh</button>
             <button id="btn-settings" class="btn btn-ghost btn-sm">Settings</button>
-            <button id="btn-reconfigure" class="btn btn-ghost btn-sm">Change bridge</button>
             <button id="btn-logout" class="btn btn-ghost btn-sm hidden">Sign out</button>
           </div>
         </div>
@@ -170,6 +169,16 @@
                   <span>Offer the Diagnostics button</span>
                 </label>
                 <div id="diagnostics-status" class="status-line"></div>
+              </div>
+
+              <div class="setup-col">
+                <h3>Bridge</h3>
+                <p class="hint">Pairing again is also how a console that predates
+                streaming gets a streaming key.</p>
+                <div id="settings-bridge-ip" class="status-line"></div>
+                <div class="action-row">
+                  <button id="btn-reconfigure" class="btn btn-ghost btn-sm">Change bridge</button>
+                </div>
               </div>
 
               <div class="setup-col">
