@@ -45,6 +45,19 @@ jobs:
             if curl -fsS http://127.0.0.1:26000/api/bridge > /dev/null; then
               echo "console is up"
               curl -fsS http://127.0.0.1:26000/api/auth
+              echo
+              # The health endpoint and the HEALTHCHECK that drives it: this is
+              # the only place either runs in a real container.
+              curl -fsS http://127.0.0.1:26000/api/health
+              echo
+              for _ in $(seq 1 30); do
+                status=$(docker inspect -f '{{.State.Health.Status}}' ci-console)
+                echo "health: $status"
+                [ "$status" = "healthy" ] && break
+                [ "$status" = "unhealthy" ] && { docker logs ci-console; docker rm -f ci-console; exit 1; }
+                sleep 2
+              done
+              [ "$status" = "healthy" ] || { docker logs ci-console; docker rm -f ci-console; exit 1; }
               docker rm -f ci-console
               exit 0
             fi

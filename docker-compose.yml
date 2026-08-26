@@ -11,6 +11,12 @@ services:
     volumes:
       - ./data:/data
     restart: unless-stopped
+    # Steady state is about 66 MB. The ceiling is not a tuning knob — it is what
+    # keeps a fault in here from becoming a fault on the host: hit it and Docker
+    # kills this container and restarts it, instead of the machine going looking
+    # for memory to reclaim. Swap pinned to the same figure so it cannot spill.
+    mem_limit: 256m
+    memswap_limit: 256m
     # If Hue bridge discovery/pairing fails from the default bridge network
     # (common on some Unraid setups), uncomment the line below to give the
     # container direct access to your LAN instead:

@@ -169,6 +169,24 @@ report describes your bridge, your areas and lights and your local network, and
 it is meant to be pasted into a bug report. Your bridge key is never in it
 either way.
 
+## If something goes wrong
+
+The container reports its own health at `/api/health`, and Docker checks it
+every 30 seconds. It answers only while the event loop is still keeping up —
+which is the one failure a restart policy cannot see on its own, since a wedged
+process is still very much alive. Three failed checks and Docker marks the
+container unhealthy; with `restart: unless-stopped` it comes back, and any
+lights left mid-flicker are put back from the saved snapshots.
+
+The health endpoint is reachable without the console password, because Docker's
+check has no way to log in. It reports uptime and event-loop lag and nothing
+else — never the bridge, the lights or the network.
+
+There is also a memory ceiling of 256 MB (steady state is about 66 MB). It is
+not a tuning knob: it is what keeps a fault in here from becoming a fault on
+your server. Hit it and Docker restarts this container, rather than the host
+going looking for memory to reclaim.
+
 ## Custom patterns
 
 Write your own `a`–`z` lightstyle strings in the **Custom Lightstyles** panel,

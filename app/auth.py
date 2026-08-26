@@ -25,9 +25,15 @@ _ITERATIONS = 200_000
 # trade for not persisting bearer credentials to disk.
 _sessions: set[str] = set()
 
-# Reachable before you are authenticated: the UI shell itself, and the endpoint
-# that tells it whether a password is even required.
-_PUBLIC_PATHS = {"/", "/api/auth", "/api/auth/login"}
+# Reachable before you are authenticated: the UI shell itself, the endpoint
+# that tells it whether a password is even required, and the health check.
+#
+# Health has to be public because Docker's HEALTHCHECK runs with no session and
+# cannot be given one — a gated health endpoint would report every
+# password-protected console as unhealthy and restart it forever. It is written
+# to be safe to expose: uptime and event-loop lag, nothing about the bridge,
+# the lights or the network.
+_PUBLIC_PATHS = {"/", "/api/auth", "/api/auth/login", "/api/health"}
 
 
 def hash_password(password: str) -> dict:
