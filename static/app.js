@@ -23,6 +23,29 @@ const setupPanel = $('#setup-panel');
 const mainPanel = $('#main-panel');
 const connStatus = $('#conn-status');
 
+// Which bridge, and whether to say so out loud.
+//
+// "live" already means "connected to the bridge", so printing its address
+// beside it said the same thing twice. The address only earns its own chip
+// when something is wrong — then which bridge went quiet is the whole
+// question — so it hides while the link is up and the badge carries it as a
+// tooltip instead.
+let bridgeAddress = null;
+
+function setBridgeAddress(ip) {
+  bridgeAddress = ip || null;
+  const chip = $('#bridge-ip-label');
+  chip.textContent = bridgeAddress ? `bridge @ ${bridgeAddress}` : '';
+  connStatus.title = bridgeAddress ? `Bridge at ${bridgeAddress}` : '';
+}
+
+function setConnStatus(text, ok) {
+  connStatus.textContent = text;
+  connStatus.className = ok ? 'conn-status ok' : 'conn-status err';
+  // Shown only when the link is down, and only if we know what to show.
+  $('#bridge-ip-label').classList.toggle('hidden', ok || !bridgeAddress);
+}
+
 // ---------- API helpers ----------
 
 function errorText(data, res) {
@@ -56,7 +79,7 @@ async function checkBridge() {
   if (info.configured) {
     setupPanel.classList.add('hidden');
     mainPanel.classList.remove('hidden');
-    $('#bridge-ip-label').textContent = `bridge @ ${info.bridge_ip}`;
+    setBridgeAddress(info.bridge_ip);
     await loadPatternsAndLights();
   } else {
     setupPanel.classList.remove('hidden');
@@ -1390,14 +1413,10 @@ function connectWs() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
 
-  ws.addEventListener('open', () => {
-    connStatus.textContent = 'live';
-    connStatus.className = 'conn-status ok';
-  });
+  ws.addEventListener('open', () => setConnStatus('live', true));
 
   ws.addEventListener('close', () => {
-    connStatus.textContent = 'disconnected — retrying';
-    connStatus.className = 'conn-status err';
+    setConnStatus('disconnected — retrying', false);
     setTimeout(connectWs, 2000);
   });
 
@@ -2120,8 +2139,7 @@ async function bootstrap() {
     await checkBridge();
   } catch (e) {
     // An unreachable bridge shouldn't cost us the live status feed.
-    connStatus.textContent = e.message;
-    connStatus.className = 'conn-status err';
+    setConnStatus(e.message, false);
   }
   if (!wsStarted) { wsStarted = true; connectWs(); }
 }

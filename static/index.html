@@ -107,7 +107,9 @@
 
         <div class="action-bar">
           <div class="action-bar-info">
-            <span id="bridge-ip-label" class="bridge-chip"></span>
+            <!-- Ships hidden and is revealed only when the link goes down:
+                 "live" already says we are talking to the bridge. -->
+            <span id="bridge-ip-label" class="bridge-chip hidden"></span>
           </div>
           <div class="action-bar-actions">
             <button id="btn-stop-all" class="btn btn-danger btn-sm">Stop all</button>

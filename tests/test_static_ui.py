@@ -197,3 +197,25 @@ def test_the_stream_waveform_leads_the_panel_body():
     assert wave != -1, "the stream waveform is missing"
     assert wave < areas, "the waveform should come before the areas list"
     assert wave < controls, "the waveform should come before the pattern picker"
+
+
+def test_the_bridge_address_is_not_shown_beside_live():
+    """"live" already means "connected to the bridge".
+
+    Printing the address next to it said the same thing twice. It ships hidden
+    and one setter owns both halves, so the badge and the chip cannot disagree
+    about whether the link is up.
+    """
+    chip = re.search(r'<span id="bridge-ip-label"[^>]*>', INDEX)
+    assert chip, "the bridge chip is missing"
+    assert "hidden" in chip.group(0), "it should ship hidden and be revealed"
+
+    assert "function setConnStatus(" in APP_JS
+    body = re.search(r"function setConnStatus\([^)]*\)\s*\{(.*?)\n\}", APP_JS, re.S)
+    assert body, "setConnStatus is missing"
+    assert "bridge-ip-label" in body.group(1), (
+        "the setter has to own the chip, or the two can disagree"
+    )
+    # Nothing else may write the status directly.
+    assert APP_JS.count("connStatus.textContent") == 1
+    assert APP_JS.count("connStatus.className") == 1

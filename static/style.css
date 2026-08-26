@@ -333,7 +333,10 @@ input[type="color"] {
 .action-bar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 .bridge-chip {
-  font-size: 10px; letter-spacing: .06em; color: var(--ok);
+  /* Muted, not green: this only appears once the link is down, and a healthy
+     colour beside "disconnected" reads as reassurance the state does not
+     support. */
+  font-size: 10px; letter-spacing: .06em; color: var(--muted);
   background: var(--panel); border: 1px solid var(--border);
   padding: 5px 10px; border-radius: 4px;
 }
