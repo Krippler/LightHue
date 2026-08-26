@@ -154,9 +154,11 @@ def test_the_diagnostics_button_ships_hidden():
     Rendering it and hiding it a moment later would flash a button that the
     server would answer 403 to.
     """
-    button = re.search(r'<button id="btn-stream-diagnostics"[^>]*>', INDEX)
-    assert button, "the diagnostics button is missing"
-    assert "hidden" in button.group(0), "it should start hidden and be revealed"
+    assert '<button id="btn-stream-diagnostics"' in INDEX, "the button is missing"
+    # The row carries the hiding, so an empty action-row is not left behind.
+    row = re.search(r'<div id="stream-diagnostics-row"[^>]*>', INDEX)
+    assert row, "the diagnostics row is missing"
+    assert "hidden" in row.group(0), "it should start hidden and be revealed"
     assert "applyDiagnosticsSetting" in APP_JS
     assert "diagnostics_enabled" in APP_JS, "the setting is never sent or read"
 

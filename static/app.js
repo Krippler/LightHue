@@ -1477,7 +1477,7 @@ const diagnosticsToggle = $('#diagnostics-toggle');
 // console never offers something the server would answer 403 to.
 function applyDiagnosticsSetting(on) {
   diagnosticsToggle.checked = on;
-  $('#btn-stream-diagnostics').classList.toggle('hidden', !on);
+  $('#stream-diagnostics-row').classList.toggle('hidden', !on);
   if (!on) {
     const pane = $('#stream-diagnostics');
     pane.textContent = '';
@@ -1991,10 +1991,12 @@ function applyStreamStatus() {
   $('#btn-stream-stop').classList.toggle('hidden', !running);
   const state = $('#stream-state');
   if (running) {
-    const area = AREAS.find(a => a.id === STREAM.area_id);
+    // Short, because it shares the panel head with the run controls now. Which
+    // area and how many lights are already on the picked line below it, and
+    // saying them a third time cost the head a second row.
     const n = (STREAM.light_ids || []).length;
-    state.textContent = `streaming ${area ? area.name : 'area'} · `
-      + `${STREAM.effective_hz} Hz across ${n} light${n === 1 ? '' : 's'}`;
+    state.textContent = `streaming · ${STREAM.effective_hz} Hz · `
+      + `${n} light${n === 1 ? '' : 's'}`;
     state.className = 'dim ok';
   } else {
     state.textContent = 'idle';
