@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from app.patterns import BUILTIN_PATTERNS
@@ -1416,6 +1418,64 @@ def test_the_port_probe_note_reads_the_bridge_not_our_engine(client, bridge):
     bridge["groups"]["4"]["stream"] = {"active": False, "owner": None}
     bridge["groups"]["6"]["stream"] = {"active": False, "owner": None}
     assert "no area claimed" in diagnostics(client)["udp_to_stream_port"]["note"]
+
+
+def test_health_answers_before_login(client, app_modules):
+    """Docker's HEALTHCHECK has no session and cannot be given one.
+
+    Gated, it would report every password-protected console as unhealthy and
+    restart it forever.
+    """
+    assert client.put("/api/auth/password",
+                      json={"new_password": "hunter2"}).status_code == 200
+    client.cookies.clear()                       # what the healthcheck looks like
+    assert client.get("/api/lights").status_code == 401     # everything else is shut
+    assert client.get("/api/status").status_code == 401
+    r = client.get("/api/health")
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+
+
+def test_health_describes_the_process_and_nothing_else(client, bridge):
+    """It answers before login, so it must not describe the home it sits in."""
+    configure(client)
+    body = client.get("/api/health").json()
+    assert set(body) == {"ok", "uptime_s", "loop_lag_ms"}
+    assert body["ok"] is True
+    assert body["uptime_s"] >= 0
+    assert body["loop_lag_ms"] >= 0
+    # Nothing that would tell a stranger about the bridge or the lights.
+    blob = json.dumps(body)
+    for leak in ("10.0.0.5", "stub-key", "k", "Slipgate", "bridge"):
+        assert leak not in blob or leak == "k"     # "k" would only match a key name
+
+
+def test_health_turns_503_when_the_loop_falls_behind(client, app_modules,
+                                                      monkeypatch):
+    """The whole point: a wedged loop is alive, so no restart policy sees it.
+
+    The heartbeat is what turns that into something Docker can act on, so a
+    stale beat has to become a non-200.
+    """
+    import time as _time
+
+    # A heartbeat that last ticked well over the threshold ago.
+    stale = _time.monotonic() - (app_modules._UNHEALTHY_AFTER_SECONDS
+                                 + app_modules._HEARTBEAT_SECONDS + 5)
+    monkeypatch.setattr(app_modules, "_last_beat", stale)
+    r = client.get("/api/health")
+    assert r.status_code == 503
+    assert r.json()["ok"] is False
+    assert r.json()["loop_lag_ms"] >= app_modules._UNHEALTHY_AFTER_SECONDS * 1000
+
+
+def test_health_tolerates_one_missed_beat(client, app_modules, monkeypatch):
+    """A busy moment is not a wedge, or the container restarts on a hiccup."""
+    import time as _time
+
+    late = _time.monotonic() - (app_modules._HEARTBEAT_SECONDS + 1.0)
+    monkeypatch.setattr(app_modules, "_last_beat", late)
+    assert client.get("/api/health").status_code == 200
 
 
 def test_diagnostics_are_off_until_asked_for(client, bridge):

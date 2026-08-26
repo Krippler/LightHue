@@ -85,10 +85,38 @@ async def _release_areas_left_claimed():
                 logger.exception("Could not release stranded entertainment area %s", gid)
 
 
+# How often the heartbeat is meant to tick, and how far behind it may fall
+# before the container is called unhealthy. A wedged loop is the failure a
+# restart policy cannot see: the process is alive, so Docker leaves it running,
+# but nothing it was asked to do is happening. Three missed beats rather than
+# one, so a busy moment is not mistaken for a wedge.
+_HEARTBEAT_SECONDS = 1.0
+_UNHEALTHY_AFTER_SECONDS = 3.0
+
+_started_at = time.monotonic()
+_last_beat = _started_at
+
+
+async def _heartbeat():
+    """Record that the event loop is still getting round to its own work.
+
+    The endpoint answering already proves the loop runs at all. This measures
+    the subtler failure: a loop that runs but is being held up by something
+    blocking inside it, where requests still land but late and the flicker
+    loops are quietly missing their frames.
+    """
+    global _last_beat
+    while True:
+        _last_beat = time.monotonic()
+        await asyncio.sleep(_HEARTBEAT_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global _loop
+    global _loop, _last_beat
     _loop = asyncio.get_running_loop()
+    _last_beat = time.monotonic()
+    beat = asyncio.create_task(_heartbeat())
     settings = config_store.get_settings()
     engine.limiter.set_rate(settings["max_commands_per_second"])
     engine.restore_on_stop = settings["restore_on_stop"]
@@ -109,6 +137,7 @@ async def lifespan(_app: FastAPI):
     # so a container that restarts mid-stream would strand them for good.
     await _release_areas_left_claimed()
     yield
+    beat.cancel()
     # The area has to go back before anything else: while the bridge holds one
     # in streaming mode, nothing can drive those lights — not this console, not
     # the Hue app — so a container stopped mid-stream would strand them.
@@ -477,6 +506,26 @@ async def remove_password(req: ClearPasswordRequest):
 
 
 # ---------- Settings ----------
+
+@app.get("/api/health")
+async def health(response: Response):
+    """Whether this container is doing its job, for Docker's HEALTHCHECK.
+
+    Deliberately says nothing about the bridge, the lights or the network: it
+    answers before login, so it must not describe the home it is sitting in.
+    A 503 here is what turns a wedged event loop — alive, so no restart policy
+    would notice — into a container Docker will restart.
+    """
+    lag = max(0.0, time.monotonic() - _last_beat - _HEARTBEAT_SECONDS)
+    ok = lag < _UNHEALTHY_AFTER_SECONDS
+    if not ok:
+        response.status_code = 503
+    return {
+        "ok": ok,
+        "uptime_s": round(time.monotonic() - _started_at, 1),
+        "loop_lag_ms": round(lag * 1000),
+    }
+
 
 @app.get("/api/settings")
 async def get_settings():

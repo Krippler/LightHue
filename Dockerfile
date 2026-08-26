@@ -31,6 +31,19 @@ ENV CONFIG_PATH=/data/config.json
 ENV PORT=26000
 EXPOSE 26000
 
+# A wedged event loop is the one failure a restart policy cannot see: the
+# process is alive, so Docker leaves it running, while nothing it was asked to
+# do is happening. /api/health answers only if the loop is still getting round
+# to its own work, and 503s when it has fallen behind.
+#
+# Python rather than curl: the slim image has no curl, and this needs no extra
+# package. start-period covers the first-run restore, which talks to the bridge
+# before the listener is up.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD python -c "import os,urllib.request,sys; \
+u='http://127.0.0.1:%s/api/health' % os.environ.get('PORT','26000'); \
+sys.exit(0 if urllib.request.urlopen(u, timeout=4).status == 200 else 1)"
+
 # Shell form so PORT can be overridden, which is the only way to move the
 # listener when running with host networking (no port mapping to remap).
 CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-26000}"]

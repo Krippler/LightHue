@@ -60,7 +60,10 @@
   <WebUI>http://[IP]:[PORT:26000]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/Krippler/LightHue/main/unraid-template.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/Krippler/LightHue/main/static/icon.png</Icon>
-  <ExtraParams/>
+  <!-- Steady state is about 66 MB. The ceiling keeps a fault in the container
+       from becoming a fault on the host: hit it and Docker restarts this
+       container, instead of Unraid going looking for memory to reclaim. -->
+  <ExtraParams>--memory=256m --memory-swap=256m</ExtraParams>
   <PostArgs/>
   <CPUset/>
   <DateInstalled/>
