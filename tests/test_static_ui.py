@@ -181,3 +181,19 @@ def test_the_area_builder_sits_with_the_lights_it_is_built_from():
     # And it must not have been left behind in the stream panel too.
     stream = INDEX.split('data-section="stream"', 1)[1].split("</section>", 1)[0]
     assert 'class="group-tools"' not in stream
+
+
+def test_the_stream_waveform_leads_the_panel_body():
+    """It is the one thing in the panel that shows what is actually playing.
+
+    At the bottom of the body it was below the fold on a phone before you
+    reached it, so it sits directly under the run controls in the head.
+    """
+    body = INDEX.split('data-section="stream"', 1)[1]
+    body = body.split('<div class="panel-body">', 1)[1].split("</section>", 1)[0]
+    wave = body.find('id="stream-waveform"')
+    areas = body.find('id="areas-list"')
+    controls = body.find('id="stream-pattern"')
+    assert wave != -1, "the stream waveform is missing"
+    assert wave < areas, "the waveform should come before the areas list"
+    assert wave < controls, "the waveform should come before the pattern picker"

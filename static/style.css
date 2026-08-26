@@ -597,6 +597,9 @@ input[type="color"] {
   border-radius: 1px 1px 0 0; transition: opacity .08s linear, background .08s linear;
 }
 .waveform .bar.active { opacity: 1; background: var(--app); }
+/* Scoped to the stream's own: the card waveforms take their spacing
+   from .controls and would gain a stray gap from a bare rule. */
+#stream-waveform { margin-bottom: 14px; }
 
 .rate-note { margin-top: -8px; color: var(--warn); font-size: 10px; }
 

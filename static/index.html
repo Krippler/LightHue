@@ -215,6 +215,11 @@
           </div>
           <div class="panel-body">
 
+            <!-- Directly under the run controls: it is the one thing in this
+                 panel that says what is actually playing, and buried at the
+                 bottom it was off-screen on a phone before you reached it. -->
+            <div id="stream-waveform" class="waveform" aria-hidden="true"></div>
+
             <div id="areas-list" class="areas-list"></div>
             <hr class="panel-rule" />
 
@@ -261,8 +266,6 @@
                        title="Type a hex code, or Hue's own hue,sat numbers for an exact match" />
               </div>
             </div>
-
-            <div id="stream-waveform" class="waveform" aria-hidden="true"></div>
 
             <!-- The row hides, not just the button: left behind empty it is a
                  gap under the controls with nothing in it. -->
