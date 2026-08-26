@@ -37,6 +37,11 @@ function setBridgeAddress(ip) {
   const chip = $('#bridge-ip-label');
   chip.textContent = bridgeAddress ? `bridge @ ${bridgeAddress}` : '';
   connStatus.title = bridgeAddress ? `Bridge at ${bridgeAddress}` : '';
+  // Settings is where the address lives now that the header only shows it
+  // when something is wrong.
+  $('#settings-bridge-ip').textContent = bridgeAddress
+    ? `Paired with the bridge at ${bridgeAddress}.`
+    : 'No bridge paired yet.';
 }
 
 function setConnStatus(text, ok) {
@@ -158,6 +163,9 @@ $('#btn-manual-save').addEventListener('click', async () => {
 });
 
 $('#btn-reconfigure').addEventListener('click', () => {
+  // Settings is the thing that was open when this was pressed; leaving it open
+  // underneath means returning to a panel nobody asked for.
+  settingsPanel.classList.add('hidden');
   setupPanel.classList.remove('hidden');
   mainPanel.classList.add('hidden');
 });
@@ -1730,7 +1738,8 @@ async function loadStreamAreas() {
       // The DTLS key is only handed out at pairing time, so there is no way to
       // acquire one for a console that was paired before streaming existed.
       warning.textContent = 'This console was paired before it could stream. '
-        + 'Use Change bridge and pair again — press the link button, then Pair — '
+        + 'Use Settings \u2192 Change bridge and pair again — press the link '
+        + 'button, then Pair — '
         + 'to get a streaming key.';
       warning.classList.remove('hidden');
     } else {
