@@ -152,6 +152,26 @@ def channel_ids(configuration: dict) -> list[int]:
             if "channel_id" in c]
 
 
+def channel_members(configuration: dict) -> dict[int, list[str]]:
+    """Which entertainment services answer to each channel.
+
+    A channel is a position in the room, not a bulb: one channel can drive
+    several services, and a light with more than one segment can appear under
+    several channels. Returned as service rids because that is what the
+    configuration names — turning those into light ids needs the entertainment
+    services, which the caller has to fetch anyway to get at anything else.
+    """
+    out: dict[int, list[str]] = {}
+    for channel in configuration.get("channels", []):
+        if "channel_id" not in channel:
+            continue
+        rids = [m["service"]["rid"]
+                for m in channel.get("members", [])
+                if isinstance(m.get("service"), dict) and m["service"].get("rid")]
+        out[int(channel["channel_id"])] = rids
+    return out
+
+
 def streaming_state(configuration: dict | None) -> dict:
     """What the bridge reports about a configuration's stream, in v2 terms.
 

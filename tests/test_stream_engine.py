@@ -408,3 +408,76 @@ def test_the_engine_carries_the_transition_into_its_state(monkeypatch):
         assert engine.status()["settings"]["transition_ms"] == 250
     finally:
         engine.stop()
+
+
+def test_channels_without_overrides_all_run_the_area_pattern():
+    """The ordinary stream: one effect across the room, as it always was."""
+    from app.stream_engine import framing_for_channel
+
+    state = {"sequence": "mmno", "pattern_id": "q", "hz": 10.0, "min_bri": 1,
+             "max_bri": 254, "hue": None, "sat": None, "transition_ms": 0,
+             "epoch": 0.0, "per_channel": {}}
+    for channel in (0, 1, 2):
+        assert framing_for_channel(state, channel) is state
+
+
+def test_a_channel_keeps_the_areas_framing_for_what_it_does_not_name():
+    """Naming a pattern must not silently reset speed and brightness too."""
+    from app.stream_engine import framing_for_channel
+
+    state = {"sequence": "mmno", "pattern_id": "q", "hz": 8.0, "min_bri": 20,
+             "max_bri": 200, "hue": 6000, "sat": 180, "transition_ms": 100,
+             "epoch": 0.0,
+             "per_channel": {1: {"sequence": "za", "pattern_id": "strobe"}}}
+
+    mine = framing_for_channel(state, 1)
+    assert mine["sequence"] == "za" and mine["pattern_id"] == "strobe"
+    # Everything it stayed quiet about still comes from the area.
+    assert (mine["hz"], mine["min_bri"], mine["max_bri"]) == (8.0, 20, 200)
+    assert (mine["hue"], mine["sat"], mine["transition_ms"]) == (6000, 180, 100)
+    # And the area's own state is untouched by the merge.
+    assert state["sequence"] == "mmno"
+
+
+def test_a_channel_can_ask_to_run_white_under_a_coloured_area():
+    """None is a real answer for colour, not an omission."""
+    from app.stream_engine import framing_for_channel
+
+    state = {"sequence": "m", "pattern_id": "q", "hz": 10.0, "min_bri": 1,
+             "max_bri": 254, "hue": 6000, "sat": 200, "transition_ms": 0,
+             "epoch": 0.0, "per_channel": {2: {"hue": None, "sat": None}}}
+    mine = framing_for_channel(state, 2)
+    assert mine["hue"] is None and mine["sat"] is None
+    assert framing_for_channel(state, 3)["hue"] == 6000
+
+
+def test_every_channel_derives_its_frame_from_the_one_clock():
+    """Patterns of different lengths must stay on the same beat.
+
+    A channel with an epoch of its own would drift against the rest of the
+    room, which is the whole reason the area's is not overridable.
+    """
+    from app.stream_engine import framing_for_channel
+
+    state = {"sequence": "m", "pattern_id": "q", "hz": 10.0, "min_bri": 1,
+             "max_bri": 254, "hue": None, "sat": None, "transition_ms": 0,
+             "epoch": 1234.5,
+             "per_channel": {0: {"sequence": "za", "epoch": 99.0}}}
+    assert framing_for_channel(state, 0)["epoch"] == 1234.5
+
+
+@pytest.mark.asyncio
+async def test_two_channels_send_different_values_in_the_same_frame():
+    """The point of the whole change: one frame, different lights, no extra cost."""
+    from app.stream_engine import framing_for_channel, rgb_for
+
+    now = 0.30                      # 3 frames into a 10 Hz pattern
+    state = {"sequence": "aaaaaaaazzzzzzzz", "pattern_id": "strobe", "hz": 10.0,
+             "min_bri": 1, "max_bri": 254, "hue": None, "sat": None,
+             "transition_ms": 0, "epoch": 0.0,
+             "per_channel": {1: {"sequence": "z", "pattern_id": "hold"}}}
+
+    dark = rgb_for(framing_for_channel(state, 0), now)   # 'a' -> floor
+    lit = rgb_for(framing_for_channel(state, 1), now)    # 'z' -> full
+    assert dark != lit, "both channels resolved to the same colour"
+    assert max(lit) > max(dark)

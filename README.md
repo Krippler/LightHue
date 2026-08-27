@@ -153,6 +153,15 @@ service for the bridge to stream to, so saving an area containing one is
 refused with that light named. White-only bulbs still flicker from their own
 card; plugs can't flicker at all (below).
 
+**Lights in one area can run different patterns at once.** Tick **Different
+patterns per light** and each gets its own row. A stream frame already carries
+a value per light, so this costs nothing — the same frame, at the same 25 Hz.
+Anything a row leaves at *Same as the area* follows the settings below it.
+
+A row is a *channel* rather than a bulb: that is how the bridge addresses an
+area, and one channel can drive more than one light (a lightstrip usually
+spans several). The rows say what each one actually moves.
+
 You also need a pairing that included a streaming key. A console paired before
 this feature existed has to pair again; the panel tells you when that applies.
 Only one area streams at a time, so an area Hue Sync or a game has claimed is

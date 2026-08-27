@@ -238,3 +238,25 @@ def test_change_bridge_lives_in_settings():
                      APP_JS, re.S)
     assert body, "the Change bridge handler is missing"
     assert "settingsPanel.classList.add('hidden')" in body.group(0)
+
+
+def test_per_light_patterns_are_offered_and_sent():
+    """A frame carries a value per channel, so lights can differ within one area.
+
+    The rows come from the bridge rather than the light list, because a channel
+    is a position in the room and need not be one per bulb.
+    """
+    assert 'id="per-light-enable"' in INDEX
+    assert 'id="per-light-rows"' in INDEX
+    assert "function loadChannels(" in APP_JS
+    assert "/api/stream/areas/${encodeURIComponent(pickedAreaId)}/channels" in APP_JS
+
+    # Both the initial start and a live retune have to carry the overrides, or
+    # changing a row mid-stream does nothing.
+    assert APP_JS.count("channels: channelOverrides()") == 2
+
+    body = re.search(r"function channelOverrides\(\)\s*\{(.*?)\n\}", APP_JS, re.S)
+    assert body, "channelOverrides is missing"
+    assert "per-light-enable" in body.group(1), (
+        "the toggle has to gate it, or unticking would leave the overrides running"
+    )

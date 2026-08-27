@@ -1589,6 +1589,80 @@ def test_a_start_attempt_does_not_record_the_api_key(client, bridge, app_modules
     assert "stub-key" not in json.dumps(body)
 
 
+def test_channels_are_named_by_the_lights_they_drive(client, bridge):
+    """A channel is a position in the room, so the UI needs what it moves.
+
+    Assuming one channel per bulb would be wrong on a lightstrip, which
+    appears under several, and on a channel carrying more than one light.
+    """
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    body = client.get("/api/stream/areas/6/channels").json()
+    assert body["per_light"] is True
+    by_id = {c["channel_id"]: c for c in body["channels"]}
+    assert sorted(by_id) == [0, 1, 2]
+    assert by_id[0]["light_ids"] == ["1"]
+    assert by_id[0]["name"] == "Slipgate Sconce"
+    # One channel, two lights: both named, neither repeated.
+    assert by_id[2]["light_ids"] == ["1", "2"]
+    assert by_id[2]["name"] == "Slipgate Sconce, Armory Strip"
+
+
+def test_an_area_the_bridge_only_knows_in_v1_reports_no_channels(client, bridge):
+    """Not an error: the caller has to tell "none" apart from "failed"."""
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    body = client.get("/api/stream/areas/4/channels").json()
+    assert body == {"channels": [], "per_light": False}
+
+
+def test_a_channel_can_run_its_own_pattern(client, bridge, app_modules, monkeypatch):
+    """The feature: different lights, different patterns, one stream."""
+    started = {}
+
+    def capture(*a, **kw):
+        started.update(kw)
+
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    monkeypatch.setattr(app_modules.stream_engine, "start", capture)
+    r = client.post("/api/stream/start", json=stream_body(
+        pattern_id="flicker_a",
+        channels=[{"channel_id": 1, "pattern_id": "hard_strobe"}]))
+    assert r.status_code == 200, r.text
+
+    per = started["per_channel"]
+    assert list(per) == [1], "only the channel that asked for something"
+    assert per[1]["sequence"] == "aaaaaaaazzzzzzzz"
+    assert per[1]["pattern_id"] == "hard_strobe"
+    # The named pattern brings its framing, as it does for the area.
+    assert per[1]["min_bri"] == 1 and per[1]["max_bri"] == 254
+
+
+def test_a_channel_override_is_refused_on_a_v1_only_area(client, bridge,
+                                                          app_modules, monkeypatch):
+    """v1 frames address light ids and have no channels to differ by.
+
+    Refused before the area is claimed, so a bad request cannot strand it.
+    """
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    bridge["groups"]["4"]["stream"] = {"active": False, "owner": None}
+    monkeypatch.setattr(app_modules.stream_engine, "start",
+                        lambda *a, **kw: None)
+    r = client.post("/api/stream/start", json=stream_body(
+        area_id="4", channels=[{"channel_id": 0, "pattern_id": "hard_strobe"}]))
+    assert r.status_code == 422
+    assert "v2" in r.json()["detail"]
+    assert bridge["groups"]["4"]["stream"]["active"] is False, "the area was claimed anyway"
+
+
+def test_the_same_channel_cannot_be_given_twice(client, bridge):
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    r = client.post("/api/stream/start", json=stream_body(channels=[
+        {"channel_id": 1, "pattern_id": "hard_strobe"},
+        {"channel_id": 1, "pattern_id": "flicker_a"},
+    ]))
+    assert r.status_code == 422
+    assert "only be given once" in json.dumps(r.json())
+
+
 def test_streaming_needs_a_console_paired_for_it(client, bridge):
     configure(client)                               # api key only, no client key
     r = client.post("/api/stream/start", json=stream_body())
