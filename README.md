@@ -104,97 +104,76 @@ colour with them. A strobe, a generic flicker or a failing fluorescent has no
 colour of its own, so those leave whatever you set in the Hue app alone and
 just flicker it. Unticking **Set colour** overrides a pattern that names one.
 
-That split is why 37 of the 64 presets name a colour and 27 deliberately
-don't. Unreal's are all in the second group on purpose: `LT_Flicker` is a light
-*type* there, and colour is a separate property of the actor, so naming one
-here would merge two things the engine keeps apart.
-
 Under each swatch is a box for an exact colour. It takes `6000,225` (Hue's own
 hue and saturation, the exact form) or `#ff991d` / `#f80` (converted to the
 nearest hue/sat). The box always shows the numbers being sent.
 
 **A pattern that never changes is a hold, not a flicker.** Write `z` (or pick
-Quake's own *0 Steady*) and the light is simply set to that brightness and
-colour and left there — one command, then nothing. The button says **Hold this
-colour** and the badge reads HOLDING. Moving a slider re-sends it once. This
-matters because the bridge's ~10 commands a second are shared: repeating an
-unchanging frame would take that budget from the lights actually flickering.
+Quake's own *0 Steady*) and the light is set to that brightness and colour and
+left there — one command, then nothing. The button says **Hold this colour**,
+the badge reads HOLDING, and moving a slider re-sends it once.
 
-**Plugs can't flicker.** A smart plug switches a relay: it is on or it is off,
-with no brightness in between, and a flicker frame is a brightness. Plugs are
-still listed — one greyed row at the end of Lights & Plugs, saying so — but
-they're offered no controls. White-only bulbs do flicker; they just lose the
-colour swatch, which they have no way to use.
+**Plugs can't flicker.** A plug is on or off, with no brightness in between,
+and a flicker frame is a brightness. Plugs are still listed — greyed, at the
+end of Lights & Plugs, saying so — but offered no controls. White-only bulbs do
+flicker; they just lose the colour swatch they have no way to use.
 
 ## Entertainment areas
 
-One command per light is all the ordinary path can do, and the bridge takes
-about ten a second in total. That budget is shared, so seven bulbs flicker at
-barely 1 Hz each.
+The ordinary path sends one command per light and the bridge takes about ten a
+second in total, shared — so seven bulbs flicker at barely 1 Hz each.
 
-**An area is the way past that.** The bridge streams to it as one unit — a
-single frame carrying every light — so the speed stops being divided: up to
-25 Hz across the whole area, every light changing together.
+**An area is the way past that.** The bridge streams to it as one unit, a single
+frame carrying every light, so the speed stops being divided: up to 25 Hz across
+the whole area.
 
-Areas are built at the top of **Lights & Plugs**, next to the tickboxes that
-fill them: tick the lights you want, name the set, and press **Save as area**.
-Or press **Use a room from the bridge** to tick the lights of a room you already
-made in the Hue app, then save that. The new area appears in the **Entertainment**
-panel, which is where you drive it.
+Build one at the top of **Lights & Plugs**, beside the tickboxes that fill it:
+tick the lights, name the set, **Save as area**. Or **Use a room from the
+bridge** to tick a room you already made in the Hue app. It then appears in the
+**Entertainment** panel, one row each — click a row to stream to it, and use the
+✎ and × to rename or delete it.
 
-Areas are created on the bridge, not in this console, so they show up in the
-Hue app too and survive the container being replaced. They are listed one row
-each: click a row to stream to it, and use the ✎ and × on the row to rename or
-delete it.
-
-Two limits, both the bridge's: an area holds at most **10 lights**, and only
-**colour-capable** ones. Plugs and white-only bulbs have no entertainment
-service for the bridge to stream to, so saving an area containing one is
-refused with that light named. White-only bulbs still flicker from their own
-card; plugs can't flicker at all (below).
+Areas live on the bridge rather than in this console, so they show up in the Hue
+app too and survive the container being replaced.
 
 **Lights in one area can run different patterns at once.** Tick **Different
-patterns per light** and each gets its own row. A stream frame already carries
-a value per light, so this costs nothing — the same frame, at the same 25 Hz.
-Anything a row leaves at *Same as the area* follows the settings below it.
+patterns per light** and each gets its own row. A stream frame already carries a
+value per light, so this is free — the same frame, at the same 25 Hz. A row left
+at *Same as the area* follows the settings below.
 
-A row is a *channel* rather than a bulb: that is how the bridge addresses an
-area, and one channel can drive more than one light (a lightstrip usually
-spans several). The rows say what each one actually moves.
+A row is a *channel* rather than a bulb: one channel can drive several lights (a
+lightstrip usually spans several), so each row says what it actually moves.
 
-You also need a pairing that included a streaming key. A console paired before
-this feature existed has to pair again; the panel tells you when that applies.
-Only one area streams at a time, so an area Hue Sync or a game has claimed is
-marked **in use elsewhere**.
+Three limits, all the bridge's. An area holds at most **10 lights**, and only
+**colour-capable** ones — saving one containing a plug or a white-only bulb is
+refused with that light named. Only one area streams at a time, so an area Hue
+Sync or a game has claimed is marked **in use elsewhere**. And you need a
+pairing that included a streaming key; a console paired before this feature
+existed has to pair again, and the panel says so.
 
-Areas are listed one row each: click a row to stream to it, and use the ✎ and ×
-on the row to rename or delete it. The controls below the list set the pattern,
-speed, brightness, transition and colour, and **Start** runs it. If a stream won't start, the error says what happened.
+The controls below the list set the pattern, speed, brightness, transition and
+colour, and **Start** runs it. If a stream won't start, the error says what
+happened.
 
-For more than that, turn on **Streaming diagnostics** in Settings — it adds a
-**Diagnostics** button that reports what the bridge is doing, and
-[docs/streaming.md](docs/streaming.md) covers how to read it. It ships off: the
-report describes your bridge, your areas and lights and your local network, and
-it is meant to be pasted into a bug report. Your bridge key is never in it
-either way.
+For more than that, turn on **Streaming diagnostics** in Settings. It adds a
+**Diagnostics** button reporting what the bridge is doing —
+[docs/streaming.md](docs/streaming.md) covers how to read it. It ships off
+because the report describes your bridge, your lights and your network, and it
+is meant to be pasted into a bug report. Your bridge key is never in it either
+way.
 
 ## If something goes wrong
 
-The container reports its own health at `/api/health`, and Docker checks it
-every 30 seconds. It answers only while the event loop is still keeping up —
-which is the one failure a restart policy cannot see on its own, since a wedged
-process is still very much alive. Three failed checks and Docker marks the
-container unhealthy; with `restart: unless-stopped` it comes back, and any
-lights left mid-flicker are put back from the saved snapshots.
+The container checks its own health every 30 seconds and restarts itself if it
+stops answering — including the case where it is still running but stuck, which
+a restart policy alone cannot see. Lights left mid-flicker are put back.
 
-The health endpoint is reachable without the console password, because Docker's
-check has no way to log in. It reports uptime and event-loop lag and nothing
-else — never the bridge, the lights or the network.
+It is also capped at 256 MB (steady state is about 66 MB), so a fault in here
+stays in here rather than becoming a fault on your server.
 
-There is also a memory ceiling of 256 MB (steady state is about 66 MB). It is
-not a tuning knob: it is what keeps a fault in here from becoming a fault on
-your server. Hit it and Docker restarts this container, rather than the host
-going looking for memory to reclaim.
+The check reads `/api/health`, which is reachable without the console password
+because Docker cannot log in. It reports uptime and lag, and nothing about your
+bridge, lights or network.
 
 ## Custom patterns
 
@@ -232,6 +211,13 @@ each card still grows a **Revert** button.
 **Stream settle.** A pause between claiming an entertainment area and
 connecting to it. Some bridges want a moment; most don't. Default 1500 ms, and
 dropping it to 0 makes streams start faster.
+
+**Streaming diagnostics.** Off by default. Turning it on adds a **Diagnostics**
+button to the Entertainment panel; see [docs/streaming.md](docs/streaming.md).
+
+**Bridge.** Shows which bridge you are paired with, and **Change bridge** pairs
+with a different one — or with the same one again, which is how a console
+paired before streaming existed gets a streaming key.
 
 **Console password.** Off by default — anyone who can reach the port can drive
 your lights. Setting one puts a login prompt on the page and requires it on

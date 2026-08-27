@@ -28,13 +28,7 @@ anything else.
 
 ## Making an area
 
-Lights & Plugs builds them, at the top of the panel: tick lights, name the set,
-save. The builder lives with the tickboxes because an area is the lights you
-picked. Driving one happens in the Entertainment panel, where the areas are
-listed — clicking a row picks which area the controls beneath the list apply
-to. Areas are created on the bridge, not in this console's config, so
-one made here appears in the Hue app and survives the container being replaced,
-and renaming or deleting one here does the same there.
+The README covers the buttons. What they do underneath:
 
 `POST /clip/v2/resource/entertainment_configuration` takes a name, a
 configuration type, and a `service_locations` entry per light. Each entry
@@ -157,13 +151,23 @@ identity is not sent until the fifth message of the handshake, so everything
 before that is identical whether the key is right or hopeless: a probe that
 stops at the first reply cannot tell a rejected key from a rejected offer.
 
-| how far it gets | what it means |
-|---|---|
-| **server-hello** | The bridge accepted the offer and would have gone on to check a key. Path fine, port open — so the streaming key is the problem. Pair again for a matching key and API key. |
-| **hello-verify-only** | It answered the first ClientHello with a cookie and ignored the one carrying it back. The path works in both directions or the cookie could not have arrived, and the key is not offered this early. Usually the second flight needing a resend. |
-| **alert** | The bridge named its objection outright. That is the offer, not the key. |
-| **refused** (ICMP port unreachable) | The path is fine — the refusal itself had to reach you — but the port is shut. The bridge took the claim without arming the stream behind it. |
-| **silent** | Nothing came back at all. The only one that is a network problem. |
+**server-hello** — the bridge accepted the offer and would have gone on to check
+a key. Path fine, port open, so the streaming key is the problem: pair again for
+a matching key and API key.
+
+**hello-verify-only** — it answered the first ClientHello with a cookie and
+ignored the one carrying it back. The path works both ways or the cookie could
+not have arrived, and the key is not offered this early. Usually the second
+flight needing a resend.
+
+**alert** — the bridge named its objection outright. That is the offer, not the
+key.
+
+**refused** (ICMP port unreachable) — the path is fine, since the refusal itself
+had to reach you, but the port is shut. The bridge took the claim without arming
+the stream behind it.
+
+**silent** — nothing came back at all. The only one that is a network problem.
 
 An ICMP refusal is *proof of reachability*, not evidence of blockage. It also
 means the probe has to run while the area is claimed — the bridge only binds the
@@ -193,7 +197,8 @@ keys from the console's own config rather than putting a 40-character key into
 shell history:
 
 ```bash
-docker exec -it <container> python3 /srv/scripts/probe_stream.py --config /data/config.json
+docker exec -it <container> \
+    python3 /srv/scripts/probe_stream.py --config /data/config.json
 ```
 
 For a failure that only happens sometimes, `--repeat` runs the same attempt on a
