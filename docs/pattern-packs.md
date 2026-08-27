@@ -29,13 +29,20 @@ Only `patterns` is required — `{"patterns": [...]}` on its own imports fine.
 
 ## Fields
 
-| field | meaning |
-|---|---|
-| `sequence` | The lightstyle, one letter per frame: `a` darkest through `z` brightest, mapped evenly across the brightness window below. |
-| `hz` | Frames per second. Defaults to 10, the rate the original engines stepped their lightstyle table at. |
-| `min_bri` / `max_bri` | The brightness window the sequence is mapped into, 1–254. Defaults to the bulb's full range. |
-| `transition_ms` | Smoothing between frames, in 100 ms steps — that is the resolution the bridge accepts. Defaults to none. |
-| `hue` / `sat` | Hue's own colour numbers. Both or neither. Omit them and the pattern leaves whatever colour is already set alone. |
+`sequence` — the lightstyle, one letter per frame: `a` darkest through `z`
+brightest, mapped evenly across the brightness window below.
+
+`hz` — frames per second. Defaults to 10, the rate the original engines stepped
+their lightstyle table at.
+
+`min_bri` / `max_bri` — the brightness window the sequence is mapped into,
+1–254. Defaults to the bulb's full range.
+
+`transition_ms` — smoothing between frames, in 100 ms steps, which is the
+resolution the bridge accepts. Defaults to none.
+
+`hue` / `sat` — Hue's own colour numbers, both or neither. Omit them and the
+pattern leaves whatever colour is already set alone.
 
 Sequences are normalised on the way in, so spacing and capitalisation don't
 matter. Unknown keys are ignored, which leaves room for packs to carry extra
