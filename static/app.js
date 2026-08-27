@@ -1711,6 +1711,82 @@ function streamSettings() {
   };
 }
 
+// ---------- Per-light patterns within one stream ----------
+//
+// A HueStream v2 frame carries a value per channel, so lights in one area can
+// run different patterns at the same time and at the same full rate — it is
+// the same frame either way. A channel is a position in the room rather than a
+// bulb, so the rows come from the bridge rather than from the light list.
+
+let CHANNELS = [];              // [{channel_id, light_ids, name}]
+const channelChoice = {};       // channel_id -> pattern id, '' meaning "as the area"
+
+async function loadChannels() {
+  const rows = $('#per-light-rows');
+  const section = $('#per-light');
+  if (!pickedAreaId) { section.classList.add('hidden'); return; }
+  try {
+    const body = await api(`/api/stream/areas/${encodeURIComponent(pickedAreaId)}/channels`);
+    CHANNELS = body.channels || [];
+    // Hidden entirely for an area the bridge only knows in v1: its frames
+    // address light ids and have no channels to differ by, so offering the
+    // control would promise something the protocol cannot do.
+    section.classList.toggle('hidden', !body.per_light || CHANNELS.length < 2);
+  } catch {
+    CHANNELS = [];
+    section.classList.add('hidden');
+  }
+  renderChannelRows();
+}
+
+function renderChannelRows() {
+  const rows = $('#per-light-rows');
+  rows.innerHTML = '';
+  CHANNELS.forEach(channel => {
+    const row = document.createElement('div');
+    row.className = 'per-light-row';
+
+    const name = document.createElement('span');
+    name.className = 'per-light-name';
+    name.textContent = channel.name;
+    if (channel.light_ids.length > 1) {
+      name.title = `One channel driving ${channel.light_ids.length} lights`;
+    }
+
+    const select = document.createElement('select');
+    select.className = 'per-light-pattern';
+    fillPatternSelect(select);
+    // Added after: fillPatternSelect clears the list to build it.
+    const asArea = document.createElement('option');
+    asArea.value = '';
+    asArea.textContent = 'Same as the area';
+    select.insertBefore(asArea, select.firstChild);
+    select.value = channelChoice[channel.channel_id] || '';
+    select.addEventListener('change', () => {
+      channelChoice[channel.channel_id] = select.value;
+      pushStreamLive();
+    });
+
+    row.append(name, select);
+    rows.appendChild(row);
+  });
+}
+
+// Only the channels that actually asked for something. The server treats this
+// as the whole set, so a row set back to "Same as the area" drops out here and
+// that is what takes the override off.
+function channelOverrides() {
+  if (!$('#per-light-enable').checked) return [];
+  return CHANNELS
+    .filter(c => channelChoice[c.channel_id])
+    .map(c => ({ channel_id: c.channel_id, pattern_id: channelChoice[c.channel_id] }));
+}
+
+$('#per-light-enable').addEventListener('change', () => {
+  $('#per-light-rows').classList.toggle('hidden', !$('#per-light-enable').checked);
+  pushStreamLive();
+});
+
 function setStreamColor(hue, sat) {
   streamColor.dataset.hue = hue;
   streamColor.dataset.sat = sat;
@@ -1748,10 +1824,14 @@ async function loadStreamAreas() {
     canStream = body.can_stream;
     // Keep the pick if it still exists; otherwise fall back to the only area,
     // since with one area there is nothing to choose.
+    const was = pickedAreaId;
     if (!AREAS.some(a => a.id === pickedAreaId)) {
       pickedAreaId = AREAS.length === 1 ? AREAS[0].id : null;
     }
     renderAreas();
+    // The auto-pick does not go through pickArea, so the rows would otherwise
+    // never load for a console with exactly one area — the common case.
+    if (pickedAreaId !== was || !CHANNELS.length) loadChannels();
   } catch (e) {
     setStreamStatus(e.message, 'err');
   }
@@ -1764,6 +1844,10 @@ function pickedArea() {
 function pickArea(id) {
   pickedAreaId = id;
   renderAreas();
+  // Channels are a property of the area, so a different area means different
+  // rows — and choices made against the old one no longer refer to anything.
+  Object.keys(channelChoice).forEach(k => delete channelChoice[k]);
+  loadChannels();
 }
 
 // One card per area: what it holds, and the three things you can do to it.
@@ -1914,7 +1998,10 @@ function pushStreamLive() {
     try {
       await api('/api/stream/update', {
         method: 'POST',
-        body: JSON.stringify({ pattern_id: streamPattern.value, ...streamSettings() }),
+        body: JSON.stringify({
+          pattern_id: streamPattern.value, ...streamSettings(),
+          channels: channelOverrides(),
+        }),
       });
     } catch (e) {
       if (!/Nothing is streaming/i.test(e.message)) setStreamStatus(e.message, 'err');
@@ -1996,6 +2083,7 @@ $('#btn-stream-start').addEventListener('click', async () => {
       method: 'POST',
       body: JSON.stringify({
         area_id: pickedAreaId, pattern_id: streamPattern.value, ...streamSettings(),
+        channels: channelOverrides(),
       }),
     });
     setStreamStatus('Streaming.', 'ok');

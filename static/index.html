@@ -231,6 +231,17 @@
                  bottom it was off-screen on a phone before you reached it. -->
             <div id="stream-waveform" class="waveform" aria-hidden="true"></div>
 
+            <!-- One frame already carries a value per channel, so lights
+                 running different patterns costs nothing on the wire. Off by
+                 default: most of the time an area is one effect across a room. -->
+            <div id="per-light" class="per-light hidden">
+              <label class="field checkbox-field">
+                <input type="checkbox" id="per-light-enable" />
+                <span>Different patterns per light <span class="info" tabindex="0" role="button" aria-label="A stream frame carries one value per channel, so lights in the same area can run different patterns at the same time, at the same full speed. A channel is a position in the room rather than a bulb, so one row can cover more than one light. Anything a row leaves alone follows the area&#39;s own settings below." data-tip="A stream frame carries one value per channel, so lights in the same area can run different patterns at the same time, at the same full speed. A channel is a position in the room rather than a bulb, so one row can cover more than one light. Anything a row leaves alone follows the area&#39;s own settings below.">?</span></span>
+              </label>
+              <div id="per-light-rows" class="per-light-rows hidden"></div>
+            </div>
+
             <div id="areas-list" class="areas-list"></div>
             <hr class="panel-rule" />
 

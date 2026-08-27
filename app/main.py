@@ -44,6 +44,7 @@ from .hue_v2 import (
     HueV2Client,
     can_render,
     channel_ids,
+    channel_members,
     streaming_state,
     v1_group_id,
     v1_light_id,
@@ -381,6 +382,33 @@ class StartRequest(BaseModel):
         return self
 
 
+class StreamChannelRequest(BaseModel):
+    """One channel's own framing, for a stream where the lights differ.
+
+    Only what is set here departs from the area's framing, so a channel that
+    names a pattern and nothing else runs that pattern at the area's speed and
+    brightness.
+    """
+
+    channel_id: int = Field(..., ge=0, le=255)
+    pattern_id: str | None = None
+    hz: float | None = Field(None, gt=0, le=MAX_STREAM_HZ)
+    min_bri: int | None = Field(None, ge=1, le=254)
+    max_bri: int | None = Field(None, ge=1, le=254)
+    transition_ms: int | None = Field(None, ge=0, le=60000)
+    hue: int | None = Field(None, ge=0, le=65535)
+    sat: int | None = Field(None, ge=0, le=254)
+
+    @model_validator(mode="after")
+    def _check_ranges(self):
+        if (self.min_bri is not None and self.max_bri is not None
+                and self.min_bri > self.max_bri):
+            raise ValueError("min_bri must be less than or equal to max_bri")
+        if (self.hue is None) != (self.sat is None):
+            raise ValueError("hue and sat must be given together, or not at all")
+        return self
+
+
 class StreamStartRequest(BaseModel):
     """Run a pattern across a whole entertainment area over the DTLS stream."""
 
@@ -396,6 +424,9 @@ class StreamStartRequest(BaseModel):
     transition_ms: int | None = Field(None, ge=0, le=60000)
     hue: int | None = Field(None, ge=0, le=65535)
     sat: int | None = Field(None, ge=0, le=254)
+    # Channels that run something of their own. A frame already carries a value
+    # per channel, so this costs nothing on the wire.
+    channels: list[StreamChannelRequest] | None = Field(None, max_length=64)
 
     @model_validator(mode="after")
     def _check_ranges(self):
@@ -404,6 +435,9 @@ class StreamStartRequest(BaseModel):
             raise ValueError("min_bri must be less than or equal to max_bri")
         if (self.hue is None) != (self.sat is None):
             raise ValueError("hue and sat must be given together, or not at all")
+        seen = [c.channel_id for c in (self.channels or [])]
+        if len(seen) != len(set(seen)):
+            raise ValueError("each channel may only be given once")
         return self
 
 
@@ -419,6 +453,9 @@ class StreamUpdateRequest(BaseModel):
     hue: int | None = Field(None, ge=0, le=65535)
     sat: int | None = Field(None, ge=0, le=254)
     pattern_id: str | None = None
+    # The whole set, not a patch: a channel left out of this list goes back to
+    # the area's framing, which is the only way to take an override off again.
+    channels: list[StreamChannelRequest] | None = Field(None, max_length=64)
 
 
 class StopRequest(BaseModel):
@@ -1301,6 +1338,47 @@ async def stream_candidates():
     }
 
 
+@app.get("/api/stream/areas/{area_id}/channels")
+async def stream_area_channels(area_id: str):
+    """The channels a stream to this area addresses, named by what they drive.
+
+    A channel is a position in the room rather than a bulb, so this reports the
+    lights each one actually answers to instead of assuming one per bulb — a
+    lightstrip can appear under several, and one channel can carry more than
+    one light.
+    """
+    cfg = config_store.load()
+    client = get_client()
+    if client is None:
+        raise HTTPException(400, "Bridge not configured yet")
+    configuration = await _v2_configuration(area_id)
+    if configuration is None:
+        # Not an error: a v1-only area simply has no channels, and the caller
+        # needs to be able to tell that apart from a failure.
+        return {"channels": [], "per_light": False}
+    try:
+        v2 = HueV2Client(cfg["bridge_ip"], cfg["api_key"])
+        services = await v2.entertainment_services()
+        lights = await client.get_lights()
+    except Exception as e:
+        raise HTTPException(502, bridge_error(e, "read the area's channels")) from e
+
+    light_for_rid = {svc["id"]: v1_light_id(svc) for svc in services if svc.get("id")}
+    out = []
+    for channel_id, rids in sorted(channel_members(configuration).items()):
+        ids = [light_for_rid.get(rid) for rid in rids]
+        ids = [lid for lid in ids if lid]
+        names = [(lights.get(lid) or {}).get("name") or f"Light {lid}" for lid in ids]
+        out.append({
+            "channel_id": channel_id,
+            "light_ids": ids,
+            # Deduplicated: a strip under several channels would otherwise
+            # repeat its own name in a single row.
+            "name": ", ".join(dict.fromkeys(names)) or f"Channel {channel_id}",
+        })
+    return {"channels": out, "per_light": True}
+
+
 @app.post("/api/stream/areas")
 async def create_stream_area(req: AreaRequest):
     """Create an entertainment area on the bridge.
@@ -1400,6 +1478,45 @@ async def release_stream_area(req: StreamAreaRequest):
         raise HTTPException(502, bridge_error(e, "hand the area back")) from e
     _broadcast_status_soon()
     return {"ok": True, **status_payload()}
+
+
+def _channel_framing(reqs, area_framing: dict) -> dict[int, dict]:
+    """Turn the requested per-channel overrides into framing the engine can use.
+
+    Only what a channel actually named is kept: everything else is filled in
+    from the area at send time, so a channel that asks for a pattern and
+    nothing else still follows the area's speed and brightness. A named
+    pattern brings its own framing along, exactly as it does for the area.
+    """
+    out: dict[int, dict] = {}
+    for req in reqs or []:
+        framing: dict = {}
+        if req.pattern_id:
+            pattern = _resolve_pattern(req.pattern_id)
+            framing["sequence"] = pattern["sequence"]
+            framing["pattern_id"] = req.pattern_id
+            framing.update(framing_of(pattern))
+        for field in FRAMING_FIELDS:
+            if field in ("hue", "sat"):
+                continue
+            supplied = getattr(req, field, None)
+            if supplied is not None:
+                framing[field] = supplied
+        # Colour together or not at all, and "mentioned" is what counts —
+        # naming it as null is how a channel asks to run white under an area
+        # that has a colour.
+        if "hue" in req.model_fields_set or "sat" in req.model_fields_set:
+            framing["hue"], framing["sat"] = req.hue, req.sat
+        if (framing.get("hue") is None) != (framing.get("sat") is None):
+            framing["hue"] = framing["sat"] = None
+        lo = framing.get("min_bri", area_framing["min_bri"])
+        hi = framing.get("max_bri", area_framing["max_bri"])
+        if lo > hi:
+            raise HTTPException(
+                422, f"channel {req.channel_id}: min_bri must be less than or "
+                     f"equal to max_bri (got {lo} against {hi})")
+        out[req.channel_id] = framing
+    return out
 
 
 @app.get("/api/stream/diagnostics")
@@ -1602,6 +1719,19 @@ async def start_stream(req: StreamStartRequest):
 
     client = get_client()
     configuration = await _v2_configuration(req.area_id)
+
+    # Both resolved before the area is claimed: a bad channel or a v1-only area
+    # should fail while nothing is armed, not in the gap between arming and
+    # handshaking, which strands the area until something releases it.
+    per_channel = _channel_framing(req.channels, framing)
+    if per_channel and not configuration:
+        raise HTTPException(
+            422,
+            "Per-light patterns need an area the bridge knows in its v2 API. "
+            "This one is only a v1 group, whose frames address light ids and "
+            "carry no channels to differ by.",
+        )
+
     _note("before-claim",
           bridge_says=safe_stream(info.get("stream"), cfg.get("api_key")),
           has_locations=bool(info.get("locations")),
@@ -1652,6 +1782,7 @@ async def start_stream(req: StreamStartRequest):
                 area_uuid=(configuration or {}).get("id"),
                 channels=channel_ids(configuration) if configuration else None,
                 transport=transport,
+                per_channel=per_channel,
             )
             last_error = None
             break
@@ -1812,6 +1943,9 @@ async def start_stream(req: StreamStartRequest):
 @app.post("/api/stream/update")
 async def update_stream(req: StreamUpdateRequest):
     changes = req.model_dump(exclude_none=True)
+    # Dumped as plain dicts by model_dump; the engine wants the resolved
+    # framing, so it is rebuilt from the models rather than reused.
+    changes.pop("channels", None)
     # Colour is the one field where null means "clear it" rather than "not
     # mentioned", so it is decided by whether it was sent at all. Dropping it
     # with the other empties made unticking the colour box do nothing.
@@ -1827,6 +1961,10 @@ async def update_stream(req: StreamUpdateRequest):
             if getattr(req, field, None) is None:
                 changes[field] = value
     current = stream_engine.status().get("settings") or {}
+    if req.channels is not None:
+        base = {"min_bri": current.get("min_bri", 1),
+                "max_bri": current.get("max_bri", 254)}
+        changes["per_channel"] = _channel_framing(req.channels, base)
     low = changes.get("min_bri", current.get("min_bri", 1))
     high = changes.get("max_bri", current.get("max_bri", 254))
     if low > high:

@@ -83,6 +83,38 @@ def rgb_for(state: dict, now: float) -> tuple[int, int, int]:
     return hue_sat_bri_to_rgb16(state.get("hue"), state.get("sat"), max(1, min(254, bri)))
 
 
+# What a channel may say for itself. Everything else about a frame — which
+# area, which channels exist — belongs to the stream as a whole.
+CHANNEL_FIELDS = ("sequence", "pattern_id", "hz", "min_bri", "max_bri",
+                  "hue", "sat", "transition_ms")
+
+
+def framing_for_channel(state: dict, channel_id: int) -> dict:
+    """The framing one channel runs, area-wide settings filled in behind it.
+
+    A frame already carries a value per channel, so different lights running
+    different patterns costs nothing extra on the wire — the same single frame
+    at the same rate. Channels with nothing of their own share the area's
+    framing, which is what every stream did before this existed.
+
+    The epoch is deliberately not overridable: every channel derives its frame
+    from the one clock, so patterns of different lengths still line up on the
+    beat instead of drifting apart.
+    """
+    per = (state.get("per_channel") or {}).get(channel_id)
+    if not per:
+        return state
+    merged = dict(state)
+    for field in CHANNEL_FIELDS:
+        if per.get(field) is not None:
+            merged[field] = per[field]
+    # Colour is the one field where None is a real answer — "run this light
+    # white" — so it is set whenever the channel mentions it at all.
+    if "hue" in per and "sat" in per:
+        merged["hue"], merged["sat"] = per["hue"], per["sat"]
+    return merged
+
+
 class StreamEngine:
     """Runs one entertainment area. The bridge only streams to one at a time."""
 
@@ -135,6 +167,12 @@ class StreamEngine:
         with self._lock:
             if self._state is None:
                 return False
+            # Replaced wholesale rather than merged: the caller sends the set
+            # of channels that have something of their own, so a channel
+            # dropping out of that set is how it goes back to the area's
+            # framing. Merging would leave no way to say "never mind".
+            if changes.get("per_channel") is not None:
+                self._state["per_channel"] = dict(changes["per_channel"])
             for key, value in changes.items():
                 if key not in LIVE_FIELDS:
                     continue
@@ -155,7 +193,8 @@ class StreamEngine:
               hue: int | None, sat: int | None, transition_ms: int = 0,
               connect_timeout: float = 6.0,
               area_uuid: str | None = None, channels: list[int] | None = None,
-              transport: str | None = None):
+              transport: str | None = None,
+              per_channel: dict[int, dict] | None = None):
         """Open the stream and start sending. The caller activates the area
         over REST first — the bridge ignores port 2100 until it has."""
         self.stop()
@@ -185,6 +224,10 @@ class StreamEngine:
                 # and carry the area's UUID in the header.
                 "area_uuid": area_uuid,
                 "channels": list(channels) if channels else None,
+                # channel id -> whichever of CHANNEL_FIELDS that channel
+                # overrides. Empty is the ordinary case: one pattern across
+                # the whole area.
+                "per_channel": dict(per_channel or {}),
             }
         self._transport = stream.transport
         # Kept beside the transport rather than derived from the live state, so
@@ -230,14 +273,19 @@ class StreamEngine:
                 if state is None:
                     return
 
-                rgb = rgb_for(state, now)
-                # Every light in the area carries the same value: this is one
-                # effect across a room, not ten independent ones.
+                # A frame carries a value per channel, so a channel with its
+                # own framing costs nothing extra: the same frame, at the same
+                # rate, with a different number in its slot. Without overrides
+                # this resolves to one shared value, as it always did.
                 if state.get("area_uuid") and state.get("channels"):
                     frame = build_frame_v2(
                         sequence_id, state["area_uuid"],
-                        [(channel, rgb) for channel in state["channels"]])
+                        [(channel, rgb_for(framing_for_channel(state, channel), now))
+                         for channel in state["channels"]])
                 else:
+                    # v1 addresses light ids and has no channels to differ by,
+                    # so the whole area runs one pattern there.
+                    rgb = rgb_for(state, now)
                     frame = build_frame_v1(
                         sequence_id, [(int(lid), rgb) for lid in state["light_ids"]])
                 sequence_id = (sequence_id + 1) & 0xFF

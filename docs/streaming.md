@@ -112,6 +112,31 @@ Three details in the framing matter, and all three are easy to get wrong:
 
 Diagnostics reports which client got through, as `transport`.
 
+## Different patterns in one area
+
+The bridge streams to one area at a time — a second session is refused while
+the first is open. Within that one area, though, a v2 frame carries a value per
+channel, so the lights in it need not be doing the same thing:
+
+```
+build_frame_v2(sequence, area_id, [(channel_id, rgb), ...])
+```
+
+So per-light patterns cost nothing on the wire: the same single frame at the
+same rate, with a different number in each slot. Channels that are not given
+anything of their own resolve to the area's framing, which is what every stream
+did before this existed.
+
+Two things follow from a channel not being a bulb. A row can drive more than
+one light, and one light can appear under several rows — which is why the rows
+are built from what the bridge reports rather than from the light list. And the
+whole thing is v2-only: a v1 frame addresses light ids and has no channels to
+differ by, so an area the bridge only knows in v1 is refused with that reason
+rather than silently running one pattern.
+
+Every channel derives its frame from the stream's single epoch, so patterns of
+different lengths stay on the same beat instead of drifting apart.
+
 ## Reading Diagnostics
 
 Turn on **Streaming diagnostics** in Settings first — the button is not there

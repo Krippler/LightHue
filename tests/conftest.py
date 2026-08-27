@@ -79,7 +79,18 @@ def bridge(app_modules, monkeypatch):
         "id_v1": "/groups/6",
         "name": "Game room",
         "status": "inactive",
-        "channels": [{"channel_id": 0}, {"channel_id": 1}, {"channel_id": 2}],
+        # A real configuration always names what each channel drives. Channel 2
+        # carries two services on purpose: a channel is a position in the room,
+        # not a bulb, and code that assumes one-to-one breaks there.
+        "channels": [
+            {"channel_id": 0,
+             "members": [{"service": {"rid": "ent-1", "rtype": "entertainment"}, "index": 0}]},
+            {"channel_id": 1,
+             "members": [{"service": {"rid": "ent-2", "rtype": "entertainment"}, "index": 0}]},
+            {"channel_id": 2,
+             "members": [{"service": {"rid": "ent-1", "rtype": "entertainment"}, "index": 1},
+                         {"service": {"rid": "ent-2", "rtype": "entertainment"}, "index": 1}]},
+        ],
     }]}
 
     # Per-light entertainment services. Light 3 is white-only and light 4 is a
