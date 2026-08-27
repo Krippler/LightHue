@@ -260,3 +260,21 @@ def test_per_light_patterns_are_offered_and_sent():
     assert "per-light-enable" in body.group(1), (
         "the toggle has to gate it, or unticking would leave the overrides running"
     )
+
+
+def test_there_is_one_refresh_and_it_reloads_the_areas_too():
+    """Two Refresh buttons a few centimetres apart, doing different amounts.
+
+    The toolbar one already ended with loadStreamAreas, so the panel's own was
+    a narrower duplicate. With it gone the remaining one has to reload the
+    channels as well, or an area edited in the Hue app cannot be picked up.
+    """
+    assert 'id="btn-stream-refresh"' not in INDEX, "the duplicate is still there"
+    assert "btn-stream-refresh" not in APP_JS, "its handler outlived the button"
+    assert 'id="btn-refresh-lights"' in INDEX
+
+    body = re.search(r"async function loadStreamAreas\(\)\s*\{(.*?)\n\}", APP_JS, re.S)
+    assert body, "loadStreamAreas is missing"
+    assert "await loadChannels()" in body.group(1), (
+        "Refresh has to reload the per-light rows under the area, not just the areas"
+    )
