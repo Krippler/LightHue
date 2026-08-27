@@ -585,9 +585,9 @@ input[type="color"] {
   border: 0; border-top: 1px solid var(--border);
   margin: 18px 0 16px;
 }
+/* Guidance for when no area is picked, so it is never the accent colour —
+   nothing here is a value, it is a nudge. */
 .picked-line { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
-.picked-area { color: var(--app); }
-.picked-area.dim { color: var(--muted); }
 
 /* Signature element: the literal lightstyle waveform. */
 .waveform {

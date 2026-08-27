@@ -1961,11 +1961,16 @@ function buildAreaRow(area) {
 
 function renderPickedArea() {
   const area = pickedArea();
-  const label = $('#stream-area-name');
-  label.textContent = area
-    ? `${area.name} (${area.light_ids.length} light${area.light_ids.length === 1 ? '' : 's'})`
-    : (AREAS.length ? 'No area picked — choose one above' : 'No areas yet');
-  label.classList.toggle('dim', !area);
+  // Naming the picked area here said what its own row says a few pixels above,
+  // where it is already marked. So the line is guidance for the case the rows
+  // cannot cover: nothing chosen, or nothing to choose.
+  const line = $('#picked-line');
+  line.classList.toggle('hidden', !!area);
+  if (!area) {
+    line.textContent = AREAS.length
+      ? 'Choose an area above to stream to.'
+      : 'No areas yet — make one at the top of Lights & Plugs.';
+  }
   $('#btn-stream-start').disabled = !canStream || !area || STREAM.running;
 }
 
@@ -2107,9 +2112,9 @@ function applyStreamStatus() {
   $('#btn-stream-stop').classList.toggle('hidden', !running);
   const state = $('#stream-state');
   if (running) {
-    // Short, because it shares the panel head with the run controls now. Which
-    // area and how many lights are already on the picked line below it, and
-    // saying them a third time cost the head a second row.
+    // Short, because it shares the panel head with the run controls. Which
+    // area it is has never belonged here — the area's own row is marked, and
+    // says its name and light count besides.
     const n = (STREAM.light_ids || []).length;
     state.textContent = `streaming · ${STREAM.effective_hz} Hz · `
       + `${n} light${n === 1 ? '' : 's'}`;
@@ -2118,6 +2123,11 @@ function applyStreamStatus() {
     state.textContent = 'idle';
     state.className = 'dim';
   }
+  // After the className assignments above, which replace the whole list and
+  // would drop this. Hidden while idle: a button labelled Start is already
+  // showing, and says the same thing. Streaming is when the badge earns its
+  // place, because the rate and the light count are on no button.
+  state.classList.toggle('hidden', !running);
   if (STREAM.error) setStreamStatus(STREAM.error, 'err');
 }
 

@@ -278,3 +278,36 @@ def test_there_is_one_refresh_and_it_reloads_the_areas_too():
     assert "await loadChannels()" in body.group(1), (
         "Refresh has to reload the per-light rows under the area, not just the areas"
     )
+
+
+def test_the_picked_area_is_named_once_not_three_times():
+    """Its own row is marked and carries the name and light count already.
+
+    The line survives for the one thing the rows cannot say: that nothing is
+    picked, or that there is nothing to pick.
+    """
+    assert 'id="stream-area-name"' not in INDEX, "the duplicate label is still there"
+    assert "picked-area" not in APP_JS and "picked-area" not in INDEX
+
+    body = re.search(r"function renderPickedArea\(\)\s*\{(.*?)\n\}", APP_JS, re.S)
+    assert body, "renderPickedArea is missing"
+    body = body.group(1)
+    assert "classList.toggle('hidden', !!area)" in body, (
+        "the line has to hide once an area is picked"
+    )
+    assert "AREAS.length" in body, "it still has to guide when nothing is picked"
+
+
+def test_the_state_badge_is_hidden_while_idle():
+    """A button labelled Start already says idle.
+
+    The toggle must come after the className assignments: those replace the
+    whole class list and would drop it.
+    """
+    body = re.search(r"function applyStreamStatus\(\)\s*\{(.*?)\n\}", APP_JS, re.S)
+    assert body, "applyStreamStatus is missing"
+    body = body.group(1)
+    toggle = body.index("state.classList.toggle('hidden', !running)")
+    assert toggle > body.rindex("state.className ="), (
+        "the hidden toggle runs before a className assignment that wipes it"
+    )

@@ -246,8 +246,10 @@
 
             <div id="stream-unavailable" class="status-line err hidden"></div>
 
-            <p class="picked-line">Streaming to
-              <strong id="stream-area-name" class="picked-area">no area picked</strong></p>
+            <!-- Only speaks up when there is nothing picked. With an area
+                 chosen its row above is already marked, and says the name and
+                 the light count besides. -->
+            <p id="picked-line" class="picked-line hidden"></p>
 
             <div class="custom-form">
               <label class="field custom-seq-field">
