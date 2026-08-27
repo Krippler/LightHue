@@ -1824,14 +1824,15 @@ async function loadStreamAreas() {
     canStream = body.can_stream;
     // Keep the pick if it still exists; otherwise fall back to the only area,
     // since with one area there is nothing to choose.
-    const was = pickedAreaId;
     if (!AREAS.some(a => a.id === pickedAreaId)) {
       pickedAreaId = AREAS.length === 1 ? AREAS[0].id : null;
     }
     renderAreas();
-    // The auto-pick does not go through pickArea, so the rows would otherwise
-    // never load for a console with exactly one area — the common case.
-    if (pickedAreaId !== was || !CHANNELS.length) loadChannels();
+    // Always, not just when the pick changed: Refresh is now the only way to
+    // pick up an area edited in the Hue app, so it has to reload the channels
+    // under it too. This also covers the auto-pick above, which does not go
+    // through pickArea.
+    await loadChannels();
   } catch (e) {
     setStreamStatus(e.message, 'err');
   }
@@ -2048,7 +2049,6 @@ streamColorCode.addEventListener('input', () => {
   pushStreamLive();
 });
 
-$('#btn-stream-refresh').addEventListener('click', loadStreamAreas);
 
 $('#btn-stream-diagnostics').addEventListener('click', async () => {
   const box = $('#stream-diagnostics');
