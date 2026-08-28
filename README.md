@@ -37,8 +37,8 @@ to set beyond the config path.
 
 If discovery or pairing fails, set *Network Type* to **Host** and try again —
 some Unraid setups don't let the default bridge network reach the Hue Bridge.
-Host networking ignores port mappings; add a `PORT` variable instead of
-remapping.
+Host networking ignores port mappings, so use the **Port (host networking
+only)** field under *Show advanced settings* to move the listener instead.
 
 ## Run it anywhere else
 

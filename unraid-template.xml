@@ -14,47 +14,38 @@
   <Support>https://github.com/Krippler/LightHue/issues</Support>
   <Project>https://github.com/Krippler/LightHue</Project>
   <Overview>
-    Drives Philips Hue lights with the flicker patterns of classic shooters, through
-    a small web UI that several people on your network can use at once.&#13;
+    Drives Philips Hue lights with the flicker patterns of twenty classic games,
+    through a small web UI that several people on your network can use at once.&#13;
     &#13;
-    Twenty games' worth of presets. Quake's lightstyle table is here verbatim from
-    id Software's released source, shared with Quake II, Half-Life and Source which
-    ship it unchanged, plus hand-authored takes on the light effects of DOOM,
-    Heretic, Hexen, Descent, Marathon, Rise of the Triad, Duke Nukem 3D, Blood,
-    Shadow Warrior, Thief, System Shock 2, Doom 3, Quake 4 and Unreal. Every preset
-    is named after the game it comes from and carries the speed it was written for,
-    so picking one brings its timing with it.&#13;
+    Quake's lightstyle table is here verbatim from id Software's released source,
+    shared with Quake II, Half-Life and Source which ship it unchanged, plus
+    hand-authored takes on DOOM, Heretic, Hexen, Descent, Marathon, Rise of the
+    Triad, Duke Nukem 3D, Blood, Shadow Warrior, Thief, System Shock 2, Doom 3,
+    Quake 4, Deus Ex and Unreal. Every preset carries the speed, brightness range
+    and colour it was written for, so picking one brings its timing with it.&#13;
     &#13;
-    Write your own patterns too, and share them: export yours to a small JSON file
-    to send to someone, or import one they sent you.&#13;
+    Pick lights, pattern, speed, brightness and colour, and change any of it while
+    the lights are still running. Write your own a-z lightstyle strings with a live
+    waveform preview, and export them to a small JSON file to share.&#13;
     &#13;
-    Talks directly to your Hue Bridge over the local API - no Philips cloud account
-    needed. Pick lights, pattern, speed, brightness range and colour, and change any
-    of it while the lights are still running. Build entertainment areas from the
-    console and stream a whole set at once, copying the rooms you already set up in
-    the Hue app if you like,
-    write your own a-z lightstyle strings, and watch a live waveform of what each
-    light is doing.&#13;
+    Build entertainment areas on the bridge and stream a whole set at once. The
+    ordinary path spends one command per light out of about ten a second, so seven
+    bulbs flicker at barely 1 Hz each; streaming sends one frame for the whole area,
+    so the speed stops being divided - up to 25 Hz, and each light in the area can
+    run a different pattern at the same time.&#13;
     &#13;
-    The console reads each bulb's colour and brightness before it starts, and puts
-    it back when the flicker stops - even if the container was restarted mid-run.&#13;
+    Reads each bulb's colour and brightness before it starts and puts it back when
+    the flicker stops, even if the container restarted mid-run. Optional console
+    password. Restarts itself if it ever stops responding.&#13;
     &#13;
-    For an entertainment area set up in the Hue app, it can stream instead. The
-    ordinary path spends one HTTP command per light out of a budget of about ten a
-    second, so seven bulbs flicker at barely 1 Hz each; streaming sends one frame
-    holding the whole area, so the speed stops being divided and every light changes
-    together at up to 25 Hz. Streaming needs a pairing that included a streaming
-    key, so a console set up before this feature has to pair again - the panel says
-    so when that applies.&#13;
+    Talks directly to your Hue Bridge over the local API - no Philips cloud account.
+    Everything is configured in the web UI; there are no environment variables to
+    set.&#13;
     &#13;
-    Everything is configured in the web UI, including the optional console password
-    and the bridge send-rate cap - there are no environment variables to set here.&#13;
-    &#13;
-    First run: open the WebUI, either auto-discover your bridge or type its IP, then
-    press the physical link button on the bridge and hit Pair within 30 seconds.&#13;
-    &#13;
-    If discovery or pairing fails on the default bridge network, switch Network Type
-    to Host and try again.
+    First run: open the WebUI, auto-discover your bridge or type its IP, then press
+    the link button on the bridge and hit Pair within 30 seconds. If discovery or
+    pairing fails on the default bridge network, switch Network Type to Host and
+    try again.
   </Overview>
   <Category>HomeAutomation: Other:</Category>
   <WebUI>http://[IP]:[PORT:26000]/</WebUI>
@@ -79,6 +70,16 @@
     Type="Port"
     Display="always"
     Required="true"
+    Mask="false">26000</Config>
+  <Config
+    Name="Port (host networking only)"
+    Target="PORT"
+    Default="26000"
+    Mode=""
+    Description="Only used with Network Type set to Host, where the port mapping above does nothing and this is the only way to move the listener. Leave it alone on bridge networking."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
     Mask="false">26000</Config>
   <Config
     Name="Config Storage"

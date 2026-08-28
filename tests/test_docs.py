@@ -71,3 +71,78 @@ def test_the_docs_stay_wrapped():
     for doc in DOCS:
         for n, line in enumerate(doc.read_text().splitlines(), 1):
             assert len(line) <= 88, f"{doc.name}:{n} is {len(line)} chars"
+
+
+# ---------- Deployment templates ----------
+
+TEMPLATE = ROOT / "unraid-template.xml"
+COMPOSE = ROOT / "docker-compose.yml"
+
+
+def template():
+    import xml.etree.ElementTree as ET
+    return ET.parse(TEMPLATE).getroot()
+
+
+def test_the_unraid_template_has_what_community_applications_needs():
+    """A missing field here is rejected at submission, not at install.
+
+    Every one of these is load-bearing: without Icon and Overview the app has
+    no card, without TemplateURL it cannot update itself, and without Support
+    and Project there is nowhere for a user to go when it breaks.
+    """
+    root = template()
+    for field in ("Name", "Repository", "Registry", "Network", "Shell",
+                  "Privileged", "Support", "Project", "Overview", "Category",
+                  "WebUI", "TemplateURL", "Icon"):
+        value = (root.findtext(field) or "").strip()
+        assert value, f"the template has no {field}"
+
+    assert root.findtext("Privileged").strip() == "false"
+    for field in ("Support", "Project", "TemplateURL", "Icon"):
+        assert root.findtext(field).strip().startswith("https://"), field
+
+
+def test_the_template_still_calls_the_project_by_its_name():
+    """It was shipped as GameHueFlicker for a while after the rename.
+
+    <Name> is what Unraid calls the container it creates, so a stale one is
+    what every new install ends up with.
+    """
+    root = template()
+    assert root.findtext("Name").strip() == "LightHue"
+    text = TEMPLATE.read_text() + COMPOSE.read_text()
+    assert "game-hue-flicker" not in text, "the old project name is still in a deploy file"
+    assert "GameHueFlicker" not in text
+
+
+def test_the_image_the_template_pulls_is_the_one_ci_publishes():
+    published = (ROOT / ".github" / "workflows" / "publish.yml").read_text()
+    assert "ghcr.io/${{ github.repository }}" in published
+    assert template().findtext("Repository").strip() == "ghcr.io/krippler/lighthue:latest"
+
+
+def test_host_networking_users_are_given_the_port_field_the_readme_names():
+    """The README tells them to set PORT; the template has to offer it.
+
+    With host networking the port mapping does nothing, so this variable is the
+    only way to move the listener.
+    """
+    ports = [c for c in template().findall("Config")
+             if c.get("Type") == "Variable" and c.get("Target") == "PORT"]
+    assert ports, "no PORT variable in the template"
+    assert ports[0].get("Required") == "false", "it is only needed on host networking"
+    # The README sends people to it by name, so the two have to agree on one.
+    # Compared with whitespace flattened: the name spans a line break there.
+    readme = " ".join((ROOT / "README.md").read_text().split())
+    assert " ".join(ports[0].get("Name").split()) in readme, (
+        "the README does not name the field the template offers"
+    )
+
+
+def test_the_icon_the_template_points_at_is_in_the_repo():
+    """CA fetches it by URL from the default branch, so a moved file is a blank card."""
+    icon = template().findtext("Icon").strip()
+    assert icon.endswith(".png")
+    path = icon.split("/main/", 1)[1]
+    assert (ROOT / path).exists(), f"{path} is not in the repo"
