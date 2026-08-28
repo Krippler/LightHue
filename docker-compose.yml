@@ -1,9 +1,9 @@
 services:
-  game-hue-flicker:
+  lighthue:
     # Build locally, or swap this for the published image:
     #   image: ghcr.io/krippler/lighthue:latest
     build: .
-    container_name: game-hue-flicker
+    container_name: lighthue
     ports:
       # Host port 26000 -> container 26000 (Quake's own port; avoids the
       # 8080 pile-up). Change only the left number to move it on your host.
