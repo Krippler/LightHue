@@ -35,6 +35,9 @@ to set beyond the config path.
 
 3. **Apply**, then open the WebUI from the Docker tab.
 
+Releases are tagged, so `ghcr.io/krippler/lighthue:v0.5.0` pins a version and
+`:latest` tracks the newest. [CHANGELOG.md](CHANGELOG.md) says what changed.
+
 If discovery or pairing fails, set *Network Type* to **Host** and try again —
 some Unraid setups don't let the default bridge network reach the Hue Bridge.
 Host networking ignores port mappings, so use the **Port (host networking

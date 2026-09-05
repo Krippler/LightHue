@@ -59,16 +59,20 @@
        known good on, rather than a version the app has been tested against. -->
   <MinVer>6.9</MinVer>
   <Date>2026-09-05</Date>
+  <!-- CA renders this as the app's release notes. Keep the top entry in step
+       with CHANGELOG.md; a test fails if the version or date drift apart. -->
   <Changes>
-### 1.0.0&#13;
+### 0.5.0 (2026-09-05)&#13;
 &#13;
-First Community Applications release.&#13;
+First tagged release, and the first packaged for Community Applications.&#13;
 &#13;
 - 64 presets across twenty games, each carrying its own speed, brightness range and colour.&#13;
 - Entertainment streaming at up to 25 Hz, with a different pattern per light in one area.&#13;
 - Custom a-z lightstyles with a live waveform preview, exportable as JSON.&#13;
 - Restores every bulb's colour and brightness when the flicker stops, across a restart.&#13;
 - Optional console password, and a health check that restarts the container if it stops responding.&#13;
+&#13;
+Full notes: https://github.com/Krippler/LightHue/blob/main/CHANGELOG.md&#13;
   </Changes>
   <!-- Steady state is about 66 MB. The ceiling keeps a fault in the container
        from becoming a fault on the host: hit it and Docker restarts this

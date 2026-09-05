@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DOCS = [ROOT / "README.md", ROOT / "docs" / "streaming.md",
+DOCS = [ROOT / "README.md", ROOT / "CHANGELOG.md", ROOT / "docs" / "streaming.md",
         ROOT / "docs" / "pattern-packs.md"]
 
 
@@ -201,6 +201,27 @@ def test_the_changelog_counts_what_the_code_actually_ships():
     words = {16: "sixteen", 20: "twenty", 21: "twenty-one"}
     assert f"{words.get(len(GAMES), len(GAMES))} games" in changes, (
         f"the listing's game count is not {len(GAMES)}"
+    )
+
+
+def test_the_listing_and_the_changelog_agree_on_the_release():
+    """Two places name the version, and only one of them is ever remembered.
+
+    CA shows <Changes> as the release notes and <Date> as the release date;
+    CHANGELOG.md is where the version actually gets written down. A release
+    that updates one and not the other ships notes for the wrong version.
+    """
+    heading = re.search(r"^## (\S+) . (\d{4}-\d{2}-\d{2})$",
+                        (ROOT / "CHANGELOG.md").read_text(), re.M)
+    assert heading, "CHANGELOG.md has no '## <version> - <date>' heading"
+    version, date = heading.group(1), heading.group(2)
+
+    root = template()
+    assert f"### {version}" in root.findtext("Changes"), (
+        f"the template's notes are not for {version}"
+    )
+    assert root.findtext("Date").strip() == date, (
+        f"the template is dated {root.findtext('Date').strip()}, the changelog {date}"
     )
 
 
