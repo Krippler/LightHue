@@ -8,11 +8,11 @@
     <TagDescription>Latest build from main</TagDescription>
   </Branch>
   <Network>bridge</Network>
-  <MyIP/>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
   <Support>https://github.com/Krippler/LightHue/issues</Support>
   <Project>https://github.com/Krippler/LightHue</Project>
+  <ReadMe>https://raw.githubusercontent.com/Krippler/LightHue/main/README.md</ReadMe>
   <Overview>
     Drives Philips Hue lights with the flicker patterns of twenty classic games,
     through a small web UI that several people on your network can use at once.&#13;
@@ -47,20 +47,33 @@
     pairing fails on the default bridge network, switch Network Type to Host and
     try again.
   </Overview>
-  <Category>HomeAutomation: Other:</Category>
+  <Category>HomeAutomation:</Category>
   <WebUI>http://[IP]:[PORT:26000]/</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/Krippler/LightHue/main/unraid-template.xml</TemplateURL>
+  <TemplateURL>https://raw.githubusercontent.com/Krippler/LightHue/main/templates/lighthue.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/Krippler/LightHue/main/static/icon.png</Icon>
+  <Screenshot>https://raw.githubusercontent.com/Krippler/LightHue/main/screenshots/console.png</Screenshot>
+  <ExtraSearchTerms>hue philips lighting flicker lightstyle quake doom entertainment ambient rgb bridge</ExtraSearchTerms>
+  <Requires>A Philips Hue Bridge on the same network, reachable by IP. Pairing needs one press of the bridge's physical link button. Nothing else: no Philips account, no cloud service, and no environment variables to set.</Requires>
+  <License>GPLv3</License>
+  <!-- The oldest release this template format and these Docker options are
+       known good on, rather than a version the app has been tested against. -->
+  <MinVer>6.9</MinVer>
+  <Date>2026-09-05</Date>
+  <Changes>
+### 1.0.0&#13;
+&#13;
+First Community Applications release.&#13;
+&#13;
+- 64 presets across twenty games, each carrying its own speed, brightness range and colour.&#13;
+- Entertainment streaming at up to 25 Hz, with a different pattern per light in one area.&#13;
+- Custom a-z lightstyles with a live waveform preview, exportable as JSON.&#13;
+- Restores every bulb's colour and brightness when the flicker stops, across a restart.&#13;
+- Optional console password, and a health check that restarts the container if it stops responding.&#13;
+  </Changes>
   <!-- Steady state is about 66 MB. The ceiling keeps a fault in the container
        from becoming a fault on the host: hit it and Docker restarts this
        container, instead of Unraid going looking for memory to reclaim. -->
   <ExtraParams>--memory=256m --memory-swap=256m</ExtraParams>
-  <PostArgs/>
-  <CPUset/>
-  <DateInstalled/>
-  <DonateText/>
-  <DonateLink/>
-  <Requires/>
   <Config
     Name="WebUI Port"
     Target="26000"

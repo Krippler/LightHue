@@ -13,3 +13,9 @@ __pycache__
 venv
 .pytest_cache
 .ruff_cache
+# Release metadata for the Community Applications listing. The
+# Dockerfile copies named directories, so these were never in the
+# image — this just keeps them out of the build context.
+screenshots
+templates
+ca_profile.xml

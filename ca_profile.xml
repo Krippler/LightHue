@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<!-- Community Applications reads this for the repository's own card: who
+     maintains it, and where to go when something breaks. The submit flow
+     rejects a repository whose Profile is empty. -->
+<CommunityApplications>
+  <Profile>
+    LightHue drives Philips Hue lights with the flicker patterns of twenty
+    classic games - Quake's lightstyle table verbatim from id Software's
+    released source, plus hand-authored takes on DOOM, Half-Life, Blood,
+    Thief, Deus Ex and a dozen more. One container, one web UI, no Philips
+    cloud account.
+
+    Everything is configured in the UI, so the template has nothing to fill in
+    but a port and an appdata path. Issues and questions go to the GitHub
+    tracker linked below.
+  </Profile>
+  <Icon>https://raw.githubusercontent.com/Krippler/LightHue/main/static/icon.png</Icon>
+  <WebPage>https://github.com/Krippler/LightHue</WebPage>
+</CommunityApplications>

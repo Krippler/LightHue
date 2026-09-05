@@ -25,7 +25,7 @@ to set beyond the config path.
 1. **Docker → Add Container**, and paste this into the *Template* field:
 
    ```
-   https://raw.githubusercontent.com/Krippler/LightHue/main/unraid-template.xml
+   https://raw.githubusercontent.com/Krippler/LightHue/main/templates/lighthue.xml
    ```
 
 2. Check the two settings it fills in:

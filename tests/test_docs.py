@@ -75,8 +75,10 @@ def test_the_docs_stay_wrapped():
 
 # ---------- Deployment templates ----------
 
-TEMPLATE = ROOT / "unraid-template.xml"
+TEMPLATE = ROOT / "templates" / "lighthue.xml"
+PROFILE = ROOT / "ca_profile.xml"
 COMPOSE = ROOT / "docker-compose.yml"
+RAW = "https://raw.githubusercontent.com/Krippler/LightHue/main/"
 
 
 def template():
@@ -140,9 +142,70 @@ def test_host_networking_users_are_given_the_port_field_the_readme_names():
     )
 
 
-def test_the_icon_the_template_points_at_is_in_the_repo():
-    """CA fetches it by URL from the default branch, so a moved file is a blank card."""
-    icon = template().findtext("Icon").strip()
-    assert icon.endswith(".png")
-    path = icon.split("/main/", 1)[1]
-    assert (ROOT / path).exists(), f"{path} is not in the repo"
+def test_every_file_the_listing_links_to_is_in_the_repo():
+    """CA fetches these by URL from the default branch.
+
+    A moved file is a blank card, a dead Read Me link, or a missing
+    screenshot, and none of it shows up until the listing is live.
+    """
+    import xml.etree.ElementTree as ET
+
+    for source in (TEMPLATE, PROFILE):
+        urls = re.findall(re.escape(RAW) + r"[^<\s]+", source.read_text())
+        assert urls, f"{source.name} links to nothing in the repo"
+        for url in urls:
+            path = url[len(RAW):]
+            assert (ROOT / path).exists(), f"{source.name} links to a missing {path}"
+
+    assert ET.parse(TEMPLATE).getroot().findtext("Icon").strip().endswith(".png")
+
+
+def test_the_template_url_points_at_this_exact_file():
+    """The one CA submission rule that a moved file breaks silently.
+
+    Unraid re-reads TemplateURL to offer updates, so pointing it anywhere but
+    this file leaves installed containers tracking the wrong template.
+    """
+    said = template().findtext("TemplateURL").strip()
+    expected = RAW + TEMPLATE.relative_to(ROOT).as_posix()
+    assert said == expected, f"TemplateURL says {said}, file is at {expected}"
+
+
+def test_the_repository_carries_the_maintainer_profile_ca_requires():
+    """Submission is refused outright without a non-empty <Profile>."""
+    import xml.etree.ElementTree as ET
+
+    assert PROFILE.exists(), "ca_profile.xml has to sit in the repository root"
+    root = ET.parse(PROFILE).getroot()
+    assert root.tag == "CommunityApplications", root.tag
+    assert len((root.findtext("Profile") or "").strip()) > 40, "the profile says nothing"
+
+
+def test_only_one_template_ships_so_ca_lists_the_app_once():
+    """CA scans the repository for templates; a leftover copy is a duplicate listing.
+
+    This one has moved once already, from the repository root into templates/.
+    """
+    found = sorted(p.relative_to(ROOT).as_posix()
+                   for p in ROOT.glob("*.xml")) + \
+            sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "templates").glob("*.xml"))
+    assert found == ["ca_profile.xml", "templates/lighthue.xml"], found
+
+
+def test_the_changelog_counts_what_the_code_actually_ships():
+    """The listing quotes numbers too, and nobody re-reads it after a release."""
+    from app.patterns import BUILTIN_PATTERNS, GAMES
+
+    changes = template().findtext("Changes")
+    assert f"{len(BUILTIN_PATTERNS)} presets" in changes, "the preset count has drifted"
+    words = {16: "sixteen", 20: "twenty", 21: "twenty-one"}
+    assert f"{words.get(len(GAMES), len(GAMES))} games" in changes, (
+        f"the listing's game count is not {len(GAMES)}"
+    )
+
+
+def test_the_licence_the_listing_claims_is_the_one_we_ship():
+    said = template().findtext("License").strip()
+    licence = (ROOT / "LICENSE").read_text()
+    assert said == "GPLv3", said
+    assert "GNU GENERAL PUBLIC LICENSE" in licence and "Version 3" in licence
