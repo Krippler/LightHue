@@ -10,8 +10,8 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DOCS = [ROOT / "README.md", ROOT / "CHANGELOG.md", ROOT / "docs" / "streaming.md",
-        ROOT / "docs" / "pattern-packs.md"]
+DOCS = [ROOT / "README.md", ROOT / "CHANGELOG.md", ROOT / "PUBLISHING.md",
+        ROOT / "docs" / "streaming.md", ROOT / "docs" / "pattern-packs.md"]
 
 
 def paragraphs(text: str) -> list[str]:
@@ -119,9 +119,19 @@ def test_the_template_still_calls_the_project_by_its_name():
 
 
 def test_the_image_the_template_pulls_is_the_one_ci_publishes():
+    """Every tag the template offers has to be one the workflow publishes.
+
+    Untagged, so Unraid can append whichever tag is chosen: `latest` is the
+    newest release and the default, `edge` follows main between releases.
+    """
     published = (ROOT / ".github" / "workflows" / "publish.yml").read_text()
     assert "ghcr.io/${{ github.repository }}" in published
-    assert template().findtext("Repository").strip() == "ghcr.io/krippler/lighthue:latest"
+    root = template()
+    assert root.findtext("Repository").strip() == "ghcr.io/krippler/lighthue"
+    offered = [b.findtext("Tag").strip() for b in root.findall("Branch")]
+    assert offered == ["latest", "edge"], offered
+    for tag in offered:
+        assert f"type=raw,value={tag}," in published, f"nothing publishes :{tag}"
 
 
 def test_host_networking_users_are_given_the_port_field_the_readme_names():
@@ -211,9 +221,9 @@ def test_the_listing_and_the_changelog_agree_on_the_release():
     CHANGELOG.md is where the version actually gets written down. A release
     that updates one and not the other ships notes for the wrong version.
     """
-    heading = re.search(r"^## (\S+) . (\d{4}-\d{2}-\d{2})$",
+    heading = re.search(r"^## \[(\d+\.\d+\.\d+)\] — (\d{4}-\d{2}-\d{2})$",
                         (ROOT / "CHANGELOG.md").read_text(), re.M)
-    assert heading, "CHANGELOG.md has no '## <version> - <date>' heading"
+    assert heading, "CHANGELOG.md has no '## [X.Y.Z] — YYYY-MM-DD' heading"
     version, date = heading.group(1), heading.group(2)
 
     root = template()

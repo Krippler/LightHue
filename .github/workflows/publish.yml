@@ -1,27 +1,74 @@
 name: Publish image
 
-# Unraid installs from a registry rather than building locally, so every push
-# to main publishes an image its template can pull.
+# Unraid installs from a registry rather than building locally, so what this
+# publishes is what people run. Releases follow CHANGELOG.md, the same way
+# Krippler/Quake does it:
+#
+#   • push to main, top section "## [Unreleased]"      → edge
+#   • push to main, top section "## [X.Y.Z] — DATE"    → X.Y.Z, X.Y, X, latest
+#       and edge, plus the vX.Y.Z git tag and the GitHub Release, made here
+#   • push a vX.Y.Z tag by hand                         → X.Y.Z, X.Y, X, latest
+#   • push a work branch                                → that branch's name
+#
+# So `latest` is the newest release, not the newest commit. A merge that is not
+# a release reaches `edge` only, and nobody on `latest` picks up a half-finished
+# change by updating.
 #
 # Work branches publish too, under their own branch-named tag. Testing a fix
 # against real hardware otherwise means merging it to main first, which is a
 # bad trade: the change that needs proving is exactly the one that should not
-# be on the default branch yet. `latest` stays gated on the default branch
-# below, so nothing an ordinary install pulls is affected.
+# be on the default branch yet.
 on:
   push:
     branches: ["main", "claude/**", "fix/**", "feat/**"]
-    tags: ["v*"]
+    tags: ["v*.*.*"]
   workflow_dispatch:
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write     # write so a release merge can create its git tag
       packages: write
+    outputs:
+      release_version: ${{ steps.detect.outputs.version }}
+      is_release_merge: ${{ steps.detect.outputs.is_release_merge }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history and tags, so the detect step can see whether the
+          # version that landed has been released already.
+          fetch-depth: 0
+          fetch-tags: true
+
+      # ── Release-on-merge detection ─────────────────────────────────────────
+      # A release flips CHANGELOG.md's top section from "[Unreleased]" to
+      # "[X.Y.Z] — DATE". Detecting that here means a plain merge publishes
+      # only `edge`, while a release merge publishes the version pins and
+      # `latest` and creates the tag and GitHub Release in the same run.
+      - name: Detect release-on-merge
+        id: detect
+        if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        run: |
+          set -euo pipefail
+          TOP="$(awk '/^## \[/ {print; exit}' CHANGELOG.md || true)"
+          echo "top: ${TOP}"
+          VER="$(printf '%s' "$TOP" | sed -nE 's/^## \[([0-9]+\.[0-9]+\.[0-9]+)\].*/\1/p')"
+          if [ -z "$VER" ]; then
+            echo "Top CHANGELOG section is not a release header — skipping auto-release."
+            echo "is_release_merge=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git rev-parse -q --verify "refs/tags/v${VER}" >/dev/null; then
+            echo "Tag v${VER} already exists — skipping auto-release."
+            echo "is_release_merge=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Release commit detected: v${VER}"
+          echo "is_release_merge=true"        >> "$GITHUB_OUTPUT"
+          echo "version=${VER}"               >> "$GITHUB_OUTPUT"
+          echo "major=${VER%%.*}"             >> "$GITHUB_OUTPUT"
+          echo "major_minor=${VER%.*}"        >> "$GITHUB_OUTPUT"
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -34,12 +81,47 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
+          # metadata-action lowercases this, so Krippler/LightHue becomes
+          # ghcr.io/krippler/lighthue.
           images: ghcr.io/${{ github.repository }}
+          flavor: |
+            latest=false
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            # A branch build matches none of the version rules below, and
+            # build-push-action fails when handed an empty tag list.
             type=ref,event=branch
-            type=ref,event=tag
-            type=sha,format=short
+            # Only on the default branch. The same commit is built twice when
+            # a branch is pushed and then merged, and since the version stamp
+            # went in those two images differ, so both writing sha-<short>
+            # would leave it pointing at whichever finished last.
+            type=sha,format=short,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=edge,enable={{is_default_branch}}
+            type=raw,value=${{ steps.detect.outputs.version }},enable=${{ steps.detect.outputs.is_release_merge == 'true' }}
+            type=raw,value=${{ steps.detect.outputs.major_minor }},enable=${{ steps.detect.outputs.is_release_merge == 'true' }}
+            type=raw,value=${{ steps.detect.outputs.major }},enable=${{ steps.detect.outputs.is_release_merge == 'true' }}
+            type=raw,value=latest,enable=${{ steps.detect.outputs.is_release_merge == 'true' }}
+
+      # Shown in the console's header and logged at startup. A release build
+      # says its version; anything else says which commit it came from — e.g.
+      # v0.5.0-3-ga569c66, three commits past 0.5.0 — so a bug report can be
+      # tied to a build without guessing.
+      - name: Work out the build stamp
+        id: stamp
+        run: |
+          set -euo pipefail
+          VER="${{ steps.detect.outputs.version }}"
+          if [ -z "$VER" ] && [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VER="${GITHUB_REF_NAME#v}"
+          fi
+          if [ -z "$VER" ]; then
+            VER="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+          fi
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "build stamp: ${VER}"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -52,5 +134,79 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            LIGHTHUE_VERSION=${{ steps.stamp.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # A release merge that published the version pins also gets stamped with
+      # vX.Y.Z, so the version is marked in git history and the Release below
+      # has a tag to hang off. The default GITHUB_TOKEN can push a tag but will
+      # not re-trigger this workflow, which is deliberate: the images for this
+      # version were built above.
+      - name: Auto-create vX.Y.Z git tag
+        if: steps.detect.outputs.is_release_merge == 'true'
+        env:
+          VERSION: ${{ steps.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${VERSION}" -m "Release v${VERSION}"
+          git push origin "v${VERSION}"
+
+  # Create or update the GitHub Release from the matching CHANGELOG section,
+  # for either path: a hand-pushed tag, or a release merge.
+  github-release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v') || needs.publish.outputs.is_release_merge == 'true'
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create / update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.publish.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            TAG="$GITHUB_REF_NAME"
+          else
+            VERSION="$RELEASE_VERSION"
+            TAG="v${VERSION}"
+          fi
+          REPO_LC="${GITHUB_REPOSITORY,,}"
+
+          SECTION="$(awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" {flag=1; next}
+            flag && /^## \[/ {exit}
+            flag {print}
+          ' CHANGELOG.md | sed "/./,\$!d")"
+
+          {
+            if [ -n "$SECTION" ]; then
+              printf '%s\n' "$SECTION"
+            else
+              echo "Release ${TAG}."
+            fi
+            echo ""
+            echo "### Docker image"
+            echo '```bash'
+            echo "docker pull ghcr.io/${REPO_LC}:${VERSION}"
+            echo '```'
+            echo "Also published as \`latest\`, \`${VERSION%.*}\`, and \`${VERSION%%.*}\`."
+            echo ""
+            echo "On Unraid, a container on \`latest\` picks this up with **Check for"
+            echo "Updates** on the Docker tab."
+          } > notes.md
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" --title "$TAG" --notes-file notes.md --target "${GITHUB_SHA}"
+          fi

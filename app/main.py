@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import logging
+import os
 import socket
 import time
 import uuid
@@ -2297,18 +2298,42 @@ def asset_version() -> str:
     return digest.hexdigest()[:8]
 
 
+def app_version() -> str:
+    """Which build this is, as the publish workflow baked it into the image.
+
+    A release says its version, an edge or branch build the commit it came
+    from, and anything built by hand "dev".
+    """
+    return os.environ.get("LIGHTHUE_VERSION", "").strip() or "dev"
+
+
+def display_version() -> str:
+    """The version as the header shows it.
+
+    "v0.6.0" for a release. "dev" alone would never change, which defeats the
+    badge's other job — telling you the page updated — so a hand-run build
+    carries the hash of its files too.
+    """
+    version = app_version()
+    if version == "dev":
+        return f"dev {asset_version()}"
+    if version[:1].isdigit():
+        return f"v{version}"
+    return version
+
+
 def render_index() -> str:
     html = INDEX_FILE.read_text()
-    version = asset_version()
+    assets = asset_version()
     for name in VERSIONED_ASSETS:
-        html = html.replace(f"/static/{name}", f"/static/{name}?v={version}")
-    return html.replace("__BUILD__", version)
+        html = html.replace(f"/static/{name}", f"/static/{name}?v={assets}")
+    return html.replace("__BUILD__", assets).replace("__VERSION__", display_version())
 
 
 @app.get("/api/version")
 async def get_version():
     """Which build is actually being served, for when the UI looks stale."""
-    return {"assets": asset_version()}
+    return {"version": app_version(), "assets": asset_version()}
 
 
 @app.get("/")

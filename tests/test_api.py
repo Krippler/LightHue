@@ -1102,10 +1102,28 @@ def test_the_index_itself_is_never_cached(client):
     assert "no-store" in cache
 
 
-def test_the_running_build_is_visible_and_reported(client, app_modules):
-    version = app_modules.asset_version()
-    assert client.get("/api/version").json() == {"assets": version}
-    assert f"build {version}" in client.get("/").text
+def test_the_running_build_is_visible_and_reported(client, app_modules, monkeypatch):
+    monkeypatch.delenv("LIGHTHUE_VERSION", raising=False)
+    assets = app_modules.asset_version()
+    assert client.get("/api/version").json() == {"version": "dev", "assets": assets}
+    # A hand-run build has no version to change, so the badge carries the
+    # files' hash: it still has to move when the page updates.
+    html = client.get("/").text
+    assert f">dev {assets}<" in html
+    assert "__VERSION__" not in html and "__BUILD__" not in html
+
+
+def test_a_release_build_says_its_version(client, app_modules, monkeypatch):
+    """Baked in by the publish workflow; what a bug report should quote."""
+    monkeypatch.setenv("LIGHTHUE_VERSION", "0.6.0")
+    assert client.get("/api/version").json()["version"] == "0.6.0"
+    assert ">v0.6.0<" in client.get("/").text
+
+
+def test_an_edge_build_says_which_commit_it_came_from(client, app_modules, monkeypatch):
+    # git describe's own form already reads as a version; it is not prefixed.
+    monkeypatch.setenv("LIGHTHUE_VERSION", "v0.5.0-3-ga569c66")
+    assert ">v0.5.0-3-ga569c66<" in client.get("/").text
 
 
 def test_the_version_changes_when_the_ui_does(client, app_modules, tmp_path, monkeypatch):

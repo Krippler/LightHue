@@ -35,8 +35,9 @@ to set beyond the config path.
 
 3. **Apply**, then open the WebUI from the Docker tab.
 
-Releases are tagged, so `ghcr.io/krippler/lighthue:v0.5.0` pins a version and
-`:latest` tracks the newest. [CHANGELOG.md](CHANGELOG.md) says what changed.
+The template installs `latest`, the newest release. Pick `edge` instead from
+the template's tag list to follow `main` between releases.
+[CHANGELOG.md](CHANGELOG.md) says what changed in each.
 
 If discovery or pairing fails, set *Network Type* to **Host** and try again —
 some Unraid setups don't let the default bridge network reach the Hue Bridge.
@@ -246,10 +247,10 @@ bar, and clicking a title bar folds one away. Both are remembered per browser;
 
 ## If the UI looks stale
 
-The badge beside the header's status light shows which build of the interface
-the page is running. If it doesn't change after an update, the container is
-still serving the old files — rebuild and pull rather than hunting for a UI
-bug.
+The badge beside the header's status light shows which version the page is
+running. If it doesn't change after an update, the container is still serving
+the old one — pull the update rather than hunting for a UI bug. The same version
+is the first line of the container's log.
 
 ## Development
 
@@ -262,8 +263,8 @@ ruff check .  # lint
 ```
 
 CI runs the suite on Python 3.11 and 3.12 plus a Docker build-and-boot check.
-The image is published to `ghcr.io/krippler/lighthue:latest` on every push to
-`main`; work branches publish under `ghcr.io/krippler/lighthue:<branch>`.
+Every push to `main` publishes `:edge`; a release publishes `:latest` and its
+version. [PUBLISHING.md](PUBLISHING.md) covers cutting one.
 
 - Add built-in patterns in `app/patterns.py`.
 - The `/api` routes are plain REST plus one `/ws` WebSocket, so scripting

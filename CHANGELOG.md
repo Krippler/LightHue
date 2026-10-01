@@ -1,10 +1,11 @@
 # Changelog
 
-Notable changes to LightHue. Versions are the image tags published to
-`ghcr.io/krippler/lighthue`, so `v0.5.0` here is `:v0.5.0` there. `:latest`
-always tracks the newest release.
+Notable changes to LightHue. The format follows Keep a Changelog, and the top
+section's heading is what the release workflow reads: `## [X.Y.Z] — DATE` on
+`main` publishes that version, `## [Unreleased]` publishes only `edge`. See
+[PUBLISHING.md](PUBLISHING.md).
 
-## Unreleased
+## [Unreleased]
 
 ### Added
 
@@ -21,7 +22,7 @@ always tracks the newest release.
 - A stream that stopped by itself didn't tell the console, which kept showing
   it as running until something else happened to refresh it.
 
-## 0.5.0 — 2026-09-05
+## [0.5.0] — 2026-09-05
 
 First tagged release, and the first packaged for Unraid Community
 Applications. Everything below arrived between the initial commit and this

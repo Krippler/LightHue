@@ -26,6 +26,13 @@ COPY scripts ./scripts
 RUN mkdir -p /data
 VOLUME ["/data"]
 
+# Which build this is: the release version, or for anything else the commit it
+# came from (v0.5.0-3-ga569c66 is three commits past 0.5.0). Set by the publish
+# workflow; "dev" for a build run by hand. Declared this late so a new version
+# does not throw away the cached pip layer above.
+ARG LIGHTHUE_VERSION=dev
+ENV LIGHTHUE_VERSION=${LIGHTHUE_VERSION}
+
 ENV CONFIG_PATH=/data/config.json
 # 26000 is Quake's own registered port — nothing else on a NAS tends to want it.
 ENV PORT=26000
@@ -45,5 +52,6 @@ u='http://127.0.0.1:%s/api/health' % os.environ.get('PORT','26000'); \
 sys.exit(0 if urllib.request.urlopen(u, timeout=4).status == 200 else 1)"
 
 # Shell form so PORT can be overridden, which is the only way to move the
-# listener when running with host networking (no port mapping to remap).
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-26000}"]
+# listener when running with host networking (no port mapping to remap). The
+# version goes first in the log, where a bug report's paste will include it.
+CMD ["sh", "-c", "echo \"LightHue ${LIGHTHUE_VERSION}\"; exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-26000}"]

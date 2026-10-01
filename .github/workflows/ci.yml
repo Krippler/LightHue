@@ -36,7 +36,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build image
-        run: docker build -t lighthue:ci .
+        # Stamped the way the publish workflow stamps it, so the check below
+        # proves the version makes it from build arg to the running app.
+        run: docker build --build-arg LIGHTHUE_VERSION=ci-stamp -t lighthue:ci .
 
       - name: Boot the container and hit it
         run: |
@@ -46,6 +48,11 @@ jobs:
               echo "console is up"
               curl -fsS http://127.0.0.1:26000/api/auth
               echo
+              # The version, in the API and first in the log.
+              curl -fsS http://127.0.0.1:26000/api/version | grep -q '"version":"ci-stamp"' \
+                || { echo "the build stamp did not reach the app"; docker logs ci-console; docker rm -f ci-console; exit 1; }
+              docker logs ci-console 2>&1 | head -n 1 | grep -qx 'LightHue ci-stamp' \
+                || { echo "the log does not open with the version"; docker logs ci-console; docker rm -f ci-console; exit 1; }
               # The health endpoint and the HEALTHCHECK that drives it: this is
               # the only place either runs in a real container.
               curl -fsS http://127.0.0.1:26000/api/health

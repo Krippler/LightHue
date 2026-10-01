@@ -1,11 +1,16 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>LightHue</Name>
-  <Repository>ghcr.io/krippler/lighthue:latest</Repository>
+  <Repository>ghcr.io/krippler/lighthue</Repository>
   <Registry>https://github.com/Krippler/LightHue/pkgs/container/lighthue</Registry>
+  <!-- Untagged above so Unraid can append whichever of these is chosen. -->
   <Branch>
     <Tag>latest</Tag>
-    <TagDescription>Latest build from main</TagDescription>
+    <TagDescription>The newest release</TagDescription>
+  </Branch>
+  <Branch>
+    <Tag>edge</Tag>
+    <TagDescription>Tracks main between releases; may break</TagDescription>
   </Branch>
   <Network>bridge</Network>
   <Shell>sh</Shell>
