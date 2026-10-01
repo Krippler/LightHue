@@ -648,3 +648,133 @@ async def test_a_held_light_reports_no_frame_rate():
     assert entry["holding"] is True
     assert "effective_hz" not in entry
     await engine.stop_all(restore=False)
+
+
+# ---------- Random ----------
+
+def _shuffle(interval_s=2.0, seed=42):
+    from app.patterns import BUILTIN_PATTERNS, random_pool
+    return {"pool": random_pool(BUILTIN_PATTERNS), "interval_s": interval_s, "seed": seed}
+
+
+async def _start_random(engine, lid, *, epoch, shuffle=None, **framing):
+    shuffle = shuffle or _shuffle()
+    look = {"min_bri": 1, "max_bri": 254, "hue": None, "sat": None, "transition_ms": 0}
+    look.update(framing)
+    await engine.start(lid, shuffle["pool"][0]["sequence"], "random", 10.0,
+                       look["min_bri"], look["max_bri"], look["hue"], look["sat"],
+                       look["transition_ms"], epoch=epoch, random=shuffle)
+
+
+@pytest.mark.asyncio
+async def test_random_lights_started_together_move_together():
+    """Shared seed and epoch: the same pick at the same moment, unprompted."""
+    announced = []
+    engine = FlickerEngine(get_client=lambda: FakeClient(),
+                           on_change=lambda: announced.append(1))
+    shuffle = _shuffle()
+    epoch = time.monotonic() - 1.7       # a boundary is 0.3s away
+    for lid in ("1", "2"):
+        await _start_random(engine, lid, epoch=epoch, shuffle=shuffle)
+    try:
+        before = engine.status()["1"]["random_current"]
+        assert before and engine.status()["2"]["random_current"] == before
+        heard = len(announced)
+        await asyncio.sleep(0.6)
+        after = engine.status()
+        assert after["1"]["random_current"] != before, "the pick never moved on"
+        assert after["1"]["random_current"] == after["2"]["random_current"]
+        assert len(announced) > heard, "a new pick has to be pushed to the console"
+    finally:
+        await engine.stop_all(restore=False)
+
+
+@pytest.mark.asyncio
+async def test_random_keeps_your_look_and_takes_each_patterns_speed():
+    engine = FlickerEngine(get_client=lambda: FakeClient())
+    await _start_random(engine, "1", epoch=time.monotonic(),
+                        min_bri=40, max_bri=220, hue=6000, sat=200, transition_ms=100)
+    try:
+        st = engine.status()["1"]
+        assert (st["min_bri"], st["max_bri"], st["hue"], st["sat"], st["transition_ms"]) \
+            == (40, 220, 6000, 200, 100)
+        pick = next(p for p in _shuffle()["pool"] if p["id"] == st["random_current"]["id"])
+        assert st["hz"] == pick["hz"] and st["sequence"] == pick["sequence"]
+        # A slider value sent alongside is ignored: the pick owns the speed.
+        engine.update("1", hz=3.0)
+        assert engine.status()["1"]["hz"] == pick["hz"]
+    finally:
+        await engine.stop_all(restore=False)
+
+
+@pytest.mark.asyncio
+async def test_resending_random_does_not_reshuffle():
+    """The console resends the pattern with every slider move.
+
+    A fresh shuffle each time would jump the light to a new pattern whenever
+    its brightness was nudged.
+    """
+    engine = FlickerEngine(get_client=lambda: FakeClient())
+    await _start_random(engine, "1", epoch=time.monotonic())
+    try:
+        before = engine.status()["1"]["random_current"]
+        engine.update("1", pattern_id="random", random=_shuffle(seed=999), max_bri=120)
+        st = engine.status()["1"]
+        assert st["random_current"] == before and st["max_bri"] == 120
+    finally:
+        await engine.stop_all(restore=False)
+
+
+@pytest.mark.asyncio
+async def test_a_light_can_leave_random_and_come_back():
+    engine = FlickerEngine(get_client=lambda: FakeClient())
+    await _start_random(engine, "1", epoch=time.monotonic())
+    try:
+        engine.update("1", random=None, pattern_id="candle_a", sequence="mmmaaa", hz=7.0)
+        st = engine.status()["1"]
+        assert (st["pattern_id"], st["sequence"], st["hz"]) == ("candle_a", "mmmaaa", 7.0)
+        assert st["random_current"] is None and st["random_interval_s"] is None
+        engine.update("1", random=_shuffle(interval_s=5.0), pattern_id="random")
+        st = engine.status()["1"]
+        assert st["random_current"] and st["random_interval_s"] == 5.0
+    finally:
+        await engine.stop_all(restore=False)
+
+
+@pytest.mark.asyncio
+async def test_switching_to_random_from_a_steady_pattern_starts_it_moving():
+    """A held light only polls its settings; it sends nothing between changes.
+
+    Switched to Random it has to start flickering, not sit holding the steady
+    pattern's one level. Two things see to that — update() picks at once, and
+    the loop checks for a pick on every pass, hold or not — and this fails only
+    if both are lost.
+    """
+    fake = FakeClient()
+    engine = FlickerEngine(get_client=lambda: fake)
+    await engine.start("1", "m", "steady", 10.0, 1, 254, None, None, 0)
+    try:
+        await asyncio.sleep(0.3)
+        assert engine.status()["1"]["holding"] is True
+        engine.update("1", random=_shuffle(), pattern_id="random")
+        await asyncio.sleep(0.4)
+        st = engine.status()["1"]
+        assert st["holding"] is False and st["random_current"]
+        sent = len(fake.calls)
+        await asyncio.sleep(0.4)
+        assert len(fake.calls) > sent, "it should be flickering, not holding"
+    finally:
+        await engine.stop_all(restore=False)
+
+
+@pytest.mark.asyncio
+async def test_status_reports_what_is_playing_but_not_the_whole_pool():
+    """The pool is every pattern in the console, pushed on every status."""
+    engine = FlickerEngine(get_client=lambda: FakeClient())
+    await _start_random(engine, "1", epoch=time.monotonic())
+    try:
+        st = engine.status()["1"]
+        assert "random" not in st and "random_slot" not in st
+        assert st["random_interval_s"] == 2.0 and st["random_current"]["name"]
+    finally:
+        await engine.stop_all(restore=False)

@@ -481,3 +481,107 @@ async def test_two_channels_send_different_values_in_the_same_frame():
     lit = rgb_for(framing_for_channel(state, 1), now)    # 'z' -> full
     assert dark != lit, "both channels resolved to the same colour"
     assert max(lit) > max(dark)
+
+
+# ---------- Random ----------
+
+def _random_engine(monkeypatch, *, pattern_id="random", per_channel=None, on_change=None,
+                   min_bri=30, max_bri=200, hue=6000, sat=200):
+    import app.stream_engine as stream_engine
+    from app.patterns import BUILTIN_PATTERNS, random_pool
+
+    class Fake:
+        transport = "minimal"
+        def connect(self, **kw): pass
+        def send(self, _frame): pass
+        def close(self): pass
+
+    monkeypatch.setattr(stream_engine, "DtlsStream", lambda *a, **kw: Fake())
+    engine = stream_engine.StreamEngine(on_change=on_change)
+    pool = random_pool(BUILTIN_PATTERNS)
+    engine.start("10.0.0.7", "user", "00" * 16, "6", ["1", "2"], "mamama", pattern_id,
+                 10, min_bri, max_bri, hue, sat, area_uuid="uuid-6", channels=[0, 1, 2],
+                 per_channel=per_channel or {}, random_pool=pool,
+                 random_interval_s=2.0, random_seed=42)
+    return engine, pool
+
+
+def test_an_area_on_random_reports_its_pick_but_not_its_pool(monkeypatch):
+    engine, pool = _random_engine(monkeypatch)
+    try:
+        settings = engine.status()["settings"]
+        pick = next(p for p in pool if p["id"] == settings["random_current"]["id"])
+        assert settings["sequence"] == pick["sequence"] and settings["hz"] == pick["hz"]
+        assert engine.status()["effective_hz"] == pick["hz"]
+        # Every pattern in the console, on every status push, for nothing.
+        for private in ("random_pool", "random_seed", "random_slot"):
+            assert private not in settings
+        assert settings["random_interval_s"] == 2.0
+    finally:
+        engine.stop()
+
+
+def test_a_channel_on_random_shuffles_on_its_own_under_the_areas_look(monkeypatch):
+    """Random has no framing to bring, so the channel keeps the area's."""
+    from app.stream_engine import channel_seed, framing_for_channel
+
+    engine, _ = _random_engine(monkeypatch, pattern_id="candle_a",
+                               per_channel={1: {"pattern_id": "random"}})
+    try:
+        with engine._lock:
+            state = dict(engine._state)
+        mine = framing_for_channel(state, 1, state["epoch"] + 0.5)
+        assert mine["sequence"] != state["sequence"] or mine["hz"] != state["hz"]
+        assert (mine["min_bri"], mine["max_bri"], mine["hue"]) == (30, 200, 6000)
+        # Every channel its own deck, none of them the area's.
+        assert len({channel_seed(42, c) for c in range(10)} | {42}) == 11
+    finally:
+        engine.stop()
+
+
+def test_the_sender_thread_announces_each_new_pick(monkeypatch):
+    """The console only learns what Random is playing by being told."""
+    import threading
+
+    heard = []
+    engine, _ = _random_engine(
+        monkeypatch, on_change=lambda: heard.append(threading.current_thread().name))
+    try:
+        with engine._lock:
+            engine._state["epoch"] = time.monotonic() - 1.7   # boundary in 0.3s
+            engine._state["random_slot"] = None
+        before = engine.status()["settings"]["random_current"]
+        time.sleep(0.6)
+        assert engine.status()["settings"]["random_current"] != before
+        assert "hue-stream" in heard, "the pick changed without anyone being told"
+    finally:
+        engine.stop()
+
+
+def test_resending_random_mid_stream_does_not_reshuffle(monkeypatch):
+    heard = []
+    engine, _ = _random_engine(monkeypatch, on_change=lambda: heard.append(1))
+    try:
+        before = engine.status()["settings"]["random_current"]
+        quiet = len(heard)
+        engine.update(pattern_id="random", min_bri=40, hz=3.0)
+        settings = engine.status()["settings"]
+        assert settings["random_current"] == before
+        assert settings["min_bri"] == 40
+        assert settings["hz"] != 3.0, "on Random the pick owns the speed"
+        assert len(heard) == quiet, "nothing changed worth pushing"
+    finally:
+        engine.stop()
+
+
+def test_an_area_can_leave_random_and_come_back(monkeypatch):
+    engine, _ = _random_engine(monkeypatch)
+    try:
+        engine.update(pattern_id="candle_a", sequence="mmmaaa", hz=7.0)
+        settings = engine.status()["settings"]
+        assert (settings["sequence"], settings["hz"]) == ("mmmaaa", 7.0)
+        assert settings["random_current"] is None
+        engine.update(pattern_id="random")
+        assert engine.status()["settings"]["random_current"]
+    finally:
+        engine.stop()

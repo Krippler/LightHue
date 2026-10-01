@@ -311,3 +311,59 @@ def test_the_state_badge_is_hidden_while_idle():
     assert toggle > body.rindex("state.className ="), (
         "the hidden toggle runs before a className assignment that wipes it"
     )
+
+
+# ---------- Random ----------
+
+def function_body(name: str) -> str:
+    start = APP_JS.index(f"function {name}(")
+    depth, i = 0, APP_JS.index("{", start)
+    while True:
+        depth += {"{": 1, "}": -1}.get(APP_JS[i], 0)
+        if depth == 0:
+            return APP_JS[start:i + 1]
+        i += 1
+
+
+def test_random_heads_every_pattern_menu():
+    """Built into the one function every picker is filled from — the cards, the
+    stream panel and the per-light rows — and before the games, which it
+    belongs to none of."""
+    body = function_body("fillPatternSelect")
+    assert "RANDOM_ID" in body
+    assert body.index("RANDOM_ID") < body.index("addGroup(game"), "Random should lead the menu"
+
+
+def test_random_sends_an_interval_instead_of_a_speed():
+    """On Random each pattern brings its own speed; a slider value sent with it
+    would only be thrown away, and the interval is what the user chose."""
+    for name in ("cardSettings", "streamSettings"):
+        body = function_body(name)
+        assert "random_interval_s" in body, name
+        assert "delete settings.hz" in body, name
+
+
+def test_the_interval_sliders_stay_inside_what_the_server_accepts():
+    from app.patterns import MAX_RANDOM_INTERVAL_S, MIN_RANDOM_INTERVAL_S
+
+    sliders = re.findall(r'<input[^>]*(?:class="interval-input"|id="stream-interval")[^>]*>',
+                         INDEX)
+    assert len(sliders) == 2, sliders
+    for tag in sliders:
+        low = float(re.search(r'min="([\d.]+)"', tag).group(1))
+        high = float(re.search(r'max="([\d.]+)"', tag).group(1))
+        assert MIN_RANDOM_INTERVAL_S <= low and high <= MAX_RANDOM_INTERVAL_S, tag
+
+
+def test_a_random_card_never_offers_to_hold():
+    """Random's placeholder sequence is one letter, which reads as steady."""
+    body = function_body("labelStartButton")
+    assert "isRandom(" in body
+
+
+def test_one_light_on_random_brings_the_interval_out_too():
+    """The area may run a named pattern while one light shuffles; that light
+    still changes on the interval, so the slider has to be reachable."""
+    assert "anyChannelRandom()" in function_body("syncStreamRandomControls")
+    handler = APP_JS[APP_JS.index("channelChoice[channel.channel_id] = select.value"):]
+    assert handler.index("syncStreamRandomControls()") < handler.index("});")

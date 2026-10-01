@@ -241,6 +241,15 @@ function selectPattern(select, patternId) {
 // and by the entertainment panel, which needs exactly the same list.
 function fillPatternSelect(select) {
   select.innerHTML = '';
+  // Above the games rather than filed under one: it belongs to none of them,
+  // and it is the one choice that is about all of them.
+  const shuffle = document.createElement('option');
+  shuffle.value = RANDOM_ID;
+  shuffle.textContent = randomInfo().name;
+  shuffle.title = 'Every pattern that moves, custom ones included, in a fresh order '
+    + 'each time round. Each runs at the speed it was written for; brightness, '
+    + 'transition and colour are yours, for all of them.';
+  select.appendChild(shuffle);
   // Which optgroups name a game, and so should re-prefix their options.
   // "Custom" and "Other" don't: their entries already read the way they should.
   const gameGroups = new Set(PATTERNS.games || []);
@@ -282,11 +291,67 @@ function sequenceFor(patternId) {
   return p ? p.sequence : 'm';
 }
 
+// ---------- Random ----------
+//
+// Not a pattern with letters of its own: the server shuffles through every
+// pattern that moves, each at its own speed, under the one brightness and
+// colour you set. So the menus offer it, but there is no sequence to draw
+// until it is running and the server says which pattern it is on.
+
+const RANDOM_ID = 'random';
+
+function isRandom(patternId) {
+  return patternId === RANDOM_ID;
+}
+
+function randomInfo() {
+  return (PATTERNS && PATTERNS.random)
+    || { id: RANDOM_ID, name: 'Random — all patterns', interval_s: 10 };
+}
+
+// Mirrors random_pool() on the server: steady patterns are left out, since a
+// light held on reads as the shuffle having stalled.
+function randomPoolSize() {
+  return allPatternOptions().filter(p => !isSteadySequence(p.sequence)).length;
+}
+
+// Stands in for the waveform until there is a pattern to draw.
+function drawRandomNote(key, container = null) {
+  const waveform = container || (cardEls[key] && cardEls[key].querySelector('.waveform'));
+  if (!waveform) return;
+  const size = randomPoolSize();
+  // A real sequence is only ever letters, so this can never collide with one
+  // in drawWaveform's "already drawn" check.
+  const marker = `${RANDOM_ID}:${size}`;
+  if (waveform.dataset.sequence === marker) return;
+  waveform.dataset.sequence = marker;
+  waveform.innerHTML = '';
+  const note = document.createElement('span');
+  note.className = 'waveform-note';
+  note.textContent = `shuffles ${size} patterns`;
+  waveform.appendChild(note);
+  delete lastFrame[key];
+}
+
+function showNowPlaying(el, settings) {
+  const current = settings && settings.random_current;
+  el.classList.toggle('hidden', !current);
+  if (current) el.textContent = `now playing: ${current.name}`;
+}
+
+// Speed and interval share a slot: on Random each pattern brings its own
+// speed, so how long each one runs is the number left to choose.
+function showRandomControls(card, on) {
+  card.querySelector('.speed-field').classList.toggle('hidden', on);
+  card.querySelector('.interval-field').classList.toggle('hidden', !on);
+}
+
 // Named for what pressing it will actually do, which the chosen pattern
 // already decides. Called from the dropdown too: picking a steady pattern
 // while nothing is running gets no status push to relabel it.
 function labelStartButton(card, partial = false) {
-  const steady = isSteadySequence(sequenceFor(card.querySelector('.pattern-select').value));
+  const chosen = card.querySelector('.pattern-select').value;
+  const steady = !isRandom(chosen) && isSteadySequence(sequenceFor(chosen));
   card.querySelector('.btn-start').textContent = partial
     ? 'Start the rest'
     : (steady ? 'Hold this colour' : 'Start flicker');
@@ -411,6 +476,10 @@ function buildCard(entity) {
 
   const hzInput = node.querySelector('.hz-input');
   const hzValue = node.querySelector('.hz-value');
+  const intervalInput = node.querySelector('.interval-input');
+  const intervalValue = node.querySelector('.interval-value');
+  intervalInput.value = randomInfo().interval_s;
+  intervalValue.textContent = intervalInput.value;
   const transInput = node.querySelector('.trans-input');
   const transValue = node.querySelector('.trans-value');
   const minBriInput = node.querySelector('.minbri-input');
@@ -449,6 +518,10 @@ function buildCard(entity) {
     transValue.textContent = transInput.value;
     pushLive(entity);
   });
+  intervalInput.addEventListener('input', () => {
+    intervalValue.textContent = intervalInput.value;
+    pushLive(entity);
+  });
   minBriInput.addEventListener('input', () => {
     minBriValue.textContent = minBriInput.value;
     if (Number(maxBriInput.value) < Number(minBriInput.value)) {
@@ -484,10 +557,15 @@ function buildCard(entity) {
     } else {
       colorEnable.checked = false;
     }
+    showRandomControls(card, isRandom(select.value));
+  };
+  const drawChosen = () => {
+    if (isRandom(select.value)) drawRandomNote(entity.key);
+    else drawWaveform(entity.key, sequenceFor(select.value));
   };
   select.addEventListener('change', () => {
     applyPatternFraming();
-    drawWaveform(entity.key, sequenceFor(select.value));
+    drawChosen();
     labelStartButton(card);
     pushLive(entity);
   });
@@ -544,7 +622,7 @@ function buildCard(entity) {
   applyCapabilities(node, entity.light);
   cardEls[entity.key] = card;
   cardEntities[entity.key] = entity;
-  drawWaveform(entity.key, sequenceFor(select.value));
+  drawChosen();
   return node;
 }
 
@@ -588,7 +666,7 @@ function cardSettings(card) {
   if (colorEnable.checked) {
     ({ hue, sat } = cardColor(card));
   }
-  return {
+  const settings = {
     pattern_id: card.querySelector('.pattern-select').value,
     hz: Number(card.querySelector('.hz-input').value),
     min_bri: Number(card.querySelector('.minbri-input').value),
@@ -596,6 +674,13 @@ function cardSettings(card) {
     hue, sat,
     transition_ms: Number(card.querySelector('.trans-input').value),
   };
+  if (isRandom(settings.pattern_id)) {
+    // Each pattern in the shuffle runs at its own speed; a slider value sent
+    // alongside would only be ignored.
+    delete settings.hz;
+    settings.random_interval_s = Number(card.querySelector('.interval-input').value);
+  }
+  return settings;
 }
 
 // ---------- Live retuning ----------
@@ -1253,6 +1338,15 @@ function applyStatus() {
     // whatever the last tick left it at.
     card.querySelector('.btn-revert').classList.toggle('hidden', active || !hasSnapshot(entity));
 
+    // Outside syncControls on purpose: that waits out a slider being dragged,
+    // and what Random is playing is not something the user is editing.
+    showNowPlaying(card.querySelector('.now-playing'), active && settings);
+    if (active && settings && isRandom(settings.pattern_id)) {
+      drawWaveform(key, settings.sequence);
+    } else if (!active && isRandom(card.querySelector('.pattern-select').value)) {
+      drawRandomNote(key);
+    }
+
     const rateNote = card.querySelector('.rate-note');
     if (active && settings) {
       if (!recentlyTouched(key)) syncControls(card, key, settings);
@@ -1286,6 +1380,8 @@ function syncControls(card, key, st) {
   set('.minbri-input', '.minbri-value', st.min_bri);
   set('.maxbri-input', '.maxbri-value', st.max_bri);
   set('.trans-input', '.trans-value', st.transition_ms);
+  if (st.random_interval_s) set('.interval-input', '.interval-value', st.random_interval_s);
+  showRandomControls(card, isRandom(st.pattern_id));
 
   const colorEnable = card.querySelector('.color-enable');
   if (st.hue !== null && st.hue !== undefined && st.sat !== null && st.sat !== undefined) {
@@ -1688,6 +1784,8 @@ const streamTrans = $('#stream-trans');
 const streamColorEnable = $('#stream-color-enable');
 const streamColor = $('#stream-color');
 const streamColorCode = $('#stream-color-code');
+const streamInterval = $('#stream-interval');
+const streamNowPlaying = $('#stream-now-playing');
 
 function setStreamStatus(text, kind = '') {
   const el = $('#stream-status');
@@ -1701,14 +1799,31 @@ function streamSettings() {
   // time — so unticking really can go back to no colour, and null is sent
   // deliberately rather than being left out.
   const colour = streamColorEnable.checked ? exactColor(streamColor, streamColor) : null;
-  return {
+  const settings = {
     hz: Number(streamHz.value),
     min_bri: Number(streamMinBri.value),
     max_bri: Number(streamMaxBri.value),
     transition_ms: Number(streamTrans.value),
     hue: colour && colour.hue,
     sat: colour && colour.sat,
+    // Sent whatever the area runs: any one light can be on Random by itself.
+    random_interval_s: Number(streamInterval.value),
   };
+  if (isRandom(streamPattern.value)) delete settings.hz;
+  return settings;
+}
+
+function anyChannelRandom() {
+  return $('#per-light-enable').checked
+    && CHANNELS.some(c => isRandom(channelChoice[c.channel_id]));
+}
+
+// The interval is shown whenever anything in the area is shuffling, the area
+// itself or one light in it; Speed only goes when the area is.
+function syncStreamRandomControls() {
+  const areaRandom = isRandom(streamPattern.value);
+  $('#stream-hz-field').classList.toggle('hidden', areaRandom);
+  $('#stream-interval-field').classList.toggle('hidden', !(areaRandom || anyChannelRandom()));
 }
 
 // ---------- Per-light patterns within one stream ----------
@@ -1764,6 +1879,7 @@ function renderChannelRows() {
     select.value = channelChoice[channel.channel_id] || '';
     select.addEventListener('change', () => {
       channelChoice[channel.channel_id] = select.value;
+      syncStreamRandomControls();
       pushStreamLive();
     });
 
@@ -1784,6 +1900,7 @@ function channelOverrides() {
 
 $('#per-light-enable').addEventListener('change', () => {
   $('#per-light-rows').classList.toggle('hidden', !$('#per-light-enable').checked);
+  syncStreamRandomControls();
   pushStreamLive();
 });
 
@@ -1975,7 +2092,16 @@ function renderPickedArea() {
 }
 
 function drawStreamWaveform() {
-  drawWaveform('stream', sequenceFor(streamPattern.value), $('#stream-waveform'));
+  const box = $('#stream-waveform');
+  if (isRandom(streamPattern.value)) {
+    // Running, the server says which pattern the area is on; before that
+    // there is no single sequence to draw.
+    const s = STREAM.running && STREAM.settings;
+    if (s && isRandom(s.pattern_id) && s.sequence) drawWaveform('stream', s.sequence, box);
+    else drawRandomNote('stream', box);
+    return;
+  }
+  drawWaveform('stream', sequenceFor(streamPattern.value), box);
 }
 
 function applyStreamFraming() {
@@ -1994,6 +2120,7 @@ function applyStreamFraming() {
   } else {
     streamColorEnable.checked = false;
   }
+  syncStreamRandomControls();
   drawStreamWaveform();
 }
 
@@ -2017,7 +2144,8 @@ function pushStreamLive() {
 
 [[streamHz, '#stream-hz-value'], [streamMinBri, '#stream-minbri-value'],
  [streamMaxBri, '#stream-maxbri-value'],
- [streamTrans, '#stream-trans-value']].forEach(([input, label]) => {
+ [streamTrans, '#stream-trans-value'],
+ [streamInterval, '#stream-interval-value']].forEach(([input, label]) => {
   input.addEventListener('input', () => {
     $(label).textContent = input.value;
     if (input === streamMinBri && Number(streamMaxBri.value) < Number(input.value)) {
@@ -2129,6 +2257,10 @@ function applyStreamStatus() {
   // place, because the rate and the light count are on no button.
   state.classList.toggle('hidden', !running);
   if (STREAM.error) setStreamStatus(STREAM.error, 'err');
+  showNowPlaying(streamNowPlaying, running && STREAM.settings);
+  // Each pick arrives as a status push; the other patterns were drawn when
+  // they were chosen and do not change while they run.
+  if (isRandom(streamPattern.value)) drawStreamWaveform();
 }
 
 // ---------- Panel order ----------

@@ -4,7 +4,7 @@ import time
 from collections.abc import Callable
 
 from .hue_client import HueClient
-from .patterns import is_steady, level_for_char
+from .patterns import is_steady, level_for_char, random_pick
 
 logger = logging.getLogger("flicker_engine")
 
@@ -16,6 +16,43 @@ GIVE_UP_AFTER_FAILURES = 40
 # Settings a running loop will pick up without being restarted.
 LIVE_FIELDS = ("sequence", "pattern_id", "hz", "min_bri", "max_bri",
                "hue", "sat", "transition_ms")
+
+
+def resolve_random(state: dict, now: float | None = None) -> bool:
+    """Put a random run on whichever pattern is due, if that has changed.
+
+    Writes the pick's sequence and speed into the state the loop already
+    reads, so nothing downstream — the frame maths, the hold check, the status
+    push, the playhead in the browser — needs to know a shuffle is happening.
+    Returns True when the pattern actually changed.
+    """
+    config = state.get("random")
+    if not config:
+        return False
+    now = time.monotonic() if now is None else now
+    pick, slot = random_pick(config["pool"], config["interval_s"], config["seed"],
+                             now - state["epoch"])
+    if slot == state.get("random_slot"):
+        return False
+    state["random_slot"] = slot
+    state["sequence"] = pick["sequence"]
+    state["hz"] = pick["hz"]
+    state["random_current"] = {"id": pick["id"], "name": pick["name"]}
+    return True
+
+
+def public_state(state: dict) -> dict:
+    """A state as it is reported, without the pool a random run draws from.
+
+    The pool is every pattern in the console. Sent with each light on every
+    status push it would be most of the message, and the browser only needs to
+    know what is playing now and how long each pattern runs.
+    """
+    entry = dict(state)
+    config = entry.pop("random", None)
+    entry.pop("random_slot", None)
+    entry["random_interval_s"] = config["interval_s"] if config else None
+    return entry
 
 
 def restorable(state: dict) -> dict:
@@ -234,7 +271,7 @@ class FlickerEngine:
         share = self._share()
         out = {}
         for lid, st in self._states.items():
-            entry = dict(st)
+            entry = public_state(st)
             if st.get("running") and not st.get("holding"):
                 entry["effective_hz"] = round(min(st["hz"], share), 2)
             out[lid] = entry
@@ -251,7 +288,8 @@ class FlickerEngine:
 
     async def start(self, light_id: str, sequence: str, pattern_id: str, hz: float,
                     min_bri: int, max_bri: int, hue: int | None, sat: int | None,
-                    transition_ms: int, epoch: float | None = None):
+                    transition_ms: int, epoch: float | None = None,
+                    random: dict | None = None):
         # Clearing any previous loop must not restore: we are about to flicker
         # this bulb again, and the snapshot has to survive until it really stops.
         await self.stop(light_id, notify=False, restore=False)
@@ -274,10 +312,18 @@ class FlickerEngine:
             # the same moment however unevenly the rate limiter serves them.
             "epoch": time.monotonic() if epoch is None else epoch,
             "running": True,
-            # Set by the loop on its first pass: whether this sequence animates
-            # at all, or just holds one level.
-            "holding": is_steady(sequence),
+            # {"pool", "interval_s", "seed"} while shuffling through every
+            # pattern, else None. Lights started together are handed the same
+            # one, and with the shared epoch that keeps them on the same pick.
+            "random": dict(random) if random else None,
+            "random_slot": None,
+            "random_current": None,
         }
+        # Resolved before the first status push, so a random run never reports
+        # the placeholder sequence it was started with.
+        resolve_random(self._states[light_id])
+        # Whether this sequence animates at all, or just holds one level.
+        self._states[light_id]["holding"] = is_steady(self._states[light_id]["sequence"])
         self._tasks[light_id] = asyncio.create_task(self._run_light(light_id, client))
         # Never shrink while starting: a caller bringing several lights up at
         # once sizes the bucket for the whole batch first, and the first
@@ -290,9 +336,34 @@ class FlickerEngine:
         state = self._states.get(light_id)
         if state is None or not state.get("running"):
             return False
+        # None is a real answer here — "stop shuffling" — so it is decided by
+        # whether it was mentioned, not by whether it is empty.
+        if "random" in changes:
+            if not changes["random"]:
+                state["random"] = None
+                state["random_slot"] = state["random_current"] = None
+            elif not state.get("random"):
+                state["random"] = dict(changes["random"])
+                state["random_slot"] = None
+            # Already shuffling: keep the deck it is partway through. The
+            # console resends the pattern with every slider move, and a fresh
+            # shuffle each time would jump the light to a new pattern whenever
+            # its brightness was nudged.
+        interval = changes.get("random_interval_s")
+        if (interval is not None and state.get("random")
+                and float(interval) != state["random"]["interval_s"]):
+            state["random"] = {**state["random"], "interval_s": float(interval)}
+            state["random_slot"] = None
         for key, value in changes.items():
-            if value is not None and key in LIVE_FIELDS:
-                state[key] = value
+            if value is None or key not in LIVE_FIELDS:
+                continue
+            # A random run's speed is whichever pattern it is on: each one
+            # brings the rate it was written for. A slider value sent alongside
+            # would play the next pattern at the last one's speed.
+            if state.get("random") and key in ("hz", "sequence"):
+                continue
+            state[key] = value
+        resolve_random(state)
         return True
 
     async def stop(self, light_id: str, notify: bool = True, restore: bool = True):
@@ -365,6 +436,13 @@ class FlickerEngine:
 
         try:
             while True:
+                # First, because every pass comes back round to here — the
+                # hold branch and the animated one alike — so a new pick is
+                # noticed within a frame whatever the light was doing. A light
+                # switched to Random from a held pattern does not depend on it:
+                # update() makes the first pick there and then.
+                if resolve_random(state):
+                    self._on_change()
                 # A sequence that never changes level is a light left on, not a
                 # flicker with no variation in it. Sending the same brightness
                 # ten times a second would spend the bridge budget the animated

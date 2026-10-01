@@ -2174,3 +2174,155 @@ def test_a_pattern_running_on_a_light_cannot_be_edited_under_it(client, bridge):
     assert r.status_code == 409
     assert "stop them first" in r.json()["detail"]
     assert client.get("/api/patterns").json()["custom"][0]["sequence"] == "mmnnaamm"
+
+
+# ---------- Random ----------
+
+def test_the_pattern_list_offers_random_with_its_bounds(client):
+    body = client.get("/api/patterns").json()
+    shuffle = body["random"]
+    assert shuffle["id"] == "random" and shuffle["name"]
+    assert shuffle["min_interval_s"] <= shuffle["interval_s"] <= shuffle["max_interval_s"]
+    # Not a preset: it must not turn up as one, in a game's menu or the count.
+    assert all(p["id"] != "random" for p in body["builtin"])
+
+
+def test_a_light_can_be_started_on_random_with_one_look(client, bridge):
+    configure(client)
+    r = client.post("/api/flicker/start", json={
+        "light_ids": ["1"], "pattern_id": "random", "hz": 3,
+        "min_bri": 40, "max_bri": 220, "hue": 6000, "sat": 200,
+        "random_interval_s": 15,
+    })
+    assert r.status_code == 200, r.text
+    st = r.json()["lights"]["1"]
+    assert st["pattern_id"] == "random" and st["random_current"]["name"]
+    assert (st["min_bri"], st["max_bri"], st["hue"], st["sat"]) == (40, 220, 6000, 200)
+    assert st["random_interval_s"] == 15
+    assert st["hz"] != 3, "each pattern in the shuffle brings its own speed"
+    assert "random" not in st, "the pool stays on the server"
+
+
+def test_random_defaults_to_the_standard_look_and_interval(client, bridge):
+    configure(client)
+    st = client.post("/api/flicker/start", json={
+        "light_ids": ["1"], "pattern_id": "random"}).json()["lights"]["1"]
+    assert (st["min_bri"], st["max_bri"], st["transition_ms"]) == (1, 254, 0)
+    assert st["hue"] is None and st["random_interval_s"] == 10.0
+
+
+def test_random_lights_started_together_share_a_pick(client, bridge):
+    configure(client)
+    lights = client.post("/api/flicker/start", json={
+        "light_ids": ["1", "3", "4"], "pattern_id": "random"}).json()["lights"]
+    assert len({lights[lid]["random_current"]["id"] for lid in ("1", "3", "4")}) == 1
+
+
+def test_the_random_interval_is_bounded(client, bridge):
+    configure(client)
+    for interval in (1, 301):
+        r = client.post("/api/flicker/start", json={
+            "light_ids": ["1"], "pattern_id": "random", "random_interval_s": interval})
+        assert r.status_code == 422, interval
+
+
+def test_a_running_light_can_switch_to_random_and_back(client, bridge):
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "candle_a"})
+
+    r = client.post("/api/flicker/update", json={
+        "light_ids": ["1"], "pattern_id": "random", "random_interval_s": 20})
+    st = r.json()["lights"]["1"]
+    assert st["pattern_id"] == "random" and st["random_current"]
+    assert st["random_interval_s"] == 20
+
+    # What the console sends on every slider move: the pattern again.
+    again = client.post("/api/flicker/update", json={
+        "light_ids": ["1"], "pattern_id": "random", "max_bri": 150}).json()["lights"]["1"]
+    assert again["random_current"] == st["random_current"], "a slider move reshuffled"
+    assert again["random_interval_s"] == 20, "re-picking Random reset the interval"
+
+    back = client.post("/api/flicker/update", json={
+        "light_ids": ["1"], "pattern_id": "hard_strobe"}).json()["lights"]["1"]
+    assert back["pattern_id"] == "hard_strobe" and back["random_current"] is None
+    assert back["sequence"] == "aaaaaaaazzzzzzzz"
+
+
+def test_an_area_can_stream_random_and_so_can_one_light_in_it(client, bridge,
+                                                              app_modules, monkeypatch):
+    started = {}
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    monkeypatch.setattr(app_modules.stream_engine, "start",
+                        lambda *a, **kw: started.update(kw, args=a))
+    r = client.post("/api/stream/start", json=stream_body(
+        pattern_id="random", hz=3, random_interval_s=30,
+        channels=[{"channel_id": 1, "pattern_id": "random"}]))
+    assert r.status_code == 200, r.text
+    # Positional: ..., sequence, pattern_id, hz, ...
+    assert started["args"][6] == "random"
+    assert started["args"][7] != 3, "each pattern in the shuffle brings its own speed"
+    assert started["random_interval_s"] == 30 and started["random_pool"]
+    assert started["per_channel"] == {1: {"pattern_id": "random"}}
+
+
+def test_a_stream_keeps_a_pool_even_when_nothing_starts_on_random(client, bridge,
+                                                                  app_modules, monkeypatch):
+    """So the area, or any one light, can be switched to Random mid-stream."""
+    started = {}
+    client.post("/api/bridge/pair", json={"bridge_ip": "10.0.0.7"})
+    monkeypatch.setattr(app_modules.stream_engine, "start",
+                        lambda *a, **kw: started.update(kw))
+    client.post("/api/stream/start", json=stream_body(pattern_id="flicker_a"))
+    assert started["random_pool"] and started["random_interval_s"] == 10.0
+
+
+def test_custom_patterns_are_dealt_into_the_shuffle(client, bridge, app_modules):
+    configure(client)
+    created = client.post("/api/patterns", json={
+        "name": "Torchlight", "sequence": "mnmlkmnop"}).json()
+    held = client.post("/api/patterns", json={"name": "Lamp", "sequence": "zzzz"}).json()
+    pool = [p["id"] for p in app_modules._random_config(None)["pool"]]
+    assert created["id"] in pool
+    assert held["id"] not in pool, "a steady pattern is a light left on, not a flicker"
+
+
+@pytest.mark.asyncio
+async def test_a_status_push_from_the_stream_thread_reaches_the_loop(app_modules,
+                                                                     monkeypatch):
+    """The sender is a thread with no loop of its own.
+
+    Asked from there, the old push found no running loop and quietly did
+    nothing — so the console never heard that Random had moved on, nor that a
+    stream had died by itself.
+    """
+    import asyncio
+    import threading
+
+    pushed = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    monkeypatch.setattr(app_modules, "_loop", loop)
+    monkeypatch.setattr(app_modules, "_broadcast_status_soon", pushed.set)
+    worker = threading.Thread(target=app_modules._broadcast_status_from_anywhere)
+    worker.start()
+    worker.join()
+    await asyncio.wait_for(pushed.wait(), timeout=1.0)
+
+
+def test_the_stream_engine_is_wired_to_the_thread_safe_push(app_modules):
+    """The helper is no use if the engine is still handed the old one."""
+    assert app_modules.stream_engine._on_change is app_modules._broadcast_status_from_anywhere
+
+
+def test_a_slider_move_on_random_does_not_rebuild_the_pool(client, bridge,
+                                                         app_modules, monkeypatch):
+    """Every slider move resends the pattern; the pool is read off disk."""
+    configure(client)
+    client.post("/api/flicker/start", json={"light_ids": ["1"], "pattern_id": "random"})
+    built = []
+    real = app_modules._random_config
+    monkeypatch.setattr(app_modules, "_random_config",
+                        lambda *a, **kw: built.append(1) or real(*a, **kw))
+    r = client.post("/api/flicker/update", json={
+        "light_ids": ["1"], "pattern_id": "random", "max_bri": 90})
+    assert r.status_code == 200 and r.json()["lights"]["1"]["max_bri"] == 90
+    assert built == [], "a light already shuffling needs no new pool"

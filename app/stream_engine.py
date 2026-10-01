@@ -25,12 +25,12 @@ from .hue_stream import (
     build_frame_v2,
     hue_sat_bri_to_rgb16,
 )
-from .patterns import level_for_char
+from .patterns import RANDOM_ID, level_for_char, random_pick
 
 logger = logging.getLogger("game_hue_flicker.stream")
 
 LIVE_FIELDS = ("sequence", "pattern_id", "hz", "min_bri", "max_bri", "hue", "sat",
-               "transition_ms")
+               "transition_ms", "random_interval_s")
 
 # How often a frame goes on the wire. Also the ceiling on a pattern's speed:
 # you cannot show frames you do not send.
@@ -89,7 +89,19 @@ CHANNEL_FIELDS = ("sequence", "pattern_id", "hz", "min_bri", "max_bri",
                   "hue", "sat", "transition_ms")
 
 
-def framing_for_channel(state: dict, channel_id: int) -> dict:
+def channel_seed(seed: int, channel_id: int) -> int:
+    """A shuffle of the channel's own, still fixed for the life of the stream.
+
+    Derived rather than drawn, so a slider moved mid-run — which resends every
+    channel's settings — leaves each channel on the pattern it was playing.
+    Offset from the area's seed so a channel set to Random does not simply
+    shadow an area that is also on Random.
+    """
+    return (seed * 1_000_003 + channel_id + 1) & 0x7FFFFFFF
+
+
+def framing_for_channel(state: dict, channel_id: int,
+                        now: float | None = None) -> dict:
     """The framing one channel runs, area-wide settings filled in behind it.
 
     A frame already carries a value per channel, so different lights running
@@ -112,7 +124,36 @@ def framing_for_channel(state: dict, channel_id: int) -> dict:
     # white" — so it is set whenever the channel mentions it at all.
     if "hue" in per and "sat" in per:
         merged["hue"], merged["sat"] = per["hue"], per["sat"]
+    # A channel on Random shuffles on its own, through the pool the stream
+    # was started with, and keeps the area's brightness and colour: Random has
+    # no framing of its own to bring, unlike a named pattern.
+    if per.get("pattern_id") == RANDOM_ID and state.get("random_pool"):
+        now = time.monotonic() if now is None else now
+        pick, _ = random_pick(state["random_pool"], state["random_interval_s"],
+                              channel_seed(state["random_seed"], channel_id),
+                              now - state["epoch"])
+        merged["sequence"], merged["hz"] = pick["sequence"], pick["hz"]
     return merged
+
+
+def resolve_area_random(state: dict, now: float | None = None) -> bool:
+    """Put an area running Random on whichever pattern is due.
+
+    Written into the area's own sequence and speed, so channels that follow
+    the area — and the status the browser draws from — pick it up with no
+    special case. Returns True when the pattern actually changed.
+    """
+    if state.get("pattern_id") != RANDOM_ID or not state.get("random_pool"):
+        return False
+    now = time.monotonic() if now is None else now
+    pick, slot = random_pick(state["random_pool"], state["random_interval_s"],
+                             state["random_seed"], now - state["epoch"])
+    if slot == state.get("random_slot"):
+        return False
+    state["random_slot"] = slot
+    state["sequence"], state["hz"] = pick["sequence"], pick["hz"]
+    state["random_current"] = {"id": pick["id"], "name": pick["name"]}
+    return True
 
 
 class StreamEngine:
@@ -143,6 +184,10 @@ class StreamEngine:
     def status(self) -> dict:
         with self._lock:
             state = dict(self._state) if self._state else None
+        if state:
+            # Every pattern in the console; the browser needs the current one.
+            for private in ("random_pool", "random_seed", "random_slot"):
+                state.pop(private, None)
         return {
             "running": self.running,
             "area_id": state["area_id"] if state else None,
@@ -173,6 +218,9 @@ class StreamEngine:
             # framing. Merging would leave no way to say "never mind".
             if changes.get("per_channel") is not None:
                 self._state["per_channel"] = dict(changes["per_channel"])
+            was_shuffling = self._state["pattern_id"] == RANDOM_ID
+            old_interval = self._state.get("random_interval_s")
+            shuffling = changes.get("pattern_id", self._state["pattern_id"]) == RANDOM_ID
             for key, value in changes.items():
                 if key not in LIVE_FIELDS:
                     continue
@@ -182,7 +230,21 @@ class StreamEngine:
                 # REST, where there is no call that undoes a colour.
                 if value is None and key not in ("hue", "sat"):
                     continue
+                # On Random the speed is whichever pattern is up: each brings
+                # the rate it was written for.
+                if shuffling and key in ("hz", "sequence"):
+                    continue
                 self._state[key] = value
+            # Only a real change re-picks. The console resends the pattern with
+            # every slider move, and re-picking then would be a status push
+            # for nothing — the same seed lands on the same pattern anyway.
+            if shuffling != was_shuffling or self._state.get("random_interval_s") != old_interval:
+                self._state["random_slot"] = None
+            if not shuffling:
+                self._state["random_current"] = None
+            changed = resolve_area_random(self._state)
+        if changed:
+            self._on_change()
         return True
 
     # ---------- lifecycle ----------
@@ -194,7 +256,10 @@ class StreamEngine:
               connect_timeout: float = 6.0,
               area_uuid: str | None = None, channels: list[int] | None = None,
               transport: str | None = None,
-              per_channel: dict[int, dict] | None = None):
+              per_channel: dict[int, dict] | None = None,
+              random_pool: list[dict] | None = None,
+              random_interval_s: float | None = None,
+              random_seed: int = 0):
         """Open the stream and start sending. The caller activates the area
         over REST first — the bridge ignores port 2100 until it has."""
         self.stop()
@@ -228,7 +293,15 @@ class StreamEngine:
                 # overrides. Empty is the ordinary case: one pattern across
                 # the whole area.
                 "per_channel": dict(per_channel or {}),
+                # Kept for the whole stream whatever the area is running, so
+                # the area or any one channel can be switched to Random live.
+                "random_pool": list(random_pool or []),
+                "random_interval_s": float(random_interval_s or 10.0),
+                "random_seed": int(random_seed),
+                "random_slot": None,
+                "random_current": None,
             }
+            resolve_area_random(self._state)
         self._transport = stream.transport
         # Kept beside the transport rather than derived from the live state, so
         # the two survive a stop together. Reading one from state meant that
@@ -269,9 +342,13 @@ class StreamEngine:
             while not self._stop.is_set():
                 now = time.monotonic()
                 with self._lock:
+                    moved = bool(self._state) and resolve_area_random(self._state, now)
                     state = dict(self._state) if self._state else None
                 if state is None:
                     return
+                if moved:
+                    # Told from this thread; the console hands it to the loop.
+                    self._on_change()
 
                 # A frame carries a value per channel, so a channel with its
                 # own framing costs nothing extra: the same frame, at the same
@@ -280,7 +357,7 @@ class StreamEngine:
                 if state.get("area_uuid") and state.get("channels"):
                     frame = build_frame_v2(
                         sequence_id, state["area_uuid"],
-                        [(channel, rgb_for(framing_for_channel(state, channel), now))
+                        [(channel, rgb_for(framing_for_channel(state, channel, now), now))
                          for channel in state["channels"]])
                 else:
                     # v1 addresses light ids and has no channels to differ by,

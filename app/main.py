@@ -54,9 +54,16 @@ from .patterns import (
     BUILTIN_PATTERNS,
     DEFAULT_MAX_BRI,
     DEFAULT_MIN_BRI,
+    DEFAULT_RANDOM_INTERVAL_S,
     FRAMING_FIELDS,
     GAMES,
+    MAX_RANDOM_INTERVAL_S,
+    MIN_RANDOM_INTERVAL_S,
+    RANDOM_ID,
+    RANDOM_NAME,
     framing_of,
+    new_random_seed,
+    random_pool,
 )
 from .stream_engine import StreamEngine, StreamError
 
@@ -279,9 +286,28 @@ def _persist_snapshots(snapshots: dict):
     config_store.update(snapshots=snapshots)
 
 
+def _broadcast_status_from_anywhere():
+    """Push status, whichever thread is asking.
+
+    The stream's sender runs on a thread of its own, where there is no running
+    loop, and _broadcast_status_soon quietly does nothing without one. So a
+    pattern change on Random — or the sender giving up on its own — never
+    reached the browser, which went on drawing the last pattern it was told
+    about. From the loop's own thread this is the same call as before.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        if _loop is not None and not _loop.is_closed():
+            with suppress(RuntimeError):
+                _loop.call_soon_threadsafe(_broadcast_status_soon)
+        return
+    _broadcast_status_soon()
+
+
 engine = FlickerEngine(get_client=get_client, on_change=_broadcast_status_soon,
                        on_snapshots=_persist_snapshots)
-stream_engine = StreamEngine(on_change=_broadcast_status_soon,
+stream_engine = StreamEngine(on_change=_broadcast_status_from_anywhere,
                              on_stopped=_stream_stopped)
 
 
@@ -371,6 +397,9 @@ class StartRequest(BaseModel):
     hue: int | None = Field(None, ge=0, le=65535)
     sat: int | None = Field(None, ge=0, le=254)
     transition_ms: int | None = Field(None, ge=0, le=60000)
+    # Only read when pattern_id is "random": how long each pattern runs.
+    random_interval_s: float | None = Field(
+        None, ge=MIN_RANDOM_INTERVAL_S, le=MAX_RANDOM_INTERVAL_S)
 
     @model_validator(mode="after")
     def _check_ranges(self):
@@ -427,6 +456,9 @@ class StreamStartRequest(BaseModel):
     # Channels that run something of their own. A frame already carries a value
     # per channel, so this costs nothing on the wire.
     channels: list[StreamChannelRequest] | None = Field(None, max_length=64)
+    # How long each pattern runs, for the area or any channel on Random.
+    random_interval_s: float | None = Field(
+        None, ge=MIN_RANDOM_INTERVAL_S, le=MAX_RANDOM_INTERVAL_S)
 
     @model_validator(mode="after")
     def _check_ranges(self):
@@ -456,6 +488,8 @@ class StreamUpdateRequest(BaseModel):
     # The whole set, not a patch: a channel left out of this list goes back to
     # the area's framing, which is the only way to take an override off again.
     channels: list[StreamChannelRequest] | None = Field(None, max_length=64)
+    random_interval_s: float | None = Field(
+        None, ge=MIN_RANDOM_INTERVAL_S, le=MAX_RANDOM_INTERVAL_S)
 
 
 class StopRequest(BaseModel):
@@ -474,6 +508,8 @@ class UpdateRequest(BaseModel):
     hue: int | None = Field(None, ge=0, le=65535)
     sat: int | None = Field(None, ge=0, le=254)
     transition_ms: int | None = Field(None, ge=0, le=60000)
+    random_interval_s: float | None = Field(
+        None, ge=MIN_RANDOM_INTERVAL_S, le=MAX_RANDOM_INTERVAL_S)
 
     @model_validator(mode="after")
     def _check_ranges(self):
@@ -706,7 +742,11 @@ async def list_lights():
 async def list_patterns():
     cfg = config_store.load()
     custom = list(cfg.get("custom_patterns", {}).values())
-    return {"builtin": BUILTIN_PATTERNS, "custom": custom, "games": GAMES}
+    return {"builtin": BUILTIN_PATTERNS, "custom": custom, "games": GAMES,
+            "random": {"id": RANDOM_ID, "name": RANDOM_NAME,
+                       "interval_s": DEFAULT_RANDOM_INTERVAL_S,
+                       "min_interval_s": MIN_RANDOM_INTERVAL_S,
+                       "max_interval_s": MAX_RANDOM_INTERVAL_S}}
 
 
 @app.post("/api/patterns")
@@ -845,6 +885,27 @@ def _resolve_pattern(pattern_id: str) -> dict:
 
 def _resolve_sequence(pattern_id: str) -> str:
     return _resolve_pattern(pattern_id)["sequence"]
+
+
+def _random_config(interval_s: float | None, seed: int | None = None) -> dict:
+    """What a random run draws from: every pattern in the console right now.
+
+    Custom patterns are dealt in alongside the built-ins. The pool is fixed when
+    the run starts, so a pattern saved mid-run joins the next one rather than
+    reshuffling the deck under lights that are already playing it.
+    """
+    custom = list(config_store.load().get("custom_patterns", {}).values())
+    return {
+        "pool": random_pool([*BUILTIN_PATTERNS, *custom]),
+        "interval_s": float(interval_s or DEFAULT_RANDOM_INTERVAL_S),
+        "seed": new_random_seed() if seed is None else seed,
+    }
+
+
+# Brightness, transition and colour for a random run when the caller names
+# none: the same defaults any pattern that says nothing falls back to. Speed is
+# not among them — each pattern in the shuffle brings its own.
+RANDOM_FRAMING = framing_of({})
 
 
 # ---------- Groups ----------
@@ -1491,7 +1552,12 @@ def _channel_framing(reqs, area_framing: dict) -> dict[int, dict]:
     out: dict[int, dict] = {}
     for req in reqs or []:
         framing: dict = {}
-        if req.pattern_id:
+        if req.pattern_id == RANDOM_ID:
+            # Shuffled by the engine, through the stream's own pool. Random
+            # has no framing to bring, so the channel keeps the area's
+            # brightness and colour unless it names its own.
+            framing["pattern_id"] = RANDOM_ID
+        elif req.pattern_id:
             pattern = _resolve_pattern(req.pattern_id)
             framing["sequence"] = pattern["sequence"]
             framing["pattern_id"] = req.pattern_id
@@ -1684,13 +1750,24 @@ async def start_stream(req: StreamStartRequest):
             )
         logger.info("Area %s was left claimed by this console; taking it back", req.area_id)
 
-    pattern = _resolve_pattern(req.pattern_id)
-    framing = framing_of(pattern)
+    # Always built, whatever the area is running: the area or any one channel
+    # can be switched to Random mid-stream, and it needs the pool to draw from.
+    shuffle = _random_config(req.random_interval_s)
+    if req.pattern_id == RANDOM_ID:
+        # The engine resolves the first pick before the first frame; these
+        # only stand in until it does.
+        pattern = shuffle["pool"][0]
+        framing = dict(RANDOM_FRAMING, hz=pattern["hz"])
+    else:
+        pattern = _resolve_pattern(req.pattern_id)
+        framing = framing_of(pattern)
     for field in FRAMING_FIELDS:
         if field in ("hue", "sat"):
             if field in req.model_fields_set:
                 framing[field] = getattr(req, field)
             continue
+        if field == "hz" and req.pattern_id == RANDOM_ID:
+            continue        # each pattern in the shuffle brings its own
         supplied = getattr(req, field, None)
         if supplied is not None:
             framing[field] = supplied
@@ -1783,6 +1860,9 @@ async def start_stream(req: StreamStartRequest):
                 channels=channel_ids(configuration) if configuration else None,
                 transport=transport,
                 per_channel=per_channel,
+                random_pool=shuffle["pool"],
+                random_interval_s=shuffle["interval_s"],
+                random_seed=shuffle["seed"],
             )
             last_error = None
             break
@@ -1952,7 +2032,9 @@ async def update_stream(req: StreamUpdateRequest):
     for field in ("hue", "sat"):
         if field in req.model_fields_set:
             changes[field] = getattr(req, field)
-    if req.pattern_id is not None:
+    if req.pattern_id == RANDOM_ID:
+        changes.pop("hz", None)     # each pattern in the shuffle brings its own
+    elif req.pattern_id is not None:
         pattern = _resolve_pattern(req.pattern_id)
         changes["sequence"] = pattern["sequence"]
         for field, value in framing_of(pattern).items():
@@ -2042,11 +2124,22 @@ async def _read_lights_for_start() -> dict | None:
 async def start_flicker(req: StartRequest):
     if get_client() is None:
         raise HTTPException(400, "Bridge not configured yet")
-    pattern = _resolve_pattern(req.pattern_id)
-    sequence = pattern["sequence"]
-    # Anything the caller left out comes from the pattern: the speed, the
-    # brightness window and the transition are all part of how it was written.
-    framing = framing_of(pattern)
+    shuffle = None
+    if req.pattern_id == RANDOM_ID:
+        # One config for the whole request: lights started together share a
+        # seed and an epoch, so they land on the same pick at the same moment.
+        shuffle = _random_config(req.random_interval_s)
+        framing = dict(RANDOM_FRAMING)
+        # Placeholder until the engine resolves the first pick, which it does
+        # before anything is sent or reported.
+        sequence = shuffle["pool"][0]["sequence"]
+    else:
+        pattern = _resolve_pattern(req.pattern_id)
+        sequence = pattern["sequence"]
+        # Anything the caller left out comes from the pattern: the speed, the
+        # brightness window and the transition are all part of how it was
+        # written.
+        framing = framing_of(pattern)
     for field in FRAMING_FIELDS:
         if field in ("hue", "sat"):
             # Colour is the one field where None is a meaningful request, so
@@ -2054,6 +2147,8 @@ async def start_flicker(req: StartRequest):
             if field in req.model_fields_set:
                 framing[field] = getattr(req, field)
             continue
+        if field == "hz" and shuffle:
+            continue        # each pattern in the shuffle brings its own
         supplied = getattr(req, field)
         if supplied is not None:
             framing[field] = supplied
@@ -2085,6 +2180,7 @@ async def start_flicker(req: StartRequest):
             lid, sequence, req.pattern_id, framing["hz"],
             framing["min_bri"], framing["max_bri"],
             framing["hue"], framing["sat"], framing["transition_ms"], epoch=epoch,
+            random=shuffle,
         )
     return {"ok": True, **status_payload()}
 
@@ -2092,7 +2188,24 @@ async def start_flicker(req: StartRequest):
 @app.post("/api/flicker/update")
 async def update_flicker(req: UpdateRequest):
     changes = req.model_dump(exclude={"light_ids"}, exclude_none=True)
-    if req.pattern_id is not None:
+    status = engine.status()
+    if req.pattern_id == RANDOM_ID:
+        # Only built for a light actually switching in. The console resends
+        # the pattern with every slider move, and one already shuffling keeps
+        # its deck anyway — so building a pool for it reads the config off disk
+        # for nothing.
+        shuffling = [lid for lid in req.light_ids
+                     if (status.get(lid) or {}).get("random_interval_s")]
+        if len(shuffling) < len(req.light_ids):
+            # Keeps whatever interval its neighbours are shuffling at, so
+            # re-picking Random does not quietly reset it to the default.
+            interval = req.random_interval_s or next(
+                (status[lid]["random_interval_s"] for lid in shuffling), None)
+            changes["random"] = _random_config(interval)
+        changes.pop("hz", None)
+    elif req.pattern_id is not None:
+        # Any named pattern ends a shuffle; that is what picking one means.
+        changes["random"] = None
         pattern = _resolve_pattern(req.pattern_id)
         changes["sequence"] = pattern["sequence"]
         for field, value in framing_of(pattern).items():
@@ -2103,7 +2216,6 @@ async def update_flicker(req: UpdateRequest):
     # A bound supplied on its own still has to make sense against the one the
     # light is already running, or the brightness window inverts and the
     # waveform quietly plays upside down.
-    status = engine.status()
     for lid in req.light_ids:
         state = status.get(lid)
         if not state or not state.get("running"):

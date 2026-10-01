@@ -50,6 +50,8 @@ Verified against:
 Quake III Arena ships no default lightstyle table in its game code, so it is
 deliberately absent.
 """
+import random
+from functools import lru_cache
 
 # Every game whose engine ships Quake's lightstyle table verbatim.
 QUAKE_LINEAGE = ["Quake II", "Half-Life", "Half-Life 2 / Source"]
@@ -511,3 +513,80 @@ def is_steady(sequence: str) -> bool:
     """
     seq = sequence or "m"
     return len({level_for_char(c) for c in seq}) <= 1
+
+
+# ---------- Random: every pattern, shuffled ----------
+#
+# Not an entry in BUILTIN_PATTERNS. It has no sequence of its own and belongs
+# to no game, so listing it there would put it in every game's menu, in the
+# export, and in the preset count. It is resolved where a pattern id is.
+
+RANDOM_ID = "random"
+RANDOM_NAME = "Random — all patterns"
+
+# How long each pattern runs before the next one. Long enough for the longest
+# preset (about five seconds a loop) to come round at least twice.
+DEFAULT_RANDOM_INTERVAL_S = 10.0
+MIN_RANDOM_INTERVAL_S = 2.0
+MAX_RANDOM_INTERVAL_S = 300.0
+
+
+def random_pool(patterns) -> list[dict]:
+    """What a random run cycles through: every pattern that animates.
+
+    A steady pattern is a light left on, not a flicker. Dealt into a shuffle it
+    would read as the effect breaking for a stretch, so those are left out.
+
+    Only the sequence and the speed come along. Speed is part of the shape — a
+    slow throb and a sputter are not the same thing played at different rates —
+    while brightness, transition and colour are the one look you chose for the
+    whole run.
+    """
+    return [{"id": p["id"], "name": p["name"], "sequence": p["sequence"],
+             "hz": float(p.get("hz") or DEFAULT_HZ)}
+            for p in patterns if not is_steady(p.get("sequence", ""))]
+
+
+@lru_cache(maxsize=512)
+def _deck(size: int, seed: int, cycle: int) -> tuple[int, ...]:
+    """The order one pass through the pool plays in.
+
+    A fresh shuffle per pass, so every pattern comes up once before any comes
+    up twice. Seeded rather than drawn live: every light that shares a seed
+    and an epoch works out the same order on its own, which is what keeps a
+    group in step without them having to talk to each other.
+    """
+    if size <= 2:
+        # Nothing to shuffle that would not risk the same one twice running.
+        return tuple(range(size))
+    order = list(range(size))
+    random.Random(f"{seed}:{cycle}").shuffle(order)
+    if cycle > 0:
+        # A new pass must not open on the pattern the last one closed on, or
+        # it plays for twice as long and looks like the shuffle stuck. Only
+        # positions 0 and 1 are ever swapped, so with three or more the last
+        # pass's final pattern is its unswapped shuffle's: no recursion back
+        # to pass zero, however long the run has been going.
+        previous = list(range(size))
+        random.Random(f"{seed}:{cycle - 1}").shuffle(previous)
+        if order[0] == previous[-1]:
+            order[0], order[1] = order[1], order[0]
+    return tuple(order)
+
+
+def random_pick(pool: list[dict], interval_s: float, seed: int,
+                elapsed: float) -> tuple[dict, int]:
+    """Which pattern a random run is on, `elapsed` seconds in.
+
+    Returns the pattern and the slot number, so a caller can tell a new pick
+    from the same one asked about again.
+    """
+    if not pool:
+        raise ValueError("a random run needs at least one pattern to play")
+    slot = int(max(0.0, elapsed) // max(MIN_RANDOM_INTERVAL_S, interval_s))
+    cycle, index = divmod(slot, len(pool))
+    return pool[_deck(len(pool), seed, cycle)[index]], slot
+
+
+def new_random_seed() -> int:
+    return random.SystemRandom().randrange(1 << 31)

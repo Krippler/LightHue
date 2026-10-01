@@ -431,3 +431,97 @@ def test_the_verbatim_sequences_are_still_verbatim():
     assert BUILTIN_BY_ID["candle_a"]["sequence"] == "mmmmmaaaaammmmmaaaaaabcdefgabcdefg"
     assert BUILTIN_BY_ID["hard_strobe"]["sequence"] == "aaaaaaaazzzzzzzz"
     assert BUILTIN_BY_ID["hl_underwater"]["sequence"] == "mmnnmmnnnmmnn"
+
+
+# ---------- Random ----------
+
+def test_random_deals_every_pattern_that_moves_and_nothing_that_holds():
+    """A steady pattern in a shuffle reads as the effect having stalled."""
+    from app.patterns import BUILTIN_PATTERNS, is_steady, random_pool
+
+    pool = random_pool(BUILTIN_PATTERNS)
+    moving = [p["id"] for p in BUILTIN_PATTERNS if not is_steady(p["sequence"])]
+    assert [p["id"] for p in pool] == moving
+    assert len(pool) < len(BUILTIN_PATTERNS), "the steady presets should be left out"
+    # Only what a pick needs: the shape and the speed it was written at.
+    # Brightness and colour are the run's, not the pattern's.
+    assert set(pool[0]) == {"id", "name", "sequence", "hz"}
+
+
+def test_random_plays_every_pattern_once_before_any_plays_twice():
+    from app.patterns import BUILTIN_PATTERNS, random_pick, random_pool
+
+    pool = random_pool(BUILTIN_PATTERNS)
+    ids = sorted(p["id"] for p in pool)
+    picks = [random_pick(pool, 10.0, 1234, slot * 10 + 0.5)[0]["id"]
+             for slot in range(len(pool) * 4)]
+    for n in range(4):
+        assert sorted(picks[n * len(pool):(n + 1) * len(pool)]) == ids, f"pass {n}"
+
+
+def test_random_never_plays_the_same_pattern_twice_running():
+    """Including across the seam where one pass ends and the next begins.
+
+    A repeat there plays one pattern for two intervals, which looks exactly
+    like the shuffle having got stuck.
+    """
+    from app.patterns import BUILTIN_PATTERNS, random_pick, random_pool
+
+    pool = random_pool(BUILTIN_PATTERNS)
+    for seed in range(40):
+        picks = [random_pick(pool, 10.0, seed, slot * 10 + 0.5)[0]["id"]
+                 for slot in range(len(pool) * 3)]
+        assert all(a != b for a, b in zip(picks, picks[1:], strict=False)), f"seed {seed}"
+
+
+def test_random_is_the_same_order_for_the_same_seed():
+    """What keeps lights started together on the same pick, with no chatter."""
+    from app.patterns import BUILTIN_PATTERNS, random_pick, random_pool
+
+    pool = random_pool(BUILTIN_PATTERNS)
+    run = lambda seed: [random_pick(pool, 5.0, seed, s * 5 + 1)[0]["id"]  # noqa: E731
+                        for s in range(30)]
+    assert run(7) == run(7)
+    assert run(7) != run(8)
+
+
+def test_random_changes_on_the_interval_and_not_between():
+    from app.patterns import BUILTIN_PATTERNS, random_pick, random_pool
+
+    pool = random_pool(BUILTIN_PATTERNS)
+    first, slot = random_pick(pool, 10.0, 3, 0.0)
+    assert random_pick(pool, 10.0, 3, 9.99) == (first, slot)
+    nxt, next_slot = random_pick(pool, 10.0, 3, 10.0)
+    assert next_slot == slot + 1 and nxt != first
+
+
+def test_random_stays_cheap_however_long_it_has_been_running():
+    """A pick is worked out every frame, and a stream sends 25 a second.
+
+    Nothing may walk back through every pass since the start: a week in at
+    two seconds a pattern is thousands of passes.
+    """
+    import time
+
+    from app.patterns import BUILTIN_PATTERNS, random_pick, random_pool
+
+    pool = random_pool(BUILTIN_PATTERNS)
+    week = 7 * 24 * 3600
+    started = time.perf_counter()
+    for offset in range(200):
+        random_pick(pool, 2.0, 99, week + offset * 2)
+    assert time.perf_counter() - started < 0.5
+
+
+def test_random_copes_with_tiny_pools():
+    import pytest
+
+    from app.patterns import random_pick
+
+    one = [{"id": "a", "name": "A", "sequence": "az", "hz": 10.0}]
+    assert {random_pick(one, 2.0, 1, s * 2)[0]["id"] for s in range(5)} == {"a"}
+    two = one + [{"id": "b", "name": "B", "sequence": "za", "hz": 10.0}]
+    picks = [random_pick(two, 2.0, 1, s * 2)[0]["id"] for s in range(6)]
+    assert all(a != b for a, b in zip(picks, picks[1:], strict=False)), picks
+    with pytest.raises(ValueError):
+        random_pick([], 2.0, 1, 0.0)

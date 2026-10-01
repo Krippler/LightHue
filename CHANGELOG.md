@@ -4,6 +4,23 @@ Notable changes to LightHue. Versions are the image tags published to
 `ghcr.io/krippler/lighthue`, so `v0.5.0` here is `:v0.5.0` there. `:latest`
 always tracks the newest release.
 
+## Unreleased
+
+### Added
+
+- **Random**, at the top of every pattern menu: plays every pattern that moves,
+  custom ones included, in a fresh order each pass, so nothing repeats until
+  everything has played. Each keeps its own speed; brightness, transition and
+  colour are one look you set for all of them. **Change every** sets how long
+  each runs, and the console shows which one is playing.
+- In an entertainment area the whole area can shuffle, or any one light in it
+  on its own.
+
+### Fixed
+
+- A stream that stopped by itself didn't tell the console, which kept showing
+  it as running until something else happened to refresh it.
+
 ## 0.5.0 — 2026-09-05
 
 First tagged release, and the first packaged for Unraid Community

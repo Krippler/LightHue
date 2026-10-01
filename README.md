@@ -111,6 +111,14 @@ Under each swatch is a box for an exact colour. It takes `6000,225` (Hue's own
 hue and saturation, the exact form) or `#ff991d` / `#f80` (converted to the
 nearest hue/sat). The box always shows the numbers being sent.
 
+**Random** sits at the top of every pattern menu. It plays every pattern that
+moves — custom ones included — in a fresh order each time round, so nothing
+repeats until everything has played. Each pattern keeps the speed it was
+written for; brightness, transition and colour are the one look you set, for
+all of them. **Change every** takes Speed's place and sets how long each
+pattern runs, and the card shows which one is playing. In an entertainment
+area, the whole area can shuffle, or each light in it on its own.
+
 **A pattern that never changes is a hold, not a flicker.** Write `z` (or pick
 Quake's own *0 Steady*) and the light is set to that brightness and colour and
 left there — one command, then nothing. The button says **Hold this colour**,

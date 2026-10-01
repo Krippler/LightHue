@@ -229,6 +229,7 @@
                  panel that says what is actually playing, and buried at the
                  bottom it was off-screen on a phone before you reached it. -->
             <div id="stream-waveform" class="waveform" aria-hidden="true"></div>
+            <p id="stream-now-playing" class="now-playing dim hidden"></p>
 
             <!-- One frame already carries a value per channel, so lights
                  running different patterns costs nothing on the wire. Off by
@@ -259,9 +260,15 @@
             </div>
 
             <div class="custom-form custom-framing">
-              <label class="field">
+              <label class="field" id="stream-hz-field">
                 <span>Speed <em id="stream-hz-value">10</em> Hz <span class="info" id="stream-hz-tip" tabindex="0" role="button">?</span></span>
                 <input id="stream-hz" type="range" min="1" max="25" step="1" value="10" />
+              </label>
+              <!-- Shown whenever anything here is on Random — the area, or any
+                   one light in it — since they all change on this interval. -->
+              <label class="field hidden" id="stream-interval-field">
+                <span>Change every <em id="stream-interval-value">10</em> s</span>
+                <input id="stream-interval" type="range" min="2" max="120" step="1" value="10" />
               </label>
               <label class="field">
                 <span>Min brightness <em id="stream-minbri-value">1</em></span>
@@ -436,6 +443,7 @@
       </div>
 
       <div class="waveform" aria-hidden="true"></div>
+      <div class="now-playing dim hidden"></div>
       <div class="rate-note dim hidden"></div>
       <div class="cannot-note dim hidden"></div>
 
@@ -446,9 +454,16 @@
         </label>
 
         <div class="field-row">
-          <label class="field">
+          <label class="field speed-field">
             <span>Speed <em class="hz-value">10</em> Hz</span>
             <input type="range" class="hz-input" min="1" max="20" step="1" value="10" />
+          </label>
+          <!-- Stands in for Speed while Random is picked: each pattern in the
+               shuffle runs at its own speed, so the one number left to choose
+               is how long each gets. -->
+          <label class="field interval-field hidden">
+            <span>Change every <em class="interval-value">10</em> s</span>
+            <input type="range" class="interval-input" min="2" max="120" step="1" value="10" />
           </label>
           <label class="field">
             <span>Transition <em class="trans-value">0</em> ms</span>

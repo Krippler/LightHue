@@ -626,6 +626,15 @@ input[type="color"] {
 }
 
 .rate-note { margin-top: -8px; color: var(--warn); font-size: 10px; }
+/* What Random is on right now. Same weight as the rate note: a reading, not
+   a control. */
+.now-playing { margin-top: -8px; font-size: 10px; }
+#stream-now-playing { margin: -8px 0 14px; }
+/* Random, before it is running: there is no one sequence to draw. */
+.waveform-note {
+  align-self: center; width: 100%; text-align: center;
+  font-size: 11px; color: var(--muted); letter-spacing: .04em;
+}
 
 .controls { display: flex; flex-direction: column; }
 .controls .field-row { margin-top: 14px; }
