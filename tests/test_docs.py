@@ -202,16 +202,38 @@ def test_only_one_template_ships_so_ca_lists_the_app_once():
     assert found == ["ca_profile.xml", "templates/lighthue.xml"], found
 
 
-def test_the_changelog_counts_what_the_code_actually_ships():
-    """The listing quotes numbers too, and nobody re-reads it after a release."""
+def number_words() -> dict[str, int]:
+    """one..ninety-nine, as prose spells them. A count spelled with a word no
+    table here knew would otherwise go unchecked rather than fail."""
+    ones = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+            "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+            "seventeen", "eighteen", "nineteen"]
+    tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty",
+            "ninety"]
+    out = {w: n for n, w in enumerate(ones) if w}
+    for ten in range(2, 10):
+        out[tens[ten]] = ten * 10
+        for one in range(1, 10):
+            out[f"{tens[ten]}-{ones[one]}"] = ten * 10 + one
+    return out
+
+
+def test_any_count_the_listing_quotes_is_what_the_code_ships():
+    """The listing quotes numbers too, and nobody re-reads it after a release.
+
+    Checked over the whole changelog as well as the listing: release notes stay
+    up long after the code they describe has moved on.
+    """
     from app.patterns import BUILTIN_PATTERNS, GAMES
 
-    changes = template().findtext("Changes")
-    assert f"{len(BUILTIN_PATTERNS)} presets" in changes, "the preset count has drifted"
-    words = {16: "sixteen", 20: "twenty", 21: "twenty-one"}
-    assert f"{words.get(len(GAMES), len(GAMES))} games" in changes, (
-        f"the listing's game count is not {len(GAMES)}"
-    )
+    numbers = number_words()
+    latest = template().findtext("Changes")
+    for count in re.findall(r"(\d+) presets", latest):
+        assert int(count) == len(BUILTIN_PATTERNS), f"the listing says {count} presets"
+    for word in re.findall(r"\b([a-z-]+|\d+) games\b", latest):
+        quoted = int(word) if word.isdigit() else numbers.get(word)
+        if quoted is not None:
+            assert quoted == len(GAMES), f"the listing says {word} games"
 
 
 def test_the_listing_and_the_changelog_agree_on_the_release():

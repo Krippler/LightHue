@@ -5,7 +5,7 @@ section's heading is what the release workflow reads: `## [X.Y.Z] — DATE` on
 `main` publishes that version, `## [Unreleased]` publishes only `edge`. See
 [PUBLISHING.md](PUBLISHING.md).
 
-## [Unreleased]
+## [0.6.0] — 2026-10-01
 
 ### Added
 
@@ -16,6 +16,14 @@ section's heading is what the release workflow reads: `## [X.Y.Z] — DATE` on
   each runs, and the console shows which one is playing.
 - In an entertainment area the whole area can shuffle, or any one light in it
   on its own.
+
+### Changed
+
+- **`latest` is now the newest release**, not the newest commit. Changes
+  between releases go to `edge`, which the Unraid template offers alongside
+  `latest`. A container left on `latest` only moves when a version is cut.
+- The console's header shows which version it is running, and the container
+  log opens with it.
 
 ### Fixed
 

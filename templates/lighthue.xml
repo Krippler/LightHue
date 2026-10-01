@@ -63,19 +63,16 @@
   <!-- The oldest release this template format and these Docker options are
        known good on, rather than a version the app has been tested against. -->
   <MinVer>6.9</MinVer>
-  <Date>2026-09-05</Date>
+  <Date>2026-10-01</Date>
   <!-- CA renders this as the app's release notes. Keep the top entry in step
        with CHANGELOG.md; a test fails if the version or date drift apart. -->
   <Changes>
-### 0.5.0 (2026-09-05)&#13;
+### 0.6.0 (2026-10-01)&#13;
 &#13;
-First tagged release, and the first packaged for Community Applications.&#13;
-&#13;
-- 64 presets across twenty games, each carrying its own speed, brightness range and colour.&#13;
-- Entertainment streaming at up to 25 Hz, with a different pattern per light in one area.&#13;
-- Custom a-z lightstyles with a live waveform preview, exportable as JSON.&#13;
-- Restores every bulb's colour and brightness when the flicker stops, across a restart.&#13;
-- Optional console password, and a health check that restarts the container if it stops responding.&#13;
+- Random, at the top of every pattern menu: every pattern that moves, shuffled, under one brightness and colour you set. Change every sets how long each runs.&#13;
+- In an entertainment area, the whole area can shuffle, or any one light in it on its own.&#13;
+- latest is now the newest release; edge follows main between releases. The header shows the running version.&#13;
+- Fixed: a stream that stopped by itself now tells the console.&#13;
 &#13;
 Full notes: https://github.com/Krippler/LightHue/blob/main/CHANGELOG.md&#13;
   </Changes>

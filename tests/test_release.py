@@ -60,6 +60,7 @@ def run(script: str, repo: Path, tmp_path: Path, **env) -> dict:
 
 
 def released(changelog: str, tmp_path: Path, tags=()) -> dict:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     repo = repo_with(tmp_path, changelog, tags)
     return run(step("publish", "detect"), repo, tmp_path)
 
@@ -86,21 +87,32 @@ def test_a_version_already_tagged_is_not_released_twice(tmp_path):
     assert out == {"is_release_merge": "false"}
 
 
-def test_merging_this_branch_today_would_not_cut_a_release(tmp_path):
-    """The real changelog, as it stands: work in progress is edge only."""
-    assert released(CHANGELOG.read_text(), tmp_path, tags=["v0.5.0"]) == {
-        "is_release_merge": "false"}
+def real_versions() -> list[str]:
+    return re.findall(r"^## \[(\d+\.\d+\.\d+)\]", CHANGELOG.read_text(), re.M)
 
 
-def test_renaming_unreleased_is_all_it_takes_to_cut_the_next_one(tmp_path):
-    """What PUBLISHING.md tells you to do, done to the real changelog."""
-    # The heading line itself: the preamble quotes "## [Unreleased]" too, and
-    # the workflow only reads headings — lines that start with it.
-    cut = re.sub(r"^## \[Unreleased\]$", "## [0.6.0] — 2026-10-01",
-                 CHANGELOG.read_text(), count=1, flags=re.M)
-    assert cut != CHANGELOG.read_text()
-    out = released(cut, tmp_path, tags=["v0.5.0"])
-    assert out["is_release_merge"] == "true" and out["version"] == "0.6.0"
+def test_the_real_changelog_releases_exactly_what_its_top_heading_says(tmp_path):
+    """Whatever state the file is in: work in progress publishes edge only, and
+    a version on top is cut once — never again after its tag exists."""
+    top = re.search(r"^## \[([^\]]+)\]", CHANGELOG.read_text(), re.M).group(1)
+    older = [f"v{v}" for v in real_versions() if v != top]
+    fresh = released(CHANGELOG.read_text(), tmp_path / "fresh", tags=older)
+    if top == "Unreleased":
+        assert fresh == {"is_release_merge": "false"}
+        return
+    assert fresh["is_release_merge"] == "true" and fresh["version"] == top
+    again = released(CHANGELOG.read_text(), tmp_path / "again", tags=[*older, f"v{top}"])
+    assert again == {"is_release_merge": "false"}, "a tagged version must not be re-cut"
+
+
+def test_a_new_version_on_top_of_the_real_changelog_is_cut(tmp_path):
+    """What PUBLISHING.md tells you to do, done to the real file — its preamble
+    and all, which quotes the heading syntax before any heading appears."""
+    text = CHANGELOG.read_text()
+    first = re.search(r"^## \[", text, re.M).start()
+    cut = text[:first] + "## [99.0.0] — 2099-01-01\n\n- Next.\n\n" + text[first:]
+    out = released(cut, tmp_path, tags=[f"v{v}" for v in real_versions()])
+    assert out["is_release_merge"] == "true" and out["version"] == "99.0.0"
 
 
 # ---------- the changelog's own shape ----------
